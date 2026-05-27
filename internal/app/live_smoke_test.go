@@ -79,6 +79,65 @@ func TestLiveCalendarAvailabilitySmoke(t *testing.T) {
 	}
 }
 
+func TestLiveHighLevelReadMetadataSuiteSmoke(t *testing.T) {
+	configPath := os.Getenv("OUTLOOK_AGENT_LIVE_CONFIG")
+	if configPath == "" {
+		t.Skip("OUTLOOK_AGENT_LIVE_CONFIG is not set")
+	}
+	profile := os.Getenv("OUTLOOK_AGENT_LIVE_PROFILE")
+
+	ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
+	defer cancel()
+
+	client, _, err := app.BuildTransport(app.Options{ConfigPath: configPath, Profile: profile})
+	if err != nil {
+		t.Fatalf("build live transport: %v", err)
+	}
+	auth := client.Authenticate(ctx, profile)
+	if !auth.OK {
+		t.Fatalf("live auth failed: %s", auth.Error)
+	}
+
+	search := client.Execute(ctx, transport.ActionRequest{
+		Name:    "mail.search",
+		Payload: map[string]any{"max": 5},
+	})
+	if !search.OK {
+		t.Fatalf("live mail.search failed: %s summary=%#v", search.Error, responseSummary(search.Data))
+	}
+	messageID := firstLiveMessageID(search.Data)
+	if messageID == "" {
+		t.Skip("live inbox search returned no message id for metadata smoke")
+	}
+
+	metadata := client.Execute(ctx, transport.ActionRequest{
+		Name:    "mail.fetch_metadata",
+		Payload: map[string]any{"id": messageID},
+	})
+	if !metadata.OK {
+		t.Fatalf("live mail.fetch_metadata failed: %s summary=%#v", metadata.Error, responseSummary(metadata.Data))
+	}
+	message, ok := metadata.Data["message"].(map[string]any)
+	if !ok || message["id"] == "" {
+		t.Fatalf("expected sanitized message metadata, got %#v", responseSummary(metadata.Data))
+	}
+
+	start, end := liveCalendarDayRange(time.Now())
+	calendar := client.Execute(ctx, transport.ActionRequest{
+		Name: "calendar.list",
+		Payload: map[string]any{
+			"start": start,
+			"end":   end,
+		},
+	})
+	if !calendar.OK {
+		t.Fatalf("live calendar.list failed: %s summary=%#v", calendar.Error, responseSummary(calendar.Data))
+	}
+	if _, ok := calendar.Data["events"].([]any); !ok {
+		t.Fatalf("expected events list in response, got %#v", responseSummary(calendar.Data))
+	}
+}
+
 func TestLiveOWARawFindPeopleSmoke(t *testing.T) {
 	configPath := os.Getenv("OUTLOOK_AGENT_LIVE_CONFIG")
 	if configPath == "" {
@@ -161,6 +220,27 @@ func readOnlyRawMetadataSmokeCases() []readOnlyRawMetadataSmokeCase {
 		{name: "GetFolder", payload: getFolderPayload()},
 		{name: "ResolveNames", payload: resolveNamesPayload("test")},
 	}
+}
+
+func firstLiveMessageID(data map[string]any) string {
+	messages, _ := data["messages"].([]any)
+	for _, value := range messages {
+		message, _ := value.(map[string]any)
+		if message == nil {
+			continue
+		}
+		id, _ := message["id"].(string)
+		if id != "" {
+			return id
+		}
+	}
+	return ""
+}
+
+func liveCalendarDayRange(now time.Time) (string, string) {
+	start := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, int(time.Millisecond), now.Location())
+	end := start.Add(24*time.Hour - time.Millisecond)
+	return start.Format("2006-01-02T15:04:05.000"), end.Format("2006-01-02T15:04:05.000")
 }
 
 func findPeoplePayload(query string) map[string]any {

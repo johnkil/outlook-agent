@@ -73,11 +73,11 @@ Implemented high-level OWA mappings:
 | Public action | OWA service action | Status |
 | --- | --- | --- |
 | `mail.search` | `FindItem` | implemented and live smoke-tested |
-| `mail.fetch_metadata` | `GetItem` | implemented with mocked OWA test |
+| `mail.fetch_metadata` | `GetItem` | implemented and live smoke-tested through a real inbox item id |
 | `mail.fetch_body` | `GetItem` | implemented with mocked OWA test |
 | `mail.create_draft` | `CreateItem` | implemented as `SaveOnly` draft with mocked OWA test |
 | `mail.move_to_deleted_items` | `DeleteItem` | implemented as `MoveToDeletedItems` with mocked OWA test |
-| `calendar.list` | `GetCalendarView` | implemented with mocked OWA test |
+| `calendar.list` | `GetCalendarView` | implemented and live smoke-tested for a one-day range |
 | `calendar.availability` | `GetUserAvailabilityInternal` | implemented and live smoke-tested; MCP tool accepts optional mailbox email |
 | raw read-only people search | `FindPeople` | raw guarded execution live smoke-tested with opt-in env; request maps are normalized so `__type` is emitted first |
 | raw read-only metadata suite | `GetServerTimeZones`, `GetRoomLists`, `GetFolder`, `ResolveNames` | raw guarded execution live smoke-tested with opt-in env; metadata-only payloads and sanitized assertions |
