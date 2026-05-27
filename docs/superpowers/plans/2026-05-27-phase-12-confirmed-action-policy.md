@@ -54,4 +54,4 @@
   `GOPATH=$PWD/.cache/go GOCACHE=$PWD/.cache/go-build GOMODCACHE=$PWD/.cache/go-mod go build ./cmd/outlook-agent`
 - [x] Run public-safety grep with the local company-specific pattern set.
 - [x] Update local spike log.
-- [ ] Commit and push the branch.
+- [x] Commit and push the branch.
