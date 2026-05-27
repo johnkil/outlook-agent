@@ -19,7 +19,7 @@ Status values:
 | GitHub repository | Ready | Project lives as a separate Git repository with pushed branch `feat/owa-adapter`; README defines the product shape. |
 | PRD/RFC/SPEC | Ready | `docs/PRD.md`, `docs/RFC.md`, and `docs/SPEC.md` define product goals, architecture, CLI, MCP tools, safety classes, config, and tests. |
 | Go CLI | Ready | `cmd/outlook-agent`, `internal/cli`, config runtime, auth check, policy explain, OWA discovery, strict explicit config-path handling, and MCP startup are covered by Go tests. |
-| MCP server | Ready | `internal/mcpserver` registers the public tools, has in-memory MCP client smoke tests, verifies capabilities -> dry-run -> confirm flow, and `cmd/outlook-agent` has stdio command-transport smoke coverage. |
+| MCP server | Ready | `internal/mcpserver` registers the public tools, has in-memory MCP client smoke tests, verifies capabilities -> dry-run -> confirm flow, has a versioned compatibility policy in `docs/MCP_COMPATIBILITY.md`, and `cmd/outlook-agent` has stdio command-transport smoke coverage. |
 | All discovered OWA actions | Ready for discovered set | OWA registry classifies 55 raw service actions in `docs/OWA_ACTION_REGISTRY.md`; `TestTransportCapabilitiesIncludeClassifiedOWAServiceActions` and `TestOWARawCapabilitiesExposeExecutionRoutes` cover raw capability presence, classes, and execution routes. |
 | High-level mail/calendar workflows | Ready initial set | Search, metadata fetch, explicit fixture body fetch, draft save, move to Deleted Items, calendar list, and availability are implemented and live smoke-tested. |
 | Live verification | Partial | Authenticated discovery has sanitized evidence for the useful OWA app shell and 25 live-discovered actions; high-level mail search, metadata fetch, explicit fixture body fetch, draft creation, reversible draft cleanup, calendar list, availability, stdio MCP availability, read-only raw `FindPeople`, read-only raw metadata actions (`GetServerTimeZones`, `GetRoomLists`, `GetFolder`, `ResolveNames`), representative MCP dry-run gates, live raw `DeleteItem` reversible confirmation against a draft fixture, and live stdio MCP dry-run coverage for all 26 mutating raw OWA catalog examples. Full live execution of every raw action is intentionally not attempted because many actions are destructive, send-like, or settings-changing. |
@@ -67,8 +67,7 @@ Status values:
   - enterprise config examples that live outside the public repository.
 - Protocol breadth:
   - Graph adapter;
-  - EWS adapter;
-  - versioned MCP compatibility policy.
+  - EWS adapter.
 - Live validation:
   - `FindFolder` live payload-shape follow-up after four metadata-only
     candidates returned the same internal OWA error;
