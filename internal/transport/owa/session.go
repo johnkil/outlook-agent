@@ -54,7 +54,7 @@ func Login(ctx context.Context, client *http.Client, config Config, password sec
 		return Session{}, err
 	}
 	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	request.Header.Set("User-Agent", "outlook-agent")
+	request.Header.Set("User-Agent", "Mozilla/5.0")
 
 	response, err := sessionClient.Do(request)
 	if err != nil {

@@ -1,0 +1,419 @@
+package owa
+
+import (
+	"context"
+	"strings"
+
+	"github.com/johnkil/outlook-agent/internal/transport"
+)
+
+func (client *Transport) executeHighLevel(ctx context.Context, request transport.ActionRequest) (transport.ActionResponse, bool) {
+	switch request.Name {
+	case "mail.search":
+		response := client.executeService(ctx, "FindItem", client.buildFindInboxItemsRequest(intValue(request.Payload, "max", 150)), false)
+		if !response.OK {
+			return response, true
+		}
+		return transport.ActionResponse{OK: true, Data: map[string]any{"messages": filterMessages(normalizeMailItems(extractItems(response.Data)), stringValue(request.Payload, "query"))}}, true
+	case "calendar.list":
+		response := client.executeService(ctx, "GetCalendarView", client.buildCalendarViewRequest(stringValue(request.Payload, "start"), stringValue(request.Payload, "end")), true)
+		if !response.OK {
+			return response, true
+		}
+		return transport.ActionResponse{OK: true, Data: map[string]any{"events": normalizeCalendarItems(extractItems(response.Data))}}, true
+	case "mail.fetch_metadata":
+		response := client.executeService(ctx, "GetItem", client.buildGetItemRequest(stringValue(request.Payload, "id"), false), false)
+		if !response.OK {
+			return response, true
+		}
+		messages := normalizeMailItems(extractItems(response.Data))
+		return transport.ActionResponse{OK: true, Data: map[string]any{"message": firstAny(messages)}}, true
+	case "mail.fetch_body":
+		response := client.executeService(ctx, "GetItem", client.buildGetItemRequest(stringValue(request.Payload, "id"), true), false)
+		if !response.OK {
+			return response, true
+		}
+		item := firstMap(extractItems(response.Data))
+		itemID := itemID(item)
+		return transport.ActionResponse{OK: true, Data: map[string]any{"id": itemID["id"], "body_text": bodyText(item)}}, true
+	case "mail.create_draft":
+		response := client.executeService(ctx, "CreateItem", client.buildCreateDraftRequest(request.Payload), false)
+		if !response.OK {
+			return response, true
+		}
+		drafts := normalizeMailItems(extractItems(response.Data))
+		return transport.ActionResponse{OK: true, Data: map[string]any{"draft": firstAny(drafts)}}, true
+	case "mail.move_to_deleted_items":
+		ids := anySlice(request.Payload["ids"])
+		response := client.executeService(ctx, "DeleteItem", client.buildMoveToDeletedItemsRequest(ids), false)
+		if !response.OK {
+			return response, true
+		}
+		return transport.ActionResponse{OK: true, Data: map[string]any{"moved_count": len(ids), "reversible": true}}, true
+	default:
+		return transport.ActionResponse{}, false
+	}
+}
+
+func (client *Transport) buildFindInboxItemsRequest(maxItems int) any {
+	if maxItems <= 0 {
+		maxItems = 150
+	}
+	return object(
+		field("__type", "FindItemJsonRequest:#Exchange"),
+		field("Header", client.requestHeaderPayload("Exchange2013")),
+		field("Body", object(
+			field("__type", "FindItemRequest:#Exchange"),
+			field("ItemShape", object(
+				field("__type", "ItemResponseShape:#Exchange"),
+				field("BaseShape", "IdOnly"),
+				field("AdditionalProperties", []any{
+					propertyURI("item:Subject"),
+					propertyURI("message:From"),
+					propertyURI("item:DateTimeReceived"),
+					propertyURI("item:Importance"),
+					propertyURI("message:IsRead"),
+					propertyURI("item:HasAttachments"),
+				}),
+			)),
+			field("IndexedPageItemView", object(
+				field("__type", "IndexedPageView:#Exchange"),
+				field("BasePoint", "Beginning"),
+				field("Offset", 0),
+				field("MaxEntriesReturned", maxItems),
+			)),
+			field("ParentFolderIds", []any{
+				object(field("__type", "DistinguishedFolderId:#Exchange"), field("Id", "inbox")),
+			}),
+			field("Traversal", "Shallow"),
+		)),
+	)
+}
+
+func (client *Transport) buildCalendarViewRequest(start string, end string) any {
+	return object(
+		field("__type", "GetCalendarViewJsonRequest:#Exchange"),
+		field("Header", client.requestHeaderPayload("V2017_08_18")),
+		field("Body", object(
+			field("__type", "GetCalendarViewRequest:#Exchange"),
+			field("CalendarId", object(
+				field("__type", "TargetFolderId:#Exchange"),
+				field("BaseFolderId", object(
+					field("__type", "DistinguishedFolderId:#Exchange"),
+					field("Id", "calendar"),
+				)),
+			)),
+			field("RangeStart", start),
+			field("RangeEnd", end),
+		)),
+	)
+}
+
+func (client *Transport) buildGetItemRequest(id string, includeBody bool) any {
+	additionalProperties := []any{
+		propertyURI("item:Subject"),
+		propertyURI("message:From"),
+		propertyURI("item:DateTimeReceived"),
+		propertyURI("item:Importance"),
+		propertyURI("message:IsRead"),
+		propertyURI("item:HasAttachments"),
+	}
+	baseShape := "IdOnly"
+	var bodyType []orderedField
+	if includeBody {
+		baseShape = "Default"
+		bodyType = []orderedField{field("BodyType", "Text")}
+		additionalProperties = append(additionalProperties, propertyURI("item:Body"))
+	}
+	itemShapeFields := []orderedField{
+		field("__type", "ItemResponseShape:#Exchange"),
+		field("BaseShape", baseShape),
+	}
+	itemShapeFields = append(itemShapeFields, bodyType...)
+	itemShapeFields = append(itemShapeFields, field("AdditionalProperties", additionalProperties))
+	return object(
+		field("__type", "GetItemJsonRequest:#Exchange"),
+		field("Header", client.requestHeaderPayload("Exchange2013")),
+		field("Body", object(
+			field("__type", "GetItemRequest:#Exchange"),
+			field("ItemShape", object(itemShapeFields...)),
+			field("ItemIds", []any{
+				object(field("__type", "ItemId:#Exchange"), field("Id", id)),
+			}),
+		)),
+	)
+}
+
+func (client *Transport) buildCreateDraftRequest(payload map[string]any) any {
+	recipients := make([]any, 0)
+	for _, recipient := range anySlice(payload["to"]) {
+		address, ok := recipient.(string)
+		if !ok || address == "" {
+			continue
+		}
+		recipients = append(recipients, object(
+			field("__type", "EmailAddressWrapper:#Exchange"),
+			field("Mailbox", object(
+				field("__type", "EmailAddress:#Exchange"),
+				field("EmailAddress", address),
+			)),
+		))
+	}
+	return object(
+		field("__type", "CreateItemJsonRequest:#Exchange"),
+		field("Header", client.requestHeaderPayload("Exchange2013")),
+		field("Body", object(
+			field("__type", "CreateItemRequest:#Exchange"),
+			field("MessageDisposition", "SaveOnly"),
+			field("SendMeetingInvitations", "SendToNone"),
+			field("SavedItemFolderId", object(
+				field("__type", "TargetFolderId:#Exchange"),
+				field("BaseFolderId", object(
+					field("__type", "DistinguishedFolderId:#Exchange"),
+					field("Id", "drafts"),
+				)),
+			)),
+			field("SuppressReadReceipts", true),
+			field("ComposeOperation", "newMail"),
+			field("MessageDispositionString", "SaveOnly"),
+			field("Items", []any{
+				object(
+					field("__type", "Message:#Exchange"),
+					field("Subject", stringValue(payload, "subject")),
+					field("Body", object(
+						field("__type", "BodyContentType:#Exchange"),
+						field("BodyType", "Text"),
+						field("Value", stringValue(payload, "body")),
+					)),
+					field("ToRecipients", recipients),
+				),
+			}),
+		)),
+	)
+}
+
+func (client *Transport) buildMoveToDeletedItemsRequest(ids []any) any {
+	itemIDs := make([]any, 0, len(ids))
+	for _, id := range ids {
+		switch typed := id.(type) {
+		case string:
+			itemIDs = append(itemIDs, object(field("__type", "ItemId:#Exchange"), field("Id", typed)))
+		case map[string]any:
+			itemIDs = append(itemIDs, typed)
+		}
+	}
+	return object(
+		field("__type", "DeleteItemJsonRequest:#Exchange"),
+		field("Header", client.requestHeaderPayload("Exchange2013")),
+		field("Body", object(
+			field("__type", "DeleteItemRequest:#Exchange"),
+			field("DeleteType", "MoveToDeletedItems"),
+			field("SendMeetingCancellations", "SendToNone"),
+			field("ItemIds", itemIDs),
+		)),
+	)
+}
+
+func (client *Transport) requestHeaderPayload(version string) any {
+	return object(
+		field("__type", "JsonRequestHeaders:#Exchange"),
+		field("RequestServerVersion", version),
+		field("TimeZoneContext", object(
+			field("__type", "TimeZoneContext:#Exchange"),
+			field("TimeZoneDefinition", object(
+				field("__type", "TimeZoneDefinitionType:#Exchange"),
+				field("Id", client.config.effectiveTimeZoneID()),
+			)),
+		)),
+	)
+}
+
+func propertyURI(fieldURI string) any {
+	return object(field("__type", "PropertyUri:#Exchange"), field("FieldURI", fieldURI))
+}
+
+func extractItems(payload map[string]any) []any {
+	body, _ := payload["Body"].(map[string]any)
+	if items := anySlice(body["Items"]); len(items) > 0 {
+		return items
+	}
+	responseMessages, _ := body["ResponseMessages"].(map[string]any)
+	for _, message := range anySlice(responseMessages["Items"]) {
+		messageMap, _ := message.(map[string]any)
+		if items := anySlice(messageMap["Items"]); len(items) > 0 {
+			return items
+		}
+		root, _ := messageMap["RootFolder"].(map[string]any)
+		if items := anySlice(root["Items"]); len(items) > 0 {
+			return items
+		}
+	}
+	return nil
+}
+
+func firstAny(values []any) any {
+	if len(values) == 0 {
+		return map[string]any{}
+	}
+	return values[0]
+}
+
+func firstMap(values []any) map[string]any {
+	if len(values) == 0 {
+		return map[string]any{}
+	}
+	value, _ := values[0].(map[string]any)
+	if value == nil {
+		return map[string]any{}
+	}
+	return value
+}
+
+func normalizeMailItems(items []any) []any {
+	output := make([]any, 0, len(items))
+	for _, item := range items {
+		itemMap, ok := item.(map[string]any)
+		if !ok {
+			continue
+		}
+		itemID := itemID(itemMap)
+		output = append(output, map[string]any{
+			"id":              itemID["id"],
+			"change_key":      itemID["change_key"],
+			"subject":         stringValue(itemMap, "Subject"),
+			"sender":          senderName(itemMap["From"]),
+			"received_at":     stringValue(itemMap, "DateTimeReceived"),
+			"importance":      stringValue(itemMap, "Importance"),
+			"is_read":         boolValue(itemMap, "IsRead"),
+			"has_attachments": boolValue(itemMap, "HasAttachments"),
+		})
+	}
+	return output
+}
+
+func normalizeCalendarItems(items []any) []any {
+	output := make([]any, 0, len(items))
+	for _, item := range items {
+		itemMap, ok := item.(map[string]any)
+		if !ok {
+			continue
+		}
+		itemID := itemID(itemMap)
+		output = append(output, map[string]any{
+			"id":         itemID["id"],
+			"change_key": itemID["change_key"],
+			"title":      stringValue(itemMap, "Subject"),
+			"start":      stringValue(itemMap, "Start"),
+			"end":        stringValue(itemMap, "End"),
+			"location":   stringValue(itemMap, "Location"),
+		})
+	}
+	return output
+}
+
+func filterMessages(messages []any, query string) []any {
+	if strings.TrimSpace(query) == "" {
+		return messages
+	}
+	needle := strings.ToLower(query)
+	filtered := make([]any, 0, len(messages))
+	for _, message := range messages {
+		messageMap, ok := message.(map[string]any)
+		if !ok {
+			continue
+		}
+		haystack := strings.ToLower(stringValue(messageMap, "subject") + " " + stringValue(messageMap, "sender"))
+		if strings.Contains(haystack, needle) {
+			filtered = append(filtered, message)
+		}
+	}
+	return filtered
+}
+
+func itemID(item map[string]any) map[string]string {
+	raw, _ := item["ItemId"].(map[string]any)
+	if raw == nil {
+		raw, _ = item["Id"].(map[string]any)
+	}
+	if raw == nil {
+		if id := stringValue(item, "Id"); id != "" {
+			return map[string]string{"id": id}
+		}
+		return map[string]string{}
+	}
+	return map[string]string{
+		"id":         stringValue(raw, "Id"),
+		"change_key": stringValue(raw, "ChangeKey"),
+	}
+}
+
+func senderName(value any) string {
+	switch typed := value.(type) {
+	case string:
+		return typed
+	case map[string]any:
+		mailbox, _ := typed["Mailbox"].(map[string]any)
+		if mailbox != nil {
+			if name := stringValue(mailbox, "Name"); name != "" {
+				return name
+			}
+			return stringValue(mailbox, "EmailAddress")
+		}
+		if name := stringValue(typed, "Name"); name != "" {
+			return name
+		}
+		return stringValue(typed, "EmailAddress")
+	default:
+		return ""
+	}
+}
+
+func bodyText(item map[string]any) string {
+	body, _ := item["Body"].(map[string]any)
+	if body != nil {
+		if value := stringValue(body, "Value"); value != "" {
+			return value
+		}
+	}
+	return stringValue(item, "Body")
+}
+
+func anySlice(value any) []any {
+	switch typed := value.(type) {
+	case []any:
+		return typed
+	case []string:
+		output := make([]any, len(typed))
+		for index, value := range typed {
+			output[index] = value
+		}
+		return output
+	default:
+		return nil
+	}
+}
+
+func stringValue(values map[string]any, key string) string {
+	value, _ := values[key].(string)
+	return value
+}
+
+func boolValue(values map[string]any, key string) bool {
+	value, _ := values[key].(bool)
+	return value
+}
+
+func intValue(values map[string]any, key string, fallback int) int {
+	value, ok := values[key]
+	if !ok {
+		return fallback
+	}
+	switch typed := value.(type) {
+	case int:
+		return typed
+	case float64:
+		return int(typed)
+	default:
+		return fallback
+	}
+}

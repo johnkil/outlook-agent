@@ -89,3 +89,38 @@ func TestTransportDryRunDoesNotCallNetwork(t *testing.T) {
 		t.Fatalf("unexpected dry-run summary: %#v", summary)
 	}
 }
+
+func TestTransportExecuteReportsHTTPStatusError(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		switch request.URL.Path {
+		case "/owa/auth.owa":
+			http.SetCookie(response, &http.Cookie{Name: "X-OWA-CANARY", Value: "canary-secret"})
+			response.WriteHeader(http.StatusOK)
+		case "/owa/service.svc":
+			response.Header().Set("Content-Type", "application/json")
+			response.WriteHeader(http.StatusInternalServerError)
+			_ = json.NewEncoder(response).Encode(map[string]any{"error": "server"})
+		default:
+			t.Fatalf("unexpected path: %s", request.URL.Path)
+		}
+	}))
+	defer server.Close()
+
+	client := owa.NewTransport(owa.Config{
+		BaseURL:   server.URL,
+		Username:  "DOMAIN\\user",
+		SecretRef: secret.Ref("memory:owa"),
+	}, secret.NewMemoryStore(map[string]string{"memory:owa": "password"}), server.Client())
+
+	response := client.Execute(context.Background(), transport.ActionRequest{
+		Name:    "FindPeople",
+		Payload: map[string]any{"Body": map[string]any{"Query": "Alex"}},
+	})
+
+	if response.OK {
+		t.Fatalf("expected HTTP error response: %#v", response)
+	}
+	if response.Error != "owa service returned HTTP 500" {
+		t.Fatalf("expected status error, got %#v", response)
+	}
+}

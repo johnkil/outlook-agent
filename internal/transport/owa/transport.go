@@ -21,9 +21,20 @@ type Transport struct {
 
 func NewTransport(config Config, secrets secret.Store, client *http.Client) *Transport {
 	if client == nil {
-		client = http.DefaultClient
+		client = defaultHTTPClient()
 	}
 	return &Transport{config: config, secrets: secrets, client: client}
+}
+
+func defaultHTTPClient() *http.Client {
+	transport, ok := http.DefaultTransport.(*http.Transport)
+	if !ok {
+		return http.DefaultClient
+	}
+	cloned := transport.Clone()
+	cloned.ForceAttemptHTTP2 = false
+	cloned.DisableKeepAlives = true
+	return &http.Client{Transport: cloned}
 }
 
 func (client *Transport) Name() string {
@@ -40,6 +51,12 @@ func (client *Transport) Authenticate(ctx context.Context, _ string) transport.A
 
 func (client *Transport) Capabilities(context.Context) transport.CapabilitySet {
 	return transport.CapabilitySet{Actions: []action.Definition{
+		{Name: "mail.search", Transport: "owa", Class: policy.ReadMetadata, Level: action.LevelHighLevelMCPTool},
+		{Name: "mail.fetch_metadata", Transport: "owa", Class: policy.ReadMetadata, Level: action.LevelHighLevelMCPTool},
+		{Name: "mail.fetch_body", Transport: "owa", Class: policy.ReadBodyExplicit, Level: action.LevelHighLevelMCPTool},
+		{Name: "mail.create_draft", Transport: "owa", Class: policy.DraftOnly, Level: action.LevelHighLevelMCPTool},
+		{Name: "mail.move_to_deleted_items", Transport: "owa", Class: policy.ReversibleBulk, Level: action.LevelHighLevelMCPTool},
+		{Name: "calendar.list", Transport: "owa", Class: policy.ReadMetadata, Level: action.LevelHighLevelMCPTool},
 		{Name: "FindPeople", Transport: "owa", Class: policy.ReadMetadata, Level: action.LevelRawGuardedExecution},
 		{Name: "FindItem", Transport: "owa", Class: policy.ReadMetadata, Level: action.LevelRawGuardedExecution},
 		{Name: "GetItem", Transport: "owa", Class: policy.ReadBodyExplicit, Level: action.LevelRawGuardedExecution},
@@ -51,11 +68,23 @@ func (client *Transport) Capabilities(context.Context) transport.CapabilitySet {
 }
 
 func (client *Transport) Execute(ctx context.Context, request transport.ActionRequest) transport.ActionResponse {
+	if response, ok := client.executeHighLevel(ctx, request); ok {
+		return response
+	}
+	return client.executeService(ctx, request.Name, request.Payload, false)
+}
+
+func (client *Transport) executeService(ctx context.Context, actionName string, requestPayload any, urlPostData bool) transport.ActionResponse {
 	session, err := client.login(ctx)
 	if err != nil {
 		return transport.ActionResponse{OK: false, Error: err.Error()}
 	}
-	httpRequest, err := BuildServiceRequest(client.config, request.Name, session.Canary, request.Payload)
+	var httpRequest *http.Request
+	if urlPostData {
+		httpRequest, err = BuildURLPostDataRequest(client.config, actionName, session.Canary, requestPayload)
+	} else {
+		httpRequest, err = BuildServiceRequest(client.config, actionName, session.Canary, requestPayload)
+	}
 	if err != nil {
 		return transport.ActionResponse{OK: false, Error: err.Error()}
 	}
@@ -70,7 +99,10 @@ func (client *Transport) Execute(ctx context.Context, request transport.ActionRe
 	if err := json.NewDecoder(response.Body).Decode(&payload); err != nil {
 		return transport.ActionResponse{OK: false, Error: err.Error()}
 	}
-	return transport.ActionResponse{OK: response.StatusCode >= 200 && response.StatusCode < 300, Data: payload}
+	if response.StatusCode < 200 || response.StatusCode >= 300 {
+		return transport.ActionResponse{OK: false, Data: payload, Error: fmt.Sprintf("owa service returned HTTP %d", response.StatusCode)}
+	}
+	return transport.ActionResponse{OK: true, Data: payload}
 }
 
 func (client *Transport) DryRun(_ context.Context, request transport.ActionRequest) transport.DryRunSummary {
@@ -100,6 +132,9 @@ func (client *Transport) login(ctx context.Context) (Session, error) {
 }
 
 func countRequestItems(payload map[string]any) int {
+	if count := countValue(payload["ids"]); count > 0 {
+		return count
+	}
 	body, _ := payload["Body"].(map[string]any)
 	for _, key := range []string{"ItemIds", "Items", "FolderIds", "AttachmentIds", "Attachments"} {
 		if count := countValue(body[key]); count > 0 {

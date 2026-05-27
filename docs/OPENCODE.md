@@ -51,7 +51,8 @@ Example `.local/outlook-agent.json`:
       "secret_ref": "keychain:mail.example.com/DOMAIN\\user",
       "settings": {
         "base_url": "https://mail.example.com",
-        "username": "DOMAIN\\user"
+        "username": "DOMAIN\\user",
+        "timezone_id": "UTC"
       }
     }
   }

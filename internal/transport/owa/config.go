@@ -9,9 +9,10 @@ import (
 )
 
 type Config struct {
-	BaseURL   string
-	Username  string
-	SecretRef secret.Ref
+	BaseURL    string
+	Username   string
+	SecretRef  secret.Ref
+	TimeZoneID string
 }
 
 func (config Config) Validate() error {
@@ -66,4 +67,11 @@ func (config Config) normalizedBaseURL() (string, error) {
 		return "", fmt.Errorf("base url must be absolute")
 	}
 	return strings.TrimRight(parsed.String(), "/"), nil
+}
+
+func (config Config) effectiveTimeZoneID() string {
+	if strings.TrimSpace(config.TimeZoneID) == "" {
+		return "UTC"
+	}
+	return strings.TrimSpace(config.TimeZoneID)
 }

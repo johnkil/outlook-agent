@@ -46,3 +46,19 @@ level 5: workflow skill guidance
 - Mutating unknown actions require unsafe mode and confirmation gates.
 - High-use actions graduate to typed schemas and high-level MCP tools.
 
+## OWA Transport Status
+
+Implemented high-level OWA mappings:
+
+| Public action | OWA service action | Status |
+| --- | --- | --- |
+| `mail.search` | `FindItem` | implemented and live smoke-tested |
+| `mail.fetch_metadata` | `GetItem` | implemented with mocked OWA test |
+| `mail.fetch_body` | `GetItem` | implemented with mocked OWA test |
+| `mail.create_draft` | `CreateItem` | implemented as `SaveOnly` draft with mocked OWA test |
+| `mail.move_to_deleted_items` | `DeleteItem` | implemented as `MoveToDeletedItems` with mocked OWA test |
+| `calendar.list` | `GetCalendarView` | implemented with mocked OWA test |
+
+Important OWA compatibility note: high-level OWA JSON payloads use ordered JSON
+objects because this endpoint can reject request maps where `__type` is not the
+first field.

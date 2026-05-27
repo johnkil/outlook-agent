@@ -2,6 +2,7 @@ package owa_test
 
 import (
 	"io"
+	"net/url"
 	"strings"
 	"testing"
 
@@ -50,5 +51,37 @@ func TestBuildServiceRequestSetsHeadersAndBody(t *testing.T) {
 	}
 	if !strings.Contains(string(payload), `"Query":"planning"`) {
 		t.Fatalf("expected JSON body, got %s", payload)
+	}
+}
+
+func TestBuildURLPostDataRequestSetsEncodedHeader(t *testing.T) {
+	config := owa.Config{
+		BaseURL:   "https://example.test",
+		Username:  "user",
+		SecretRef: secret.Ref("keychain:svc/account"),
+	}
+	body := map[string]any{"Body": map[string]any{"RangeStart": "2026-05-27T00:00:00.001"}}
+
+	request, err := owa.BuildURLPostDataRequest(config, "GetCalendarView", "canary-secret", body)
+	if err != nil {
+		t.Fatalf("build url post data request: %v", err)
+	}
+
+	if request.Header.Get("Action") != "GetCalendarView" {
+		t.Fatalf("unexpected Action header: %s", request.Header.Get("Action"))
+	}
+	encoded := request.Header.Get("X-OWA-UrlPostData")
+	if encoded == "" {
+		t.Fatal("expected X-OWA-UrlPostData header")
+	}
+	decoded, err := url.QueryUnescape(encoded)
+	if err != nil {
+		t.Fatalf("decode url post data: %v", err)
+	}
+	if !strings.Contains(decoded, "RangeStart") {
+		t.Fatalf("expected encoded JSON payload, got %s", decoded)
+	}
+	if request.ContentLength != 0 {
+		t.Fatalf("expected empty request body, got content length %d", request.ContentLength)
 	}
 }
