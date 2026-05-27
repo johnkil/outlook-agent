@@ -26,10 +26,18 @@ var scriptSourcePatterns = []*regexp.Regexp{
 	regexp.MustCompile(`(?i)["']([^"']+\.js(?:\?[^"']*)?)["']`),
 }
 
+var navigationHintPatterns = []*regexp.Regexp{
+	regexp.MustCompile(`(?is)<meta\b[^>]*http-equiv\s*=\s*["']?refresh["']?[^>]*content\s*=\s*["'][^"']*?\burl\s*=\s*([^"']+)["']`),
+	regexp.MustCompile(`(?i)(?:window\.)?location(?:\.href)?\s*=\s*["']([^"']+)["']`),
+	regexp.MustCompile(`(?i)(?:window\.)?location\.(?:replace|assign)\s*\(\s*["']([^"']+)["']`),
+}
+
 const maxDiscoveryBytes = 10 * 1024 * 1024
+const maxDiscoverySources = 30
 
 type DiscoveryOptions struct {
-	IncludeLinkedScripts bool
+	IncludeLinkedScripts  bool
+	FollowNavigationHints bool
 }
 
 type DiscoveryDiagnostics struct {
@@ -44,6 +52,7 @@ type DiscoverySourceDiagnostics struct {
 	Bytes              int    `json:"bytes"`
 	Actions            int    `json:"actions"`
 	LinkedScripts      int    `json:"linked_scripts"`
+	NavigationHints    int    `json:"navigation_hints"`
 	LooksLikeLogonPage bool   `json:"looks_like_logon_page,omitempty"`
 }
 
@@ -85,6 +94,40 @@ func DiscoverLinkedScriptSources(text string) []string {
 	return sortedKeys(found)
 }
 
+func DiscoverNavigationHintSources(text string) []string {
+	found := map[string]struct{}{}
+	for _, pattern := range navigationHintPatterns {
+		for _, match := range pattern.FindAllStringSubmatch(text, -1) {
+			if len(match) < 2 {
+				continue
+			}
+			source := strings.TrimSpace(match[1])
+			if !isNavigationHintSource(source) {
+				continue
+			}
+			found[source] = struct{}{}
+		}
+	}
+	return sortedKeys(found)
+}
+
+func isNavigationHintSource(source string) bool {
+	if source == "" {
+		return false
+	}
+	lower := strings.ToLower(source)
+	path := lower
+	if index := strings.Index(path, "?"); index >= 0 {
+		path = path[:index]
+	}
+	for _, suffix := range []string{".js", ".css", ".png", ".jpg", ".jpeg", ".gif", ".svg", ".ico"} {
+		if strings.HasSuffix(path, suffix) {
+			return false
+		}
+	}
+	return true
+}
+
 func (client *Transport) DiscoverServiceActionsFromURL(ctx context.Context, source string) ([]string, error) {
 	return client.DiscoverServiceActionsFromURLWithOptions(ctx, source, DiscoveryOptions{})
 }
@@ -102,48 +145,67 @@ func (client *Transport) DiscoverServiceActionsFromURLDiagnostics(ctx context.Co
 	if err != nil {
 		return DiscoveryDiagnostics{}, err
 	}
-	text, resolved, bytesRead, status, contentType, err := client.fetchDiscoveryText(ctx, session, source)
-	if err != nil {
-		return DiscoveryDiagnostics{}, err
-	}
-	discovered := DiscoverServiceActions(text)
-	linkedScripts := DiscoverLinkedScriptSources(text)
 	diagnostics := DiscoveryDiagnostics{
-		Actions: discovered,
-		Sources: []DiscoverySourceDiagnostics{
-			{
-				Source:             source,
-				Status:             status,
-				ContentType:        contentType,
-				Bytes:              bytesRead,
-				Actions:            len(discovered),
-				LinkedScripts:      len(linkedScripts),
-				LooksLikeLogonPage: looksLikeLogonPage(text),
-			},
-		},
+		Actions: []string{},
+		Sources: []DiscoverySourceDiagnostics{},
 	}
-	if options.IncludeLinkedScripts {
-		for _, scriptSource := range linkedScripts {
-			scriptText, _, scriptBytes, scriptStatus, scriptContentType, err := client.fetchDiscoveryTextRelativeTo(ctx, session, scriptSource, resolved)
-			if err != nil {
-				return DiscoveryDiagnostics{}, err
-			}
-			scriptActions := DiscoverServiceActions(scriptText)
-			scriptLinkedSources := DiscoverLinkedScriptSources(scriptText)
-			diagnostics.Actions = append(diagnostics.Actions, scriptActions...)
-			diagnostics.Sources = append(diagnostics.Sources, DiscoverySourceDiagnostics{
-				Source:             scriptSource,
-				Status:             scriptStatus,
-				ContentType:        scriptContentType,
-				Bytes:              scriptBytes,
-				Actions:            len(scriptActions),
-				LinkedScripts:      len(scriptLinkedSources),
-				LooksLikeLogonPage: looksLikeLogonPage(scriptText),
-			})
-		}
+	seen := map[string]struct{}{}
+	if err := client.discoverSource(ctx, session, source, "", options, seen, &diagnostics); err != nil {
+		return DiscoveryDiagnostics{}, err
 	}
 	diagnostics.Actions = sortedUnique(diagnostics.Actions)
 	return diagnostics, nil
+}
+
+func (client *Transport) discoverSource(ctx context.Context, session Session, source string, reference string, options DiscoveryOptions, seen map[string]struct{}, diagnostics *DiscoveryDiagnostics) error {
+	if len(seen) >= maxDiscoverySources {
+		return nil
+	}
+	resolvedForSeen, err := client.config.discoveryURLRelativeTo(source, reference)
+	if err != nil {
+		return err
+	}
+	if _, exists := seen[resolvedForSeen]; exists {
+		return nil
+	}
+	seen[resolvedForSeen] = struct{}{}
+
+	text, resolved, bytesRead, status, contentType, err := client.fetchDiscoveryTextRelativeTo(ctx, session, source, reference)
+	if err != nil {
+		return err
+	}
+	discovered := DiscoverServiceActions(text)
+	linkedScripts := DiscoverLinkedScriptSources(text)
+	navigationHints := DiscoverNavigationHintSources(text)
+	diagnostics.Actions = append(diagnostics.Actions, discovered...)
+	diagnostics.Sources = append(diagnostics.Sources, DiscoverySourceDiagnostics{
+		Source:             source,
+		Status:             status,
+		ContentType:        contentType,
+		Bytes:              bytesRead,
+		Actions:            len(discovered),
+		LinkedScripts:      len(linkedScripts),
+		NavigationHints:    len(navigationHints),
+		LooksLikeLogonPage: looksLikeLogonPage(text),
+	})
+	if options.FollowNavigationHints {
+		for _, navigationHint := range navigationHints {
+			if _, err := client.config.discoveryURLRelativeTo(navigationHint, resolved); err != nil {
+				continue
+			}
+			if err := client.discoverSource(ctx, session, navigationHint, resolved, options, seen, diagnostics); err != nil {
+				return err
+			}
+		}
+	}
+	if options.IncludeLinkedScripts {
+		for _, scriptSource := range linkedScripts {
+			if err := client.discoverSource(ctx, session, scriptSource, resolved, options, seen, diagnostics); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
 }
 
 func (client *Transport) fetchDiscoveryText(ctx context.Context, session Session, source string) (string, string, int, int, string, error) {

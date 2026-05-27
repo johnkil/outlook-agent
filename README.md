@@ -44,7 +44,7 @@ Use it with:
 
 ```bash
 outlook-agent --config .local/outlook-agent.json auth check --profile work
-outlook-agent --config .local/outlook-agent.json owa discover-actions --url /owa/ --include-linked-scripts --diagnostics
+outlook-agent --config .local/outlook-agent.json owa discover-actions --url /owa/ --include-linked-scripts --follow-navigation-hints --diagnostics
 outlook-agent --config .local/outlook-agent.json mcp
 ```
 

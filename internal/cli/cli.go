@@ -147,7 +147,10 @@ func runOWADiscoverActions(args []string, options Options, runtime Runtime, stdo
 			return 4
 		}
 		for _, source := range sources.URLs {
-			options := owa.DiscoveryOptions{IncludeLinkedScripts: sources.IncludeLinkedScripts}
+			options := owa.DiscoveryOptions{
+				IncludeLinkedScripts:  sources.IncludeLinkedScripts,
+				FollowNavigationHints: sources.FollowNavigationHints,
+			}
 			var actions []string
 			var err error
 			if sources.Diagnostics {
@@ -189,10 +192,11 @@ func runOWADiscoverActions(args []string, options Options, runtime Runtime, stdo
 }
 
 type discoverActionSources struct {
-	Files                []string
-	URLs                 []string
-	IncludeLinkedScripts bool
-	Diagnostics          bool
+	Files                 []string
+	URLs                  []string
+	IncludeLinkedScripts  bool
+	FollowNavigationHints bool
+	Diagnostics           bool
 }
 
 func parseDiscoverActionsArgs(args []string) (discoverActionSources, error) {
@@ -213,6 +217,8 @@ func parseDiscoverActionsArgs(args []string) (discoverActionSources, error) {
 			sources.URLs = append(sources.URLs, args[index])
 		case "--include-linked-scripts":
 			sources.IncludeLinkedScripts = true
+		case "--follow-navigation-hints":
+			sources.FollowNavigationHints = true
 		case "--diagnostics":
 			sources.Diagnostics = true
 		default:

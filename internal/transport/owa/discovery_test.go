@@ -69,6 +69,22 @@ func TestDiscoverLinkedScriptSourcesExtractsQuotedJavaScriptReferences(t *testin
 	}
 }
 
+func TestDiscoverNavigationHintSourcesExtractsMetaRefreshAndLocationTargets(t *testing.T) {
+	html := `
+		<meta http-equiv="refresh" content="0; URL=/owa/bootstrap.aspx?layout=1">
+		<script>window.location = '/owa/deeplink.aspx?mode=full';</script>
+		<script>location.replace("shell/start.aspx");</script>
+		<script>var ignored = "/owa/scripts/app.js";</script>
+	`
+
+	sources := owa.DiscoverNavigationHintSources(html)
+
+	expected := []string{"/owa/bootstrap.aspx?layout=1", "/owa/deeplink.aspx?mode=full", "shell/start.aspx"}
+	if !slices.Equal(sources, expected) {
+		t.Fatalf("expected navigation hints %#v, got %#v", expected, sources)
+	}
+}
+
 func TestCompareDiscoveredServiceActionsReportsUnknownAndMissing(t *testing.T) {
 	discovered := []string{
 		"FindItem",
@@ -203,6 +219,61 @@ func TestTransportReportsDiscoveryDiagnostics(t *testing.T) {
 	}
 	if diagnostics.Sources[1].Actions != 1 {
 		t.Fatalf("unexpected linked script diagnostics: %#v", diagnostics.Sources[1])
+	}
+}
+
+func TestTransportFollowsNavigationHints(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		switch request.URL.Path {
+		case "/owa/auth.owa":
+			http.SetCookie(response, &http.Cookie{Name: "X-OWA-CANARY", Value: "canary-secret"})
+			response.WriteHeader(http.StatusOK)
+		case "/owa/":
+			response.Header().Set("Content-Type", "text/html")
+			_, _ = response.Write([]byte(`<meta http-equiv="refresh" content="0; URL=/owa/bootstrap.aspx">`))
+		case "/owa/bootstrap.aspx":
+			response.Header().Set("Content-Type", "text/html")
+			_, _ = response.Write([]byte(`<script src="scripts/app.js?v=1"></script>`))
+		case "/owa/scripts/app.js":
+			if request.URL.Query().Get("v") != "1" {
+				t.Fatalf("expected script query to be preserved, got %s", request.URL.RawQuery)
+			}
+			response.Header().Set("Content-Type", "application/javascript")
+			_, _ = response.Write([]byte(`fetch("/owa/service.svc?action=FindItem");`))
+		default:
+			t.Fatalf("unexpected path: %s", request.URL.String())
+		}
+	}))
+	defer server.Close()
+	client := owa.NewTransport(owa.Config{
+		BaseURL:   server.URL,
+		Username:  "DOMAIN\\user",
+		SecretRef: secret.Ref("memory:owa"),
+	}, secret.NewMemoryStore(map[string]string{"memory:owa": "password"}), server.Client())
+
+	diagnostics, err := client.DiscoverServiceActionsFromURLDiagnostics(context.Background(), "/owa/", owa.DiscoveryOptions{
+		FollowNavigationHints: true,
+		IncludeLinkedScripts:  true,
+	})
+
+	if err != nil {
+		t.Fatalf("discover diagnostics with navigation hints: %v", err)
+	}
+	expectedActions := []string{"FindItem"}
+	if !slices.Equal(diagnostics.Actions, expectedActions) {
+		t.Fatalf("expected actions %#v, got %#v", expectedActions, diagnostics.Actions)
+	}
+	if len(diagnostics.Sources) != 3 {
+		t.Fatalf("expected root, navigation target, and script diagnostics, got %#v", diagnostics.Sources)
+	}
+	if diagnostics.Sources[0].NavigationHints != 1 {
+		t.Fatalf("expected root navigation hint count, got %#v", diagnostics.Sources[0])
+	}
+	if diagnostics.Sources[1].Source != "/owa/bootstrap.aspx" || diagnostics.Sources[1].LinkedScripts != 1 {
+		t.Fatalf("unexpected navigation target diagnostics: %#v", diagnostics.Sources[1])
+	}
+	if diagnostics.Sources[2].Source != "scripts/app.js?v=1" || diagnostics.Sources[2].Actions != 1 {
+		t.Fatalf("unexpected linked script diagnostics: %#v", diagnostics.Sources[2])
 	}
 }
 

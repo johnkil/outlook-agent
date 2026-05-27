@@ -30,6 +30,7 @@ OWA page or static asset through the authenticated session:
 ```bash
 outlook-agent --config .local/outlook-agent.json owa discover-actions --url /owa/
 outlook-agent --config .local/outlook-agent.json owa discover-actions --url /owa/ --include-linked-scripts
+outlook-agent --config .local/outlook-agent.json owa discover-actions --url /owa/ --follow-navigation-hints
 outlook-agent --config .local/outlook-agent.json owa discover-actions --url /owa/ --include-linked-scripts --diagnostics
 outlook-agent --config .local/outlook-agent.json owa discover-actions --url /owa/scripts/app.js
 ```
@@ -45,6 +46,10 @@ counts for HTTP status, content type, bytes, direct action matches, linked
 script references, and logon-page markers without printing or storing raw HTML
 or JavaScript.
 
+Use `--follow-navigation-hints` for small HTML shells that contain meta-refresh
+or JavaScript `location` navigation. Only same-origin navigation targets are
+followed, and fetched content is still kept in memory only.
+
 The output includes:
 
 - `discovered`: sorted unique service-action names found in the file;
@@ -53,6 +58,7 @@ The output includes:
 - `missing_classified`: registry names not seen in that particular input file;
 - `classes`: safety classes for discovered names.
 - `sources`: only when `--diagnostics` is used; sanitized source-level counts.
+  Source diagnostics include `navigation_hints` counts.
 
 Do not commit downloaded OWA assets or tenant-specific documentation. Commit
 only new generic action names, safety classifications, tests, and sanitized

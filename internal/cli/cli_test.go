@@ -207,6 +207,25 @@ func TestOWADiscoverActionsDiagnosticsFromAuthenticatedURL(t *testing.T) {
 	}
 }
 
+func TestOWADiscoverActionsFromAuthenticatedURLFollowsNavigationHints(t *testing.T) {
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	client := &discoveringTransport{actions: []string{"FindItem"}}
+
+	code := RunWithRuntime([]string{"owa", "discover-actions", "--url", "/owa/", "--follow-navigation-hints"}, &stdout, &stderr, Runtime{
+		BuildTransport: func(_ context.Context, options Options) (transport.Transport, string, error) {
+			return client, "work", nil
+		},
+	})
+
+	if code != 0 {
+		t.Fatalf("expected exit code 0, got %d, stderr=%s", code, stderr.String())
+	}
+	if !client.followNavigationHints {
+		t.Fatal("expected navigation hint option to be forwarded")
+	}
+}
+
 func TestUnknownCommandReturnsValidationError(t *testing.T) {
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer
@@ -226,11 +245,12 @@ func TestUnknownCommandReturnsValidationError(t *testing.T) {
 
 type discoveringTransport struct {
 	transport.Transport
-	actions              []string
-	sources              []owa.DiscoverySourceDiagnostics
-	source               string
-	includeLinkedScripts bool
-	diagnostics          bool
+	actions               []string
+	sources               []owa.DiscoverySourceDiagnostics
+	source                string
+	includeLinkedScripts  bool
+	followNavigationHints bool
+	diagnostics           bool
 }
 
 func (client *discoveringTransport) Name() string {
@@ -256,12 +276,14 @@ func (client *discoveringTransport) DryRun(context.Context, transport.ActionRequ
 func (client *discoveringTransport) DiscoverServiceActionsFromURLWithOptions(_ context.Context, source string, options owa.DiscoveryOptions) ([]string, error) {
 	client.source = source
 	client.includeLinkedScripts = options.IncludeLinkedScripts
+	client.followNavigationHints = options.FollowNavigationHints
 	return client.actions, nil
 }
 
 func (client *discoveringTransport) DiscoverServiceActionsFromURLDiagnostics(_ context.Context, source string, options owa.DiscoveryOptions) (owa.DiscoveryDiagnostics, error) {
 	client.source = source
 	client.includeLinkedScripts = options.IncludeLinkedScripts
+	client.followNavigationHints = options.FollowNavigationHints
 	client.diagnostics = true
 	return owa.DiscoveryDiagnostics{Actions: client.actions, Sources: client.sources}, nil
 }
