@@ -44,7 +44,9 @@ Key tool inputs:
 
 - `outlook.capabilities`: returns `actions` for backwards-compatible name-only
   clients and `details` for policy-aware clients. Each `details` entry contains
-  `name`, `transport`, `safety_class`, and numeric coverage `level`.
+  `name`, `transport`, `safety_class`, numeric coverage `level`,
+  `allowed_direct`, `requires_dry_run`, `requires_confirmation`, and
+  `requires_unsafe`.
 - `outlook.calendar_availability`: `start`, `end`, and optional `email`.
   When `email` is omitted, OWA profiles use `settings.mailbox_email` if
   configured.

@@ -38,10 +38,14 @@ type AuthCheckOutput struct {
 type EmptyInput struct{}
 
 type CapabilityDetailOutput struct {
-	Name        string `json:"name"`
-	Transport   string `json:"transport"`
-	SafetyClass string `json:"safety_class"`
-	Level       int    `json:"level"`
+	Name                 string `json:"name"`
+	Transport            string `json:"transport"`
+	SafetyClass          string `json:"safety_class"`
+	Level                int    `json:"level"`
+	AllowedDirect        bool   `json:"allowed_direct"`
+	RequiresDryRun       bool   `json:"requires_dry_run"`
+	RequiresConfirmation bool   `json:"requires_confirmation"`
+	RequiresUnsafe       bool   `json:"requires_unsafe,omitempty"`
 }
 
 type CapabilitiesOutput struct {
@@ -247,11 +251,16 @@ func capabilitiesHandler(client transport.Transport) func(context.Context, *mcp.
 		details := make([]CapabilityDetailOutput, 0, len(capabilities.Actions))
 		for _, action := range capabilities.Actions {
 			actions = append(actions, action.Name)
+			decision := policy.Evaluate(policy.Request{Class: action.Class})
 			details = append(details, CapabilityDetailOutput{
-				Name:        action.Name,
-				Transport:   action.Transport,
-				SafetyClass: string(action.Class),
-				Level:       int(action.Level),
+				Name:                 action.Name,
+				Transport:            action.Transport,
+				SafetyClass:          string(action.Class),
+				Level:                int(action.Level),
+				AllowedDirect:        decision.Allowed,
+				RequiresDryRun:       decision.RequiresDryRun,
+				RequiresConfirmation: decision.RequiresConfirmation,
+				RequiresUnsafe:       decision.RequiresUnsafe,
 			})
 		}
 		return nil, CapabilitiesOutput{Actions: actions, Details: details}, nil

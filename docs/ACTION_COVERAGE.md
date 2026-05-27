@@ -51,7 +51,10 @@ level 5: workflow skill guidance
   policy checks before transport execution.
 - MCP callers should inspect `outlook.capabilities.details` before choosing
   `outlook.raw_action`; the details array exposes each action's transport,
-  safety class, and coverage level from the runtime registry.
+  safety class, coverage level, and direct policy gates from the runtime
+  registry. A caller can use `requires_dry_run`, `requires_confirmation`, and
+  `requires_unsafe` to choose between direct raw execution, `action_dry_run`,
+  and `action_confirm`.
 
 ## OWA Transport Status
 

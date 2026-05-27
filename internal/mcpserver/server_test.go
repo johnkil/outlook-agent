@@ -2,6 +2,7 @@ package mcpserver_test
 
 import (
 	"context"
+	"encoding/json"
 	"slices"
 	"testing"
 
@@ -147,6 +148,114 @@ func TestMCPToolCalendarAvailabilityForwardsEmail(t *testing.T) {
 	if capturing.lastRequest.Payload["email"] != "colleague@example.com" {
 		t.Fatalf("expected email forwarded to transport, got %#v", capturing.lastRequest.Payload)
 	}
+}
+
+func TestMCPAgentFlowDiscoversPolicyGateAndConfirmsBulkAction(t *testing.T) {
+	ctx := context.Background()
+	serverTransport, clientTransport := mcp.NewInMemoryTransports()
+
+	serverSession, err := mcpserver.New().Connect(ctx, serverTransport, nil)
+	if err != nil {
+		t.Fatalf("connect server: %v", err)
+	}
+	defer serverSession.Close()
+	defer serverSession.Wait()
+
+	client := mcp.NewClient(&mcp.Implementation{Name: "test-client", Version: "0.0.1"}, nil)
+	clientSession, err := client.Connect(ctx, clientTransport, nil)
+	if err != nil {
+		t.Fatalf("connect client: %v", err)
+	}
+	defer clientSession.Close()
+
+	capabilitiesResult, err := clientSession.CallTool(ctx, &mcp.CallToolParams{
+		Name:      "outlook.capabilities",
+		Arguments: map[string]any{},
+	})
+	if err != nil {
+		t.Fatalf("call capabilities: %v", err)
+	}
+	capabilities := decodeStructured[mcpserver.CapabilitiesOutput](t, capabilitiesResult)
+	var moveDetail mcpserver.CapabilityDetailOutput
+	for _, detail := range capabilities.Details {
+		if detail.Name == "mail.move_to_deleted_items" {
+			moveDetail = detail
+			break
+		}
+	}
+	if moveDetail.Name == "" {
+		t.Fatalf("expected move-to-deleted-items capability detail in %#v", capabilities.Details)
+	}
+	if moveDetail.SafetyClass != "reversible_bulk" || moveDetail.AllowedDirect || !moveDetail.RequiresDryRun || !moveDetail.RequiresConfirmation || moveDetail.RequiresUnsafe {
+		t.Fatalf("expected reversible bulk policy gate in capability detail: %#v", moveDetail)
+	}
+
+	payload := map[string]any{"ids": []any{"msg-1"}}
+	rawResult, err := clientSession.CallTool(ctx, &mcp.CallToolParams{
+		Name: "outlook.raw_action",
+		Arguments: map[string]any{
+			"action":  "mail.move_to_deleted_items",
+			"payload": payload,
+		},
+	})
+	if err != nil {
+		t.Fatalf("call raw action: %v", err)
+	}
+	rawOutput := decodeStructured[mcpserver.ActionResultOutput](t, rawResult)
+	if rawOutput.OK || rawOutput.Error == "" {
+		t.Fatalf("expected raw gated action to be rejected before dry-run: %#v", rawOutput)
+	}
+
+	dryRunResult, err := clientSession.CallTool(ctx, &mcp.CallToolParams{
+		Name: "outlook.action_dry_run",
+		Arguments: map[string]any{
+			"action":  "mail.move_to_deleted_items",
+			"payload": payload,
+		},
+	})
+	if err != nil {
+		t.Fatalf("call dry-run: %v", err)
+	}
+	dryRun := decodeStructured[mcpserver.DryRunOutput](t, dryRunResult)
+	if !dryRun.OK || dryRun.ConfirmationToken == "" || dryRun.Count != 1 || !dryRun.RequiresConfirmation {
+		t.Fatalf("expected dry-run confirmation token: %#v", dryRun)
+	}
+
+	confirmResult, err := clientSession.CallTool(ctx, &mcp.CallToolParams{
+		Name: "outlook.action_confirm",
+		Arguments: map[string]any{
+			"confirm_token": dryRun.ConfirmationToken,
+			"action":        "mail.move_to_deleted_items",
+			"payload":       payload,
+		},
+	})
+	if err != nil {
+		t.Fatalf("call confirm: %v", err)
+	}
+	confirm := decodeStructured[mcpserver.ActionResultOutput](t, confirmResult)
+	if !confirm.OK || confirm.Data["moved_count"] != float64(1) {
+		t.Fatalf("expected confirmed move action to execute: %#v", confirm)
+	}
+}
+
+func decodeStructured[T any](t *testing.T, result *mcp.CallToolResult) T {
+	t.Helper()
+	if result.IsError {
+		t.Fatalf("expected tool success, got error result: %#v", result)
+	}
+	raw, ok := result.StructuredContent.(json.RawMessage)
+	if !ok {
+		encoded, err := json.Marshal(result.StructuredContent)
+		if err != nil {
+			t.Fatalf("marshal structured output: %v; value=%#v", err, result.StructuredContent)
+		}
+		raw = encoded
+	}
+	var output T
+	if err := json.Unmarshal(raw, &output); err != nil {
+		t.Fatalf("decode structured output: %v; raw=%s", err, string(raw))
+	}
+	return output
 }
 
 type capturingTransport struct {

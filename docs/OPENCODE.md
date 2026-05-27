@@ -101,5 +101,10 @@ changing the OpenCode-facing surface.
 Agents should call `outlook.capabilities` before raw transport calls. The
 response keeps a backwards-compatible `actions` name list and adds `details`
 entries with `name`, `transport`, `safety_class`, and numeric coverage `level`
-so agents can choose the dry-run/confirmation path instead of guessing from
-documentation.
+plus `allowed_direct`, `requires_dry_run`, `requires_confirmation`, and
+`requires_unsafe` policy gates. For gated actions, the expected flow is:
+
+1. Read `outlook.capabilities.details`.
+2. If direct execution is not allowed, call `outlook.action_dry_run`.
+3. Show or reason over the dry-run summary.
+4. Execute only the exact payload with `outlook.action_confirm`.
