@@ -72,4 +72,4 @@
 - [x] Run public-safety grep with the local company-specific pattern set.
 - [x] Update `docs/ROADMAP.md`.
 - [x] Update local spike log in `notes/ideas/2026-05-27-outlook-automation-spike/log.md`.
-- [ ] Commit and push the branch.
+- [x] Commit and push the branch.
