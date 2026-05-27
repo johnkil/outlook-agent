@@ -69,6 +69,28 @@ func TestDiscoverLinkedScriptSourcesExtractsQuotedJavaScriptReferences(t *testin
 	}
 }
 
+func TestDiscoverLinkedScriptSourcesPrioritizesScriptTagsBeforeQuotedReferences(t *testing.T) {
+	html := `
+		<script>
+			const libraries = ["adal.min.js", "adaptive-card-render.js"];
+		</script>
+		<script src="prem/15.2.1748/scripts/boot.owaframe.0.mouse.js"></script>
+		<script src="prem/15.2.1748/scripts/boot.owaframe.1.mouse.js"></script>
+	`
+
+	sources := owa.DiscoverLinkedScriptSources(html)
+
+	expected := []string{
+		"prem/15.2.1748/scripts/boot.owaframe.0.mouse.js",
+		"prem/15.2.1748/scripts/boot.owaframe.1.mouse.js",
+		"adal.min.js",
+		"adaptive-card-render.js",
+	}
+	if !slices.Equal(sources, expected) {
+		t.Fatalf("expected script tag sources first %#v, got %#v", expected, sources)
+	}
+}
+
 func TestDiscoverNavigationHintSourcesExtractsMetaRefreshAndLocationTargets(t *testing.T) {
 	html := `
 		<meta http-equiv="refresh" content="0; URL=/owa/bootstrap.aspx?layout=1">
@@ -305,13 +327,67 @@ func TestTransportDiscoveryDiagnosticsReportsSanitizedTargetPreviews(t *testing.
 	if len(diagnostics.Sources) != 1 {
 		t.Fatalf("expected one source diagnostic, got %#v", diagnostics.Sources)
 	}
-	expectedScripts := []string{"/owa/prem/15.2.1748/scripts/boot.js", "/owa/scripts/app.js?v=1"}
+	expectedScripts := []string{"/owa/scripts/app.js?v=1", "/owa/prem/15.2.1748/scripts/boot.js"}
 	if !slices.Equal(diagnostics.Sources[0].LinkedScriptPaths, expectedScripts) {
 		t.Fatalf("expected sanitized linked script paths %#v, got %#v", expectedScripts, diagnostics.Sources[0])
 	}
 	expectedNavigation := []string{"/owa/bootstrap.aspx?layout=1", "/owa/start/shell/start.aspx"}
 	if !slices.Equal(diagnostics.Sources[0].NavigationHintPaths, expectedNavigation) {
 		t.Fatalf("expected sanitized navigation hint paths %#v, got %#v", expectedNavigation, diagnostics.Sources[0])
+	}
+}
+
+func TestTransportResolvesLinkedScriptsAgainstHTMLBaseHref(t *testing.T) {
+	basePath := "/owa/prem/15.2.1748/scripts/premium/"
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		switch request.URL.Path {
+		case "/owa/auth.owa":
+			http.SetCookie(response, &http.Cookie{Name: "X-OWA-CANARY", Value: "canary-secret"})
+			response.WriteHeader(http.StatusOK)
+		case "/owa/":
+			if request.URL.Query().Get("layout") != "mouse" {
+				t.Fatalf("expected mouse layout query, got %s", request.URL.RawQuery)
+			}
+			response.Header().Set("Content-Type", "text/html")
+			_, _ = response.Write([]byte(`
+				<html>
+					<head><base href="` + basePath + `"></head>
+					<body><script src="boot.js"></script></body>
+				</html>
+			`))
+		case basePath + "boot.js":
+			response.Header().Set("Content-Type", "application/javascript")
+			_, _ = response.Write([]byte(`fetch("/owa/service.svc?action=FindItem");`))
+		case "/owa/boot.js":
+			http.NotFound(response, request)
+		default:
+			t.Fatalf("unexpected path: %s", request.URL.String())
+		}
+	}))
+	defer server.Close()
+	client := owa.NewTransport(owa.Config{
+		BaseURL:   server.URL,
+		Username:  "DOMAIN\\user",
+		SecretRef: secret.Ref("memory:owa"),
+	}, secret.NewMemoryStore(map[string]string{"memory:owa": "password"}), server.Client())
+
+	diagnostics, err := client.DiscoverServiceActionsFromURLDiagnostics(context.Background(), "/owa/?layout=mouse", owa.DiscoveryOptions{
+		IncludeLinkedScripts: true,
+	})
+
+	if err != nil {
+		t.Fatalf("discover base-resolved script actions: %v", err)
+	}
+	expectedActions := []string{"FindItem"}
+	if !slices.Equal(diagnostics.Actions, expectedActions) {
+		t.Fatalf("expected actions %#v, got %#v", expectedActions, diagnostics.Actions)
+	}
+	expectedScripts := []string{basePath + "boot.js"}
+	if !slices.Equal(diagnostics.Sources[0].LinkedScriptPaths, expectedScripts) {
+		t.Fatalf("expected base-resolved linked script paths %#v, got %#v", expectedScripts, diagnostics.Sources[0])
+	}
+	if diagnostics.Sources[1].FinalPath != basePath+"boot.js" || diagnostics.Sources[1].Actions != 1 {
+		t.Fatalf("expected base-resolved script diagnostics, got %#v", diagnostics.Sources)
 	}
 }
 

@@ -52,7 +52,7 @@ level 5: workflow skill guidance
 
 ## OWA Transport Status
 
-The raw OWA registry currently classifies 47 service actions. See
+The raw OWA registry currently classifies 55 service actions. See
 [OWA Action Registry](OWA_ACTION_REGISTRY.md).
 
 Implemented high-level OWA mappings:

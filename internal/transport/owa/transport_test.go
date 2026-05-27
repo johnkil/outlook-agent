@@ -81,6 +81,9 @@ func TestTransportCapabilitiesIncludeClassifiedOWAServiceActions(t *testing.T) {
 	}
 
 	for _, expected := range []string{
+		"ApplyBulkItemAction",
+		"ApplyConversationAction",
+		"ApplyMessageAction",
 		"ArchiveItem",
 		"ConvertId",
 		"CopyFolder",
@@ -89,9 +92,11 @@ func TestTransportCapabilitiesIncludeClassifiedOWAServiceActions(t *testing.T) {
 		"CreateFolder",
 		"CreateFolderPath",
 		"CreateItem",
+		"CreateSweepRuleForSender",
 		"DeleteAttachment",
 		"DeleteFolder",
 		"DeleteItem",
+		"EmptyFolder",
 		"ExpandDL",
 		"FindItem",
 		"FindPeople",
@@ -121,13 +126,16 @@ func TestTransportCapabilitiesIncludeClassifiedOWAServiceActions(t *testing.T) {
 		"MarkAsJunk",
 		"MoveFolder",
 		"MoveItem",
+		"NotificationSubscribe",
 		"PerformReminderAction",
 		"ResolveNames",
+		"SearchMailboxes",
 		"SendItem",
 		"SyncFolderHierarchy",
 		"SyncFolderItems",
 		"UpdateFolder",
 		"UpdateItem",
+		"UpdateUserConfiguration",
 	} {
 		definition, ok := byName[expected]
 		if !ok {
@@ -148,8 +156,16 @@ func TestTransportCapabilitiesIncludeClassifiedOWAServiceActions(t *testing.T) {
 	assertClass(t, byName, "SendItem", policy.SendLike)
 	assertClass(t, byName, "DeleteItem", policy.Destructive)
 	assertClass(t, byName, "DeleteFolder", policy.Destructive)
+	assertClass(t, byName, "EmptyFolder", policy.Destructive)
+	assertClass(t, byName, "ApplyBulkItemAction", policy.Destructive)
+	assertClass(t, byName, "ApplyConversationAction", policy.Destructive)
+	assertClass(t, byName, "ApplyMessageAction", policy.Destructive)
 	assertClass(t, byName, "MoveItem", policy.ReversibleBulk)
 	assertClass(t, byName, "UpdateItem", policy.SettingsOrRules)
+	assertClass(t, byName, "CreateSweepRuleForSender", policy.SettingsOrRules)
+	assertClass(t, byName, "UpdateUserConfiguration", policy.SettingsOrRules)
+	assertClass(t, byName, "SearchMailboxes", policy.ReadBodyExplicit)
+	assertClass(t, byName, "NotificationSubscribe", policy.ReadMetadata)
 
 	assertMissing(t, capabilities.Actions, "UpdateInboxRules")
 }

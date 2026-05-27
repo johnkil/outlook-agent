@@ -44,9 +44,11 @@ func rawServiceCapabilities() []action.Definition {
 		rawRead("ResolveNames"),
 		rawRead("SyncFolderHierarchy"),
 		rawRead("SyncFolderItems"),
+		rawRead("NotificationSubscribe"),
 
 		raw("GetAttachment", policy.ReadAttachmentExplicit),
 		raw("GetItem", policy.ReadBodyExplicit),
+		raw("SearchMailboxes", policy.ReadBodyExplicit),
 
 		raw("ArchiveItem", policy.ReversibleBulk),
 		raw("CopyFolder", policy.ReversibleBulk),
@@ -63,14 +65,20 @@ func rawServiceCapabilities() []action.Definition {
 		raw("CreateItem", policy.SendLike),
 		raw("SendItem", policy.SendLike),
 
+		raw("ApplyBulkItemAction", policy.Destructive),
+		raw("ApplyConversationAction", policy.Destructive),
+		raw("ApplyMessageAction", policy.Destructive),
 		raw("DeleteAttachment", policy.Destructive),
 		raw("DeleteFolder", policy.Destructive),
 		raw("DeleteItem", policy.Destructive),
+		raw("EmptyFolder", policy.Destructive),
 
+		raw("CreateSweepRuleForSender", policy.SettingsOrRules),
 		raw("GetInboxRules", policy.SettingsOrRules),
 		raw("GetUserOofSettings", policy.SettingsOrRules),
 		raw("UpdateFolder", policy.SettingsOrRules),
 		raw("UpdateItem", policy.SettingsOrRules),
+		raw("UpdateUserConfiguration", policy.SettingsOrRules),
 	}
 }
 

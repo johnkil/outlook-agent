@@ -38,8 +38,11 @@ outlook-agent --config .local/outlook-agent.json owa discover-actions --url /owa
 Authenticated discovery keeps downloaded content in memory only and rejects
 cross-origin URLs so session cookies and canary headers are not sent to another
 host. `--include-linked-scripts` scans same-origin `<script src="...">` assets
-linked from the fetched page, resolves relative script paths against that page,
-and also keeps those assets in memory only.
+linked from the fetched page, resolves relative script paths against that page
+or a same-origin HTML base reference when present, and also keeps those assets
+in memory only. Real script-tag sources are followed before quoted JavaScript
+filenames from inline boot configuration so bounded discovery reaches primary
+application bundles before opportunistic library names.
 
 Use `--diagnostics` when a live source returns no actions. It adds per-source
 counts for HTTP status, content type, bytes, direct action matches, linked
@@ -94,9 +97,9 @@ The output includes:
   `title_present`, `title_kind`, `script_blocks`, `navigation_hints`,
   `linked_script_paths`, `navigation_hint_paths`, `looks_like_logon_page`,
   `looks_like_owa_error_page`, and `fetch_error` fields. Preview paths are
-  same-origin path plus query only, de-duplicated, sorted, and capped at 20
-  entries per source. Hosts, fragments, raw titles, cookies, canary values, and
-  response bodies are never emitted.
+  same-origin path plus query only, de-duplicated, emitted in traversal order,
+  and capped at 20 entries per source. Hosts, fragments, raw titles, cookies,
+  canary values, and response bodies are never emitted.
 
 Do not commit downloaded OWA assets or tenant-specific documentation. Commit
 only new generic action names, safety classifications, tests, and sanitized
@@ -106,13 +109,13 @@ notes.
 
 | Safety class | Actions |
 | --- | --- |
-| `read_metadata` | `ConvertId`, `ExpandDL`, `FindConversation`, `FindFolder`, `FindItem`, `FindPeople`, `GetCalendarView`, `GetConversationItems`, `GetFolder`, `GetMailTips`, `GetPersona`, `GetReminders`, `GetRoomLists`, `GetRooms`, `GetServerTimeZones`, `GetServiceConfiguration`, `GetSharingFolder`, `GetSharingMetadata`, `GetUserAvailability`, `GetUserAvailabilityInternal`, `GetUserPhoto`, `GetUserRetentionPolicyTags`, `ResolveNames`, `SyncFolderHierarchy`, `SyncFolderItems` |
-| `read_body_explicit` | `GetItem` |
+| `read_metadata` | `ConvertId`, `ExpandDL`, `FindConversation`, `FindFolder`, `FindItem`, `FindPeople`, `GetCalendarView`, `GetConversationItems`, `GetFolder`, `GetMailTips`, `GetPersona`, `GetReminders`, `GetRoomLists`, `GetRooms`, `GetServerTimeZones`, `GetServiceConfiguration`, `GetSharingFolder`, `GetSharingMetadata`, `GetUserAvailability`, `GetUserAvailabilityInternal`, `GetUserPhoto`, `GetUserRetentionPolicyTags`, `NotificationSubscribe`, `ResolveNames`, `SyncFolderHierarchy`, `SyncFolderItems` |
+| `read_body_explicit` | `GetItem`, `SearchMailboxes` |
 | `read_attachment_explicit` | `GetAttachment` |
 | `reversible_bulk` | `ArchiveItem`, `CopyFolder`, `CopyItem`, `CreateAttachment`, `MarkAllItemsAsRead`, `MarkAsJunk`, `MoveFolder`, `MoveItem`, `PerformReminderAction` |
 | `send_like` | `CreateItem`, `SendItem` |
-| `destructive` | `DeleteAttachment`, `DeleteFolder`, `DeleteItem` |
-| `settings_or_rules` | `CreateFolder`, `CreateFolderPath`, `GetInboxRules`, `GetUserOofSettings`, `UpdateFolder`, `UpdateItem` |
+| `destructive` | `ApplyBulkItemAction`, `ApplyConversationAction`, `ApplyMessageAction`, `DeleteAttachment`, `DeleteFolder`, `DeleteItem`, `EmptyFolder` |
+| `settings_or_rules` | `CreateFolder`, `CreateFolderPath`, `CreateSweepRuleForSender`, `GetInboxRules`, `GetUserOofSettings`, `UpdateFolder`, `UpdateItem`, `UpdateUserConfiguration` |
 
 ## Promotion Notes
 

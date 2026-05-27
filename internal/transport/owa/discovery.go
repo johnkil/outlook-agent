@@ -23,10 +23,8 @@ var serviceActionPatterns = []*regexp.Regexp{
 	regexp.MustCompile(`["']Action["']\s*:\s*["']([A-Z][A-Za-z0-9]+)["']`),
 }
 
-var scriptSourcePatterns = []*regexp.Regexp{
-	regexp.MustCompile(`(?is)<script\b[^>]*\bsrc\s*=\s*["']([^"']+)["']`),
-	regexp.MustCompile(`(?i)["']([^"']+\.js(?:\?[^"']*)?)["']`),
-}
+var scriptTagSourcePattern = regexp.MustCompile(`(?is)<script\b[^>]*\bsrc\s*=\s*["']([^"']+)["']`)
+var quotedJavaScriptReferencePattern = regexp.MustCompile(`(?i)["']([^"']+\.js(?:\?[^"']*)?)["']`)
 
 var navigationHintPatterns = []*regexp.Regexp{
 	regexp.MustCompile(`(?is)<meta\b[^>]*http-equiv\s*=\s*["']?refresh["']?[^>]*content\s*=\s*["'][^"']*?\burl\s*=\s*([^"']+)["']`),
@@ -34,6 +32,7 @@ var navigationHintPatterns = []*regexp.Regexp{
 	regexp.MustCompile(`(?i)(?:window\.)?location\.(?:replace|assign)\s*\(\s*["']([^"']+)["']`),
 }
 
+var htmlBaseHrefPattern = regexp.MustCompile(`(?is)<base\b[^>]*\bhref\s*=\s*["']([^"']+)["']`)
 var titlePattern = regexp.MustCompile(`(?is)<title\b[^>]*>(.*?)</title>`)
 var scriptTagPattern = regexp.MustCompile(`(?is)<script\b([^>]*)>`)
 var scriptSourceAttributePattern = regexp.MustCompile(`(?i)\bsrc\s*=`)
@@ -95,20 +94,11 @@ func DiscoverServiceActions(text string) []string {
 }
 
 func DiscoverLinkedScriptSources(text string) []string {
-	found := map[string]struct{}{}
-	for _, pattern := range scriptSourcePatterns {
-		for _, match := range pattern.FindAllStringSubmatch(text, -1) {
-			if len(match) < 2 {
-				continue
-			}
-			source := strings.TrimSpace(match[1])
-			if source == "" {
-				continue
-			}
-			found[source] = struct{}{}
-		}
-	}
-	return sortedKeys(found)
+	seen := map[string]struct{}{}
+	output := make([]string, 0)
+	output = appendDiscoveredScriptSources(output, seen, text, scriptTagSourcePattern)
+	output = appendDiscoveredScriptSources(output, seen, text, quotedJavaScriptReferencePattern)
+	return output
 }
 
 func DiscoverNavigationHintSources(text string) []string {
@@ -126,6 +116,28 @@ func DiscoverNavigationHintSources(text string) []string {
 		}
 	}
 	return sortedKeys(found)
+}
+
+func appendDiscoveredScriptSources(output []string, seen map[string]struct{}, text string, pattern *regexp.Regexp) []string {
+	found := map[string]struct{}{}
+	for _, match := range pattern.FindAllStringSubmatch(text, -1) {
+		if len(match) < 2 {
+			continue
+		}
+		source := strings.TrimSpace(match[1])
+		if source == "" {
+			continue
+		}
+		found[source] = struct{}{}
+	}
+	for _, source := range sortedKeys(found) {
+		if _, ok := seen[source]; ok {
+			continue
+		}
+		seen[source] = struct{}{}
+		output = append(output, source)
+	}
+	return output
 }
 
 func isNavigationHintSource(source string) bool {
@@ -206,6 +218,12 @@ func (client *Transport) discoverSource(ctx context.Context, session Session, so
 	discovered := DiscoverServiceActions(text)
 	linkedScripts := DiscoverLinkedScriptSources(text)
 	navigationHints := DiscoverNavigationHintSources(text)
+	linkedScriptReference := resolved
+	if baseReference := discoverHTMLBaseReference(text); baseReference != "" {
+		if resolvedBase, err := client.config.discoveryURLRelativeTo(baseReference, resolved); err == nil {
+			linkedScriptReference = resolvedBase
+		}
+	}
 	requestedPath := sanitizedURLPathQuery(requested)
 	finalPath := sanitizedURLPathQuery(resolved)
 	titlePresent, titleKind := discoverTitleMarker(text)
@@ -220,7 +238,7 @@ func (client *Transport) discoverSource(ctx context.Context, session Session, so
 		Actions:               len(discovered),
 		LinkedScripts:         len(linkedScripts),
 		NavigationHints:       len(navigationHints),
-		LinkedScriptPaths:     sanitizedDiscoveryTargetPaths(client.config, linkedScripts, resolved),
+		LinkedScriptPaths:     sanitizedDiscoveryTargetPaths(client.config, linkedScripts, linkedScriptReference),
 		NavigationHintPaths:   sanitizedDiscoveryTargetPaths(client.config, navigationHints, resolved),
 		TitlePresent:          titlePresent,
 		TitleKind:             titleKind,
@@ -240,7 +258,7 @@ func (client *Transport) discoverSource(ctx context.Context, session Session, so
 	}
 	if options.IncludeLinkedScripts {
 		for _, scriptSource := range linkedScripts {
-			if err := client.discoverSource(ctx, session, scriptSource, resolved, options, seen, diagnostics); err != nil {
+			if err := client.discoverSource(ctx, session, scriptSource, linkedScriptReference, options, seen, diagnostics); err != nil {
 				return err
 			}
 		}
@@ -351,6 +369,14 @@ func countInlineScriptBlocks(text string) int {
 	return count
 }
 
+func discoverHTMLBaseReference(text string) string {
+	match := htmlBaseHrefPattern.FindStringSubmatch(text)
+	if len(match) < 2 {
+		return ""
+	}
+	return strings.TrimSpace(html.UnescapeString(match[1]))
+}
+
 func sanitizedURLPathQuery(raw string) string {
 	parsed, err := url.Parse(raw)
 	if err != nil {
@@ -367,7 +393,8 @@ func sanitizedURLPathQuery(raw string) string {
 }
 
 func sanitizedDiscoveryTargetPaths(config Config, targets []string, reference string) []string {
-	found := map[string]struct{}{}
+	seen := map[string]struct{}{}
+	paths := make([]string, 0, maxDiscoveryTargetPreviews)
 	for _, target := range targets {
 		resolved, err := config.discoveryURLRelativeTo(target, reference)
 		if err != nil {
@@ -377,11 +404,14 @@ func sanitizedDiscoveryTargetPaths(config Config, targets []string, reference st
 		if path == "" {
 			continue
 		}
-		found[path] = struct{}{}
-	}
-	paths := sortedKeys(found)
-	if len(paths) > maxDiscoveryTargetPreviews {
-		paths = paths[:maxDiscoveryTargetPreviews]
+		if _, exists := seen[path]; exists {
+			continue
+		}
+		seen[path] = struct{}{}
+		paths = append(paths, path)
+		if len(paths) >= maxDiscoveryTargetPreviews {
+			break
+		}
 	}
 	return paths
 }

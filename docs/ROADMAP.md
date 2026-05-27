@@ -54,7 +54,7 @@ Status: implemented initial slice.
 - Status: started through raw guarded action.
 
 - Transport action discovery.
-- Safety classification for discovered actions: implemented initial 47-action
+- Safety classification for discovered actions: implemented initial 55-action
   OWA raw service registry, seeded from the spike.
 - Raw guarded action execution: implemented initial policy path.
 - Typed schemas for high-use actions.
