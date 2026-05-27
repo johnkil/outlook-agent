@@ -140,6 +140,10 @@ pointing the server at a private profile:
 GOPATH=$PWD/.cache/go GOCACHE=$PWD/.cache/go-build GOMODCACHE=$PWD/.cache/go-mod go test ./cmd/outlook-agent -run TestBinaryMCPStdioUsesConfiguredDefaultProfile -count=1
 ```
 
+If OpenCode is configured with `--config <path>`, that file must exist. A
+missing explicit config path fails startup with `config file not found` instead
+of silently starting the fake transport.
+
 Agents should call `outlook.capabilities` before raw transport calls. The
 response keeps a backwards-compatible `actions` name list and adds `details`
 entries with `name`, `transport`, `safety_class`, and numeric coverage `level`

@@ -4,6 +4,11 @@
 
 All commands write JSON to stdout and diagnostics to stderr.
 
+When no config path is configured, the runtime uses the fake transport for
+safe local development. When a config path is explicitly provided through
+`--config` or `OUTLOOK_AGENT_CONFIG`, that file must exist; missing explicit
+config paths fail fast instead of silently falling back to fake data.
+
 ```text
 outlook-agent doctor [--json]
 outlook-agent --config <path> auth check [--profile <name>]

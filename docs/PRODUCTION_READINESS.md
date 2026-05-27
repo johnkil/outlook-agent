@@ -18,7 +18,7 @@ Status values:
 | --- | --- | --- |
 | GitHub repository | Ready | Project lives as a separate Git repository with pushed branch `feat/owa-adapter`; README defines the product shape. |
 | PRD/RFC/SPEC | Ready | `docs/PRD.md`, `docs/RFC.md`, and `docs/SPEC.md` define product goals, architecture, CLI, MCP tools, safety classes, config, and tests. |
-| Go CLI | Ready | `cmd/outlook-agent`, `internal/cli`, config runtime, auth check, policy explain, OWA discovery, and MCP startup are covered by Go tests. |
+| Go CLI | Ready | `cmd/outlook-agent`, `internal/cli`, config runtime, auth check, policy explain, OWA discovery, strict explicit config-path handling, and MCP startup are covered by Go tests. |
 | MCP server | Ready | `internal/mcpserver` registers the public tools, has in-memory MCP client smoke tests, verifies capabilities -> dry-run -> confirm flow, and `cmd/outlook-agent` has stdio command-transport smoke coverage. |
 | All discovered OWA actions | Ready for discovered set | OWA registry classifies 55 raw service actions in `docs/OWA_ACTION_REGISTRY.md`; `TestTransportCapabilitiesIncludeClassifiedOWAServiceActions` and `TestOWARawCapabilitiesExposeExecutionRoutes` cover raw capability presence, classes, and execution routes. |
 | High-level mail/calendar workflows | Partial | Search, metadata/body fetch, draft save, move to Deleted Items, calendar list, and availability are implemented with tests; only search and availability are documented as live smoke-tested so far. |
@@ -34,6 +34,7 @@ Status values:
 - CLI and runtime contracts:
   - `docs/SPEC.md`
   - `internal/cli/cli_test.go`
+  - `internal/config/config_test.go`
   - `internal/app/runtime_test.go`
 - MCP contract and agent flow:
   - `internal/mcpserver/server_test.go`

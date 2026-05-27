@@ -38,7 +38,7 @@ func Load(options Options) (Config, Source, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return emptyConfig(), Source{Found: false, Kind: kind, Path: path}, nil
+			return Config{}, Source{Found: false, Kind: kind, Path: path}, fmt.Errorf("config file not found: %s", path)
 		}
 		return Config{}, Source{Found: false, Kind: kind, Path: path}, err
 	}

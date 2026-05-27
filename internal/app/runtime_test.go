@@ -31,6 +31,21 @@ func TestBuildTransportDefaultsToFakeWithoutConfig(t *testing.T) {
 	}
 }
 
+func TestBuildTransportRejectsMissingExplicitConfig(t *testing.T) {
+	missing := filepath.Join(t.TempDir(), "missing.json")
+
+	_, source, err := app.BuildTransport(app.Options{ConfigPath: missing})
+	if err == nil {
+		t.Fatal("expected missing explicit config error")
+	}
+	if source.Found || source.Kind != "explicit" || source.Path != missing {
+		t.Fatalf("expected explicit missing source, got %#v", source)
+	}
+	if !strings.Contains(err.Error(), "config file not found") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
 func TestBuildTransportResultResolvesConfiguredDefaultProfile(t *testing.T) {
 	path := writeConfig(t, `{
 		"default_profile": "work",

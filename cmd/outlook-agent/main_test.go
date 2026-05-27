@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -195,6 +196,21 @@ func TestLiveBinaryMCPStdioDryRunPolicySmoke(t *testing.T) {
 	})
 	if !deleteWithUnsafe.OK || deleteWithUnsafe.ConfirmationToken == "" || deleteWithUnsafe.Count != 1 {
 		t.Fatalf("expected unsafe destructive DeleteItem dry-run token: %#v", deleteWithUnsafe)
+	}
+}
+
+func TestBinaryMCPStdioRejectsMissingExplicitConfig(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	missingConfig := filepath.Join(t.TempDir(), "missing.json")
+	command := exec.CommandContext(ctx, buildBinary(t), "--config", missingConfig, "mcp")
+	output, err := command.CombinedOutput()
+	if err == nil {
+		t.Fatalf("expected missing explicit config to fail, output=%s", output)
+	}
+	if !strings.Contains(string(output), "config file not found") {
+		t.Fatalf("expected config file not found error, got %s", output)
 	}
 }
 
