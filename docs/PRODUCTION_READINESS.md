@@ -21,8 +21,8 @@ Status values:
 | Go CLI | Ready | `cmd/outlook-agent`, `internal/cli`, config runtime, auth check, policy explain, OWA discovery, strict explicit config-path handling, and MCP startup are covered by Go tests. |
 | MCP server | Ready | `internal/mcpserver` registers the public tools, has in-memory MCP client smoke tests, verifies capabilities -> dry-run -> confirm flow, and `cmd/outlook-agent` has stdio command-transport smoke coverage. |
 | All discovered OWA actions | Ready for discovered set | OWA registry classifies 55 raw service actions in `docs/OWA_ACTION_REGISTRY.md`; `TestTransportCapabilitiesIncludeClassifiedOWAServiceActions` and `TestOWARawCapabilitiesExposeExecutionRoutes` cover raw capability presence, classes, and execution routes. |
-| High-level mail/calendar workflows | Partial | Search, metadata fetch, calendar list, and availability are implemented and live smoke-tested; body fetch, draft save, and move to Deleted Items are implemented with mocked OWA tests but not yet live-executed. |
-| Live verification | Partial | Authenticated discovery has sanitized evidence for the useful OWA app shell and 25 live-discovered actions; high-level mail search, metadata fetch, calendar list, availability, stdio MCP availability, read-only raw `FindPeople`, read-only raw metadata actions (`GetServerTimeZones`, `GetRoomLists`, `GetFolder`, `ResolveNames`), representative MCP dry-run gates, and live stdio MCP dry-run coverage for all 26 mutating raw OWA catalog examples. Full live execution of every raw action is intentionally not attempted because many actions are destructive, send-like, or settings-changing. |
+| High-level mail/calendar workflows | Partial | Search, metadata fetch, draft save, move to Deleted Items, calendar list, and availability are implemented and live smoke-tested; body fetch is implemented with mocked OWA tests but not yet live-executed. |
+| Live verification | Partial | Authenticated discovery has sanitized evidence for the useful OWA app shell and 25 live-discovered actions; high-level mail search, metadata fetch, draft creation, reversible draft cleanup, calendar list, availability, stdio MCP availability, read-only raw `FindPeople`, read-only raw metadata actions (`GetServerTimeZones`, `GetRoomLists`, `GetFolder`, `ResolveNames`), representative MCP dry-run gates, and live stdio MCP dry-run coverage for all 26 mutating raw OWA catalog examples. Full live execution of every raw action is intentionally not attempted because many actions are destructive, send-like, or settings-changing. |
 | Public/private split | Ready | Generic examples use placeholder hosts/accounts; `opencode.jsonc` uses the fake transport; security docs and grep gates prevent committed tenant-specific values. Private enterprise values belong in ignored local config and secret stores. |
 | Security and redaction | Partial for production operations | Runtime policy classes, explicit target rules, dry-run tokens, confirmation binding, unsafe requirements, dry-run count summaries for attachment/folder/rule/config payload shapes, sanitized dry-run payload examples for all 26 mutating raw OWA actions, and redaction have unit or MCP tests; CI now adds a public-safety check and dependency vulnerability scan baseline. |
 | Workflow skills | Ready initial set | `skills/` contains mail and calendar workflow skills for triage, reply drafting, task extraction, subscription cleanup, daily brief, meeting prep, and freeing time. |
@@ -70,8 +70,8 @@ Status values:
   - EWS adapter;
   - versioned MCP compatibility policy.
 - Live validation:
-  - broader opt-in non-destructive OWA live smoke suite for explicit body-read
-    and safe fixture-backed reversible execution;
+  - explicit body-read live smoke with a fixture message or user-provided
+    target;
   - `FindFolder` live payload-shape follow-up after three metadata-only
     candidates returned the same internal OWA error;
   - optional expansion from catalog dry-run smoke to selected real reversible
