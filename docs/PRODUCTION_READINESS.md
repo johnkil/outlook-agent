@@ -71,7 +71,8 @@ Status values:
   - versioned MCP compatibility policy.
 - Live validation:
   - broader opt-in non-destructive OWA live smoke suite;
-  - `FindFolder` live payload-shape follow-up;
+  - `FindFolder` live payload-shape follow-up after three metadata-only
+    candidates returned the same internal OWA error;
   - broader live MCP dry-run smoke across the full mutating registry without
     executing mutating actions.
 

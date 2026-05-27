@@ -93,6 +93,8 @@ first field. Raw OWA payload maps are normalized recursively before encoding so
 agent-supplied `__type` fields are emitted first at each object level.
 
 `FindFolder` remains classified and available as a raw read-metadata action,
-but the first live metadata-only candidate payload returned an internal OWA
-error. Treat it as a payload-shape follow-up rather than evidence against the
-generic raw action transport.
+but three live metadata-only candidate payloads returned the same internal OWA
+error: a paged candidate with `IndexedPageFolderView`, a minimal `IdOnly`
+candidate, and a minimal `Default`/older-version candidate. Treat it as a
+payload-shape follow-up rather than evidence against the generic raw action
+transport.
