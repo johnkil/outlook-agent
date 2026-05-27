@@ -391,6 +391,113 @@ func TestTransportResolvesLinkedScriptsAgainstHTMLBaseHref(t *testing.T) {
 	}
 }
 
+func TestTransportResolvesBareQuotedScriptsAgainstStaticScriptDirectory(t *testing.T) {
+	staticDir := "/owa/prem/15.2.1748/scripts/"
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		switch request.URL.Path {
+		case "/owa/auth.owa":
+			http.SetCookie(response, &http.Cookie{Name: "X-OWA-CANARY", Value: "canary-secret"})
+			response.WriteHeader(http.StatusOK)
+		case "/owa/":
+			response.Header().Set("Content-Type", "text/html")
+			_, _ = response.Write([]byte(`
+				<html>
+					<script>
+						const deferred = ["feature.js"];
+					</script>
+					<script src="prem/15.2.1748/scripts/boot.js"></script>
+				</html>
+			`))
+		case staticDir + "boot.js":
+			response.Header().Set("Content-Type", "application/javascript")
+			_, _ = response.Write([]byte(`fetch("/owa/service.svc?action=FindItem");`))
+		case staticDir + "feature.js":
+			response.Header().Set("Content-Type", "application/javascript")
+			_, _ = response.Write([]byte(`const requestType = "GetFolderJsonRequest:#Exchange";`))
+		case "/owa/feature.js":
+			http.NotFound(response, request)
+		default:
+			t.Fatalf("unexpected path: %s", request.URL.String())
+		}
+	}))
+	defer server.Close()
+	client := owa.NewTransport(owa.Config{
+		BaseURL:   server.URL,
+		Username:  "DOMAIN\\user",
+		SecretRef: secret.Ref("memory:owa"),
+	}, secret.NewMemoryStore(map[string]string{"memory:owa": "password"}), server.Client())
+
+	diagnostics, err := client.DiscoverServiceActionsFromURLDiagnostics(context.Background(), "/owa/?layout=mouse", owa.DiscoveryOptions{
+		IncludeLinkedScripts: true,
+	})
+
+	if err != nil {
+		t.Fatalf("discover static-dir script actions: %v", err)
+	}
+	expectedActions := []string{"FindItem", "GetFolder"}
+	if !slices.Equal(diagnostics.Actions, expectedActions) {
+		t.Fatalf("expected actions %#v, got %#v", expectedActions, diagnostics.Actions)
+	}
+	expectedScripts := []string{staticDir + "boot.js", staticDir + "feature.js"}
+	if !slices.Equal(diagnostics.Sources[0].LinkedScriptPaths, expectedScripts) {
+		t.Fatalf("expected static-dir linked script previews %#v, got %#v", expectedScripts, diagnostics.Sources[0])
+	}
+	if len(diagnostics.Sources) != 3 {
+		t.Fatalf("expected shell, boot, and feature diagnostics, got %#v", diagnostics.Sources)
+	}
+	if diagnostics.Sources[2].FinalPath != staticDir+"feature.js" || diagnostics.Sources[2].Actions != 1 {
+		t.Fatalf("expected feature script diagnostics from static dir, got %#v", diagnostics.Sources)
+	}
+}
+
+func TestTransportSkipsCrossOriginLinkedScriptsDuringDiscovery(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		switch request.URL.Path {
+		case "/owa/auth.owa":
+			http.SetCookie(response, &http.Cookie{Name: "X-OWA-CANARY", Value: "canary-secret"})
+			response.WriteHeader(http.StatusOK)
+		case "/owa/":
+			response.Header().Set("Content-Type", "text/html")
+			_, _ = response.Write([]byte(`
+				<html>
+					<script src="https://other.example.test/owa/evil.js"></script>
+					<script src="/owa/scripts/app.js"></script>
+				</html>
+			`))
+		case "/owa/scripts/app.js":
+			response.Header().Set("Content-Type", "application/javascript")
+			_, _ = response.Write([]byte(`fetch("/owa/service.svc?action=FindItem");`))
+		default:
+			t.Fatalf("unexpected path: %s", request.URL.String())
+		}
+	}))
+	defer server.Close()
+	client := owa.NewTransport(owa.Config{
+		BaseURL:   server.URL,
+		Username:  "DOMAIN\\user",
+		SecretRef: secret.Ref("memory:owa"),
+	}, secret.NewMemoryStore(map[string]string{"memory:owa": "password"}), server.Client())
+
+	diagnostics, err := client.DiscoverServiceActionsFromURLDiagnostics(context.Background(), "/owa/", owa.DiscoveryOptions{
+		IncludeLinkedScripts: true,
+	})
+
+	if err != nil {
+		t.Fatalf("discover should skip cross-origin scripts: %v", err)
+	}
+	expectedActions := []string{"FindItem"}
+	if !slices.Equal(diagnostics.Actions, expectedActions) {
+		t.Fatalf("expected actions %#v, got %#v", expectedActions, diagnostics.Actions)
+	}
+	expectedScripts := []string{"/owa/scripts/app.js"}
+	if !slices.Equal(diagnostics.Sources[0].LinkedScriptPaths, expectedScripts) {
+		t.Fatalf("expected only same-origin preview paths %#v, got %#v", expectedScripts, diagnostics.Sources[0])
+	}
+	if len(diagnostics.Sources) != 2 {
+		t.Fatalf("expected shell and same-origin script diagnostics, got %#v", diagnostics.Sources)
+	}
+}
+
 func TestTransportFollowsNavigationHints(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
 		switch request.URL.Path {

@@ -224,6 +224,7 @@ func (client *Transport) discoverSource(ctx context.Context, session Session, so
 			linkedScriptReference = resolvedBase
 		}
 	}
+	bareScriptReference := client.config.staticScriptDirectoryReference(linkedScripts, linkedScriptReference)
 	requestedPath := sanitizedURLPathQuery(requested)
 	finalPath := sanitizedURLPathQuery(resolved)
 	titlePresent, titleKind := discoverTitleMarker(text)
@@ -238,7 +239,7 @@ func (client *Transport) discoverSource(ctx context.Context, session Session, so
 		Actions:               len(discovered),
 		LinkedScripts:         len(linkedScripts),
 		NavigationHints:       len(navigationHints),
-		LinkedScriptPaths:     sanitizedDiscoveryTargetPaths(client.config, linkedScripts, linkedScriptReference),
+		LinkedScriptPaths:     sanitizedLinkedScriptTargetPaths(client.config, linkedScripts, linkedScriptReference, bareScriptReference),
 		NavigationHintPaths:   sanitizedDiscoveryTargetPaths(client.config, navigationHints, resolved),
 		TitlePresent:          titlePresent,
 		TitleKind:             titleKind,
@@ -258,7 +259,14 @@ func (client *Transport) discoverSource(ctx context.Context, session Session, so
 	}
 	if options.IncludeLinkedScripts {
 		for _, scriptSource := range linkedScripts {
-			if err := client.discoverSource(ctx, session, scriptSource, linkedScriptReference, options, seen, diagnostics); err != nil {
+			reference := linkedScriptReference
+			if isBareJavaScriptFilename(scriptSource) && bareScriptReference != "" {
+				reference = bareScriptReference
+			}
+			if _, err := client.config.discoveryURLRelativeTo(scriptSource, reference); err != nil {
+				continue
+			}
+			if err := client.discoverSource(ctx, session, scriptSource, reference, options, seen, diagnostics); err != nil {
 				return err
 			}
 		}
@@ -393,10 +401,25 @@ func sanitizedURLPathQuery(raw string) string {
 }
 
 func sanitizedDiscoveryTargetPaths(config Config, targets []string, reference string) []string {
+	return sanitizedTargetPaths(targets, func(target string) (string, error) {
+		return config.discoveryURLRelativeTo(target, reference)
+	})
+}
+
+func sanitizedLinkedScriptTargetPaths(config Config, targets []string, reference string, bareScriptReference string) []string {
+	return sanitizedTargetPaths(targets, func(target string) (string, error) {
+		if isBareJavaScriptFilename(target) && bareScriptReference != "" {
+			return config.discoveryURLRelativeTo(target, bareScriptReference)
+		}
+		return config.discoveryURLRelativeTo(target, reference)
+	})
+}
+
+func sanitizedTargetPaths(targets []string, resolve func(string) (string, error)) []string {
 	seen := map[string]struct{}{}
 	paths := make([]string, 0, maxDiscoveryTargetPreviews)
 	for _, target := range targets {
-		resolved, err := config.discoveryURLRelativeTo(target, reference)
+		resolved, err := resolve(target)
 		if err != nil {
 			continue
 		}
@@ -414,6 +437,61 @@ func sanitizedDiscoveryTargetPaths(config Config, targets []string, reference st
 		}
 	}
 	return paths
+}
+
+func (config Config) staticScriptDirectoryReference(targets []string, reference string) string {
+	for _, target := range targets {
+		if isBareJavaScriptFilename(target) {
+			continue
+		}
+		resolved, err := config.discoveryURLRelativeTo(target, reference)
+		if err != nil {
+			continue
+		}
+		directory := scriptDirectoryReference(resolved)
+		if directory != "" {
+			return directory
+		}
+	}
+	return ""
+}
+
+func isBareJavaScriptFilename(source string) bool {
+	trimmed := strings.TrimSpace(source)
+	if trimmed == "" || strings.ContainsAny(trimmed, `/\`) {
+		return false
+	}
+	parsed, err := url.Parse(trimmed)
+	if err != nil || parsed.IsAbs() || parsed.Path == "" {
+		return false
+	}
+	return strings.EqualFold(pathExtension(parsed.Path), ".js")
+}
+
+func scriptDirectoryReference(raw string) string {
+	parsed, err := url.Parse(raw)
+	if err != nil {
+		return ""
+	}
+	if !strings.EqualFold(pathExtension(parsed.Path), ".js") {
+		return ""
+	}
+	index := strings.LastIndex(parsed.Path, "/")
+	if index < 0 {
+		return ""
+	}
+	parsed.Path = parsed.Path[:index+1]
+	parsed.RawQuery = ""
+	parsed.Fragment = ""
+	return parsed.String()
+}
+
+func pathExtension(path string) string {
+	index := strings.LastIndex(path, ".")
+	if index < 0 {
+		return ""
+	}
+	return path[index:]
 }
 
 func (config Config) discoveryURL(source string) (string, error) {

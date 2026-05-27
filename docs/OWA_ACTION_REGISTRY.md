@@ -42,7 +42,11 @@ linked from the fetched page, resolves relative script paths against that page
 or a same-origin HTML base reference when present, and also keeps those assets
 in memory only. Real script-tag sources are followed before quoted JavaScript
 filenames from inline boot configuration so bounded discovery reaches primary
-application bundles before opportunistic library names.
+application bundles before opportunistic library names. If real script-tag
+assets establish a same-origin static script directory, bare quoted JavaScript
+filenames from that same source are tried relative to that directory instead of
+the shell page root. Invalid or cross-origin linked scripts are skipped during
+follow-up traversal.
 
 Use `--diagnostics` when a live source returns no actions. It adds per-source
 counts for HTTP status, content type, bytes, direct action matches, linked
