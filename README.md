@@ -84,3 +84,4 @@ tokens, cookies, or canary values.
 - [Security Model](docs/SECURITY_MODEL.md)
 - [Roadmap](docs/ROADMAP.md)
 - [OpenCode Integration](docs/OPENCODE.md)
+- [Production Readiness Audit](docs/PRODUCTION_READINESS.md)
