@@ -46,7 +46,8 @@ Key tool inputs:
   clients and `details` for policy-aware clients. Each `details` entry contains
   `name`, `transport`, `safety_class`, numeric coverage `level`,
   `allowed_direct`, `requires_dry_run`, `requires_confirmation`, and
-  `requires_unsafe`.
+  `requires_unsafe`. Explicit read or mutation requirements are exposed through
+  `requires_explicit_target` and `requires_explicit_intent`.
 - `outlook.calendar_availability`: `start`, `end`, and optional `email`.
   When `email` is omitted, OWA profiles use `settings.mailbox_email` if
   configured.

@@ -102,7 +102,10 @@ Agents should call `outlook.capabilities` before raw transport calls. The
 response keeps a backwards-compatible `actions` name list and adds `details`
 entries with `name`, `transport`, `safety_class`, and numeric coverage `level`
 plus `allowed_direct`, `requires_dry_run`, `requires_confirmation`, and
-`requires_unsafe` policy gates. For gated actions, the expected flow is:
+`requires_unsafe` policy gates. Details may also include
+`requires_explicit_target` or `requires_explicit_intent` so agents can ask for
+or preserve the missing condition before attempting execution. For gated
+actions, the expected flow is:
 
 1. Read `outlook.capabilities.details`.
 2. If direct execution is not allowed, call `outlook.action_dry_run`.

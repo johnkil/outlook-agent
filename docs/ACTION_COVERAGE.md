@@ -54,7 +54,9 @@ level 5: workflow skill guidance
   safety class, coverage level, and direct policy gates from the runtime
   registry. A caller can use `requires_dry_run`, `requires_confirmation`, and
   `requires_unsafe` to choose between direct raw execution, `action_dry_run`,
-  and `action_confirm`.
+  and `action_confirm`. It can use `requires_explicit_target` and
+  `requires_explicit_intent` to decide whether it must bind the request to a
+  specific item or explicit user mutation request before trying to execute.
 
 ## OWA Transport Status
 

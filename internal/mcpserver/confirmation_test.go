@@ -181,6 +181,25 @@ func TestCapabilitiesHandlerReturnsPolicyMetadata(t *testing.T) {
 	}
 }
 
+func TestCapabilitiesHandlerReturnsExplicitRequirementMetadata(t *testing.T) {
+	client := newRecordingTransport(action.Definition{
+		Name:      "GetItem",
+		Transport: "owa",
+		Class:     policy.ReadBodyExplicit,
+		Level:     action.LevelRawGuardedExecution,
+	})
+
+	_, output, err := capabilitiesHandler(client)(context.Background(), nil, EmptyInput{})
+	if err != nil {
+		t.Fatalf("capabilities handler: %v", err)
+	}
+
+	detail := output.Details[0]
+	if !detail.RequiresExplicitTarget || detail.RequiresExplicitIntent {
+		t.Fatalf("expected body-read capability to require explicit target only: %#v", detail)
+	}
+}
+
 func TestRawActionRejectsGatedBulkAction(t *testing.T) {
 	runtime := NewRuntime(fake.New())
 
