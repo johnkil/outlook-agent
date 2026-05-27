@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strconv"
 
 	"github.com/johnkil/outlook-agent/internal/policy"
 	"github.com/johnkil/outlook-agent/internal/transport"
@@ -151,6 +152,7 @@ func runOWADiscoverActions(args []string, options Options, runtime Runtime, stdo
 				IncludeLinkedScripts:  sources.IncludeLinkedScripts,
 				FollowNavigationHints: sources.FollowNavigationHints,
 				ContinueOnHTTPError:   sources.Diagnostics,
+				MaxSources:            sources.MaxSources,
 			}
 			var actions []string
 			var err error
@@ -198,6 +200,7 @@ type discoverActionSources struct {
 	IncludeLinkedScripts  bool
 	FollowNavigationHints bool
 	Diagnostics           bool
+	MaxSources            int
 }
 
 func parseDiscoverActionsArgs(args []string) (discoverActionSources, error) {
@@ -222,6 +225,16 @@ func parseDiscoverActionsArgs(args []string) (discoverActionSources, error) {
 			sources.FollowNavigationHints = true
 		case "--diagnostics":
 			sources.Diagnostics = true
+		case "--max-sources":
+			index++
+			if index >= len(args) {
+				return discoverActionSources{}, fmt.Errorf("--max-sources requires a value")
+			}
+			value, err := strconv.Atoi(args[index])
+			if err != nil || value <= 0 {
+				return discoverActionSources{}, fmt.Errorf("--max-sources requires a positive integer")
+			}
+			sources.MaxSources = value
 		default:
 			return discoverActionSources{}, fmt.Errorf("unknown discover-actions argument: %s", args[index])
 		}

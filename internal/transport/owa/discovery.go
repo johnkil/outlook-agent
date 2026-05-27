@@ -38,13 +38,14 @@ var scriptTagPattern = regexp.MustCompile(`(?is)<script\b([^>]*)>`)
 var scriptSourceAttributePattern = regexp.MustCompile(`(?i)\bsrc\s*=`)
 
 const maxDiscoveryBytes = 10 * 1024 * 1024
-const maxDiscoverySources = 30
+const defaultMaxDiscoverySources = 30
 const maxDiscoveryTargetPreviews = 20
 
 type DiscoveryOptions struct {
 	IncludeLinkedScripts  bool
 	FollowNavigationHints bool
 	ContinueOnHTTPError   bool
+	MaxSources            int
 }
 
 type DiscoveryDiagnostics struct {
@@ -187,7 +188,7 @@ func (client *Transport) DiscoverServiceActionsFromURLDiagnostics(ctx context.Co
 }
 
 func (client *Transport) discoverSource(ctx context.Context, session Session, source string, reference string, options DiscoveryOptions, seen map[string]struct{}, diagnostics *DiscoveryDiagnostics) error {
-	if len(seen) >= maxDiscoverySources {
+	if len(seen) >= options.effectiveMaxSources() {
 		return nil
 	}
 	resolvedForSeen, err := client.config.discoveryURLRelativeTo(source, reference)
@@ -210,6 +211,15 @@ func (client *Transport) discoverSource(ctx context.Context, session Session, so
 				FinalPath:   sanitizedURLPathQuery(statusError.FinalURL),
 				Bytes:       0,
 				FetchError:  "http_status",
+			})
+			return nil
+		}
+		if options.ContinueOnHTTPError {
+			diagnostics.Sources = append(diagnostics.Sources, DiscoverySourceDiagnostics{
+				Source:     source,
+				FinalPath:  sanitizedURLPathQuery(resolvedForSeen),
+				Bytes:      0,
+				FetchError: "fetch_failed",
 			})
 			return nil
 		}
@@ -272,6 +282,13 @@ func (client *Transport) discoverSource(ctx context.Context, session Session, so
 		}
 	}
 	return nil
+}
+
+func (options DiscoveryOptions) effectiveMaxSources() int {
+	if options.MaxSources > 0 {
+		return options.MaxSources
+	}
+	return defaultMaxDiscoverySources
 }
 
 type discoveryHTTPStatusError struct {

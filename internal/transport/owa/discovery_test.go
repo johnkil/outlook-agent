@@ -2,6 +2,7 @@ package owa_test
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"slices"
@@ -498,6 +499,74 @@ func TestTransportSkipsCrossOriginLinkedScriptsDuringDiscovery(t *testing.T) {
 	}
 }
 
+func TestTransportDiscoveryUsesDefaultSourceLimit(t *testing.T) {
+	server := newDiscoveryLimitServer(t, 35)
+	defer server.Close()
+	client := owa.NewTransport(owa.Config{
+		BaseURL:   server.URL,
+		Username:  "DOMAIN\\user",
+		SecretRef: secret.Ref("memory:owa"),
+	}, secret.NewMemoryStore(map[string]string{"memory:owa": "password"}), server.Client())
+
+	diagnostics, err := client.DiscoverServiceActionsFromURLDiagnostics(context.Background(), "/owa/", owa.DiscoveryOptions{
+		IncludeLinkedScripts: true,
+	})
+
+	if err != nil {
+		t.Fatalf("discover with default source limit: %v", err)
+	}
+	if len(diagnostics.Sources) != 30 {
+		t.Fatalf("expected default source limit to cap diagnostics at 30 sources, got %d", len(diagnostics.Sources))
+	}
+}
+
+func TestTransportDiscoveryCanRaiseSourceLimit(t *testing.T) {
+	server := newDiscoveryLimitServer(t, 35)
+	defer server.Close()
+	client := owa.NewTransport(owa.Config{
+		BaseURL:   server.URL,
+		Username:  "DOMAIN\\user",
+		SecretRef: secret.Ref("memory:owa"),
+	}, secret.NewMemoryStore(map[string]string{"memory:owa": "password"}), server.Client())
+
+	diagnostics, err := client.DiscoverServiceActionsFromURLDiagnostics(context.Background(), "/owa/", owa.DiscoveryOptions{
+		IncludeLinkedScripts: true,
+		MaxSources:           40,
+	})
+
+	if err != nil {
+		t.Fatalf("discover with raised source limit: %v", err)
+	}
+	if len(diagnostics.Sources) != 36 {
+		t.Fatalf("expected shell plus all linked scripts, got %d sources: %#v", len(diagnostics.Sources), diagnostics.Sources)
+	}
+}
+
+func newDiscoveryLimitServer(t *testing.T, scriptCount int) *httptest.Server {
+	t.Helper()
+	return httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		switch request.URL.Path {
+		case "/owa/auth.owa":
+			http.SetCookie(response, &http.Cookie{Name: "X-OWA-CANARY", Value: "canary-secret"})
+			response.WriteHeader(http.StatusOK)
+		case "/owa/":
+			response.Header().Set("Content-Type", "text/html")
+			for index := 0; index < scriptCount; index++ {
+				_, _ = fmt.Fprintf(response, `<script src="/owa/scripts/app%02d.js"></script>`, index)
+			}
+		default:
+			for index := 0; index < scriptCount; index++ {
+				if request.URL.Path == fmt.Sprintf("/owa/scripts/app%02d.js", index) {
+					response.Header().Set("Content-Type", "application/javascript")
+					_, _ = fmt.Fprintf(response, `fetch("/owa/service.svc?action=FindItem");`)
+					return
+				}
+			}
+			t.Fatalf("unexpected path: %s", request.URL.String())
+		}
+	}))
+}
+
 func TestTransportFollowsNavigationHints(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
 		switch request.URL.Path {
@@ -660,6 +729,69 @@ func TestTransportDiscoveryDiagnosticsCanReportHTTPStatusErrors(t *testing.T) {
 	source := diagnostics.Sources[0]
 	if source.Status != http.StatusNotFound || source.FinalPath != "/owa/missing.js" || source.FetchError != "http_status" {
 		t.Fatalf("expected sanitized HTTP status diagnostic, got %#v", source)
+	}
+}
+
+func TestTransportDiscoveryDiagnosticsContinuesAfterFetchError(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		switch request.URL.Path {
+		case "/owa/auth.owa":
+			http.SetCookie(response, &http.Cookie{Name: "X-OWA-CANARY", Value: "canary-secret"})
+			response.WriteHeader(http.StatusOK)
+		case "/owa/":
+			response.Header().Set("Content-Type", "text/html")
+			_, _ = response.Write([]byte(`
+				<script src="/owa/scripts/broken.js"></script>
+				<script src="/owa/scripts/app.js"></script>
+			`))
+		case "/owa/scripts/broken.js":
+			hijacker, ok := response.(http.Hijacker)
+			if !ok {
+				t.Fatal("response writer does not support hijacking")
+			}
+			connection, _, err := hijacker.Hijack()
+			if err != nil {
+				t.Fatalf("hijack broken response: %v", err)
+			}
+			_ = connection.Close()
+		case "/owa/scripts/app.js":
+			response.Header().Set("Content-Type", "application/javascript")
+			_, _ = response.Write([]byte(`fetch("/owa/service.svc?action=FindItem");`))
+		default:
+			t.Fatalf("unexpected path: %s", request.URL.String())
+		}
+	}))
+	defer server.Close()
+	client := owa.NewTransport(owa.Config{
+		BaseURL:   server.URL,
+		Username:  "DOMAIN\\user",
+		SecretRef: secret.Ref("memory:owa"),
+	}, secret.NewMemoryStore(map[string]string{"memory:owa": "password"}), server.Client())
+
+	diagnostics, err := client.DiscoverServiceActionsFromURLDiagnostics(context.Background(), "/owa/", owa.DiscoveryOptions{
+		IncludeLinkedScripts: true,
+		ContinueOnHTTPError:  true,
+	})
+
+	if err != nil {
+		t.Fatalf("discover diagnostics should continue after fetch error: %v", err)
+	}
+	expectedActions := []string{"FindItem"}
+	if !slices.Equal(diagnostics.Actions, expectedActions) {
+		t.Fatalf("expected actions %#v, got %#v", expectedActions, diagnostics.Actions)
+	}
+	if len(diagnostics.Sources) != 3 {
+		t.Fatalf("expected shell, broken script diagnostic, and app script diagnostic, got %#v", diagnostics.Sources)
+	}
+	if !slices.ContainsFunc(diagnostics.Sources, func(source owa.DiscoverySourceDiagnostics) bool {
+		return source.FetchError == "fetch_failed" && source.FinalPath == "/owa/scripts/broken.js"
+	}) {
+		t.Fatalf("expected sanitized fetch failure diagnostic, got %#v", diagnostics.Sources)
+	}
+	if !slices.ContainsFunc(diagnostics.Sources, func(source owa.DiscoverySourceDiagnostics) bool {
+		return source.FinalPath == "/owa/scripts/app.js" && source.Actions == 1
+	}) {
+		t.Fatalf("expected discovery to continue to app script, got %#v", diagnostics.Sources)
 	}
 }
 

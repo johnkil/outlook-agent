@@ -32,6 +32,7 @@ outlook-agent --config .local/outlook-agent.json owa discover-actions --url /owa
 outlook-agent --config .local/outlook-agent.json owa discover-actions --url /owa/ --include-linked-scripts
 outlook-agent --config .local/outlook-agent.json owa discover-actions --url /owa/ --follow-navigation-hints
 outlook-agent --config .local/outlook-agent.json owa discover-actions --url /owa/ --include-linked-scripts --diagnostics
+outlook-agent --config .local/outlook-agent.json owa discover-actions --url /owa/ --include-linked-scripts --diagnostics --max-sources 120
 outlook-agent --config .local/outlook-agent.json owa discover-actions --url /owa/scripts/app.js
 ```
 
@@ -48,6 +49,13 @@ filenames from that same source are tried relative to that directory instead of
 the shell page root. Invalid or cross-origin linked scripts are skipped during
 follow-up traversal.
 
+URL discovery follows at most 30 sources by default. Use
+`--max-sources <positive-integer>` only for explicit deeper diagnostics when a
+large OWA shell exposes more same-origin script or navigation candidates than
+the default bounded traversal can inspect. The higher limit does not change the
+in-memory-only rule and should still be paired with sanitized diagnostics
+instead of saving fetched assets.
+
 Use `--diagnostics` when a live source returns no actions. It adds per-source
 counts for HTTP status, content type, bytes, direct action matches, linked
 script references, sanitized final response path, coarse title markers, inline
@@ -59,6 +67,9 @@ paths into follow-up probes.
 Diagnostics mode is tolerant of non-2xx HTTP responses so candidate URL probes
 can continue after 404/500 results. Such sources include
 `fetch_error: "http_status"` plus sanitized status and final path.
+Diagnostics mode also records non-HTTP fetch failures as
+`fetch_error: "fetch_failed"` with only a sanitized path and then continues to
+later same-origin candidates.
 
 Use `--follow-navigation-hints` for small HTML shells that contain meta-refresh
 or JavaScript `location` navigation. Only same-origin navigation targets are
@@ -100,7 +111,9 @@ The output includes:
   Source diagnostics include `final_path`, `final_path_changed`,
   `title_present`, `title_kind`, `script_blocks`, `navigation_hints`,
   `linked_script_paths`, `navigation_hint_paths`, `looks_like_logon_page`,
-  `looks_like_owa_error_page`, and `fetch_error` fields. Preview paths are
+  `looks_like_owa_error_page`, and `fetch_error` fields. `fetch_error` is
+  either `http_status` for non-2xx responses or `fetch_failed` for transport or
+  response-read failures. Preview paths are
   same-origin path plus query only, de-duplicated, emitted in traversal order,
   and capped at 20 entries per source. Hosts, fragments, raw titles, cookies,
   canary values, and response bodies are never emitted.

@@ -207,6 +207,42 @@ func TestOWADiscoverActionsDiagnosticsFromAuthenticatedURL(t *testing.T) {
 	}
 }
 
+func TestOWADiscoverActionsForwardsMaxSources(t *testing.T) {
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	client := &discoveringTransport{actions: []string{"FindItem"}}
+
+	code := RunWithRuntime([]string{"owa", "discover-actions", "--url", "/owa/", "--include-linked-scripts", "--max-sources", "75"}, &stdout, &stderr, Runtime{
+		BuildTransport: func(_ context.Context, options Options) (transport.Transport, string, error) {
+			return client, "work", nil
+		},
+	})
+
+	if code != 0 {
+		t.Fatalf("expected exit code 0, got %d, stderr=%s", code, stderr.String())
+	}
+	if client.maxSources != 75 {
+		t.Fatalf("expected max sources to be forwarded, got %d", client.maxSources)
+	}
+}
+
+func TestOWADiscoverActionsRejectsInvalidMaxSources(t *testing.T) {
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+
+	code := Run([]string{"owa", "discover-actions", "--url", "/owa/", "--max-sources", "0"}, &stdout, &stderr)
+
+	if code != 1 {
+		t.Fatalf("expected exit code 1, got %d", code)
+	}
+	if stdout.Len() != 0 {
+		t.Fatalf("expected no stdout, got %s", stdout.String())
+	}
+	if !bytes.Contains(stderr.Bytes(), []byte("--max-sources requires a positive integer")) {
+		t.Fatalf("expected max-sources validation error, got %s", stderr.String())
+	}
+}
+
 func TestOWADiscoverActionsDiagnosticsContinuesAfterHTTPStatusError(t *testing.T) {
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer
@@ -301,6 +337,7 @@ type discoveringTransport struct {
 	includeLinkedScripts  bool
 	followNavigationHints bool
 	continueOnHTTPError   bool
+	maxSources            int
 	diagnostics           bool
 	diagnosticsBySource   map[string]owa.DiscoveryDiagnostics
 }
@@ -330,6 +367,7 @@ func (client *discoveringTransport) DiscoverServiceActionsFromURLWithOptions(_ c
 	client.includeLinkedScripts = options.IncludeLinkedScripts
 	client.followNavigationHints = options.FollowNavigationHints
 	client.continueOnHTTPError = options.ContinueOnHTTPError
+	client.maxSources = options.MaxSources
 	return client.actions, nil
 }
 
@@ -338,6 +376,7 @@ func (client *discoveringTransport) DiscoverServiceActionsFromURLDiagnostics(_ c
 	client.includeLinkedScripts = options.IncludeLinkedScripts
 	client.followNavigationHints = options.FollowNavigationHints
 	client.continueOnHTTPError = options.ContinueOnHTTPError
+	client.maxSources = options.MaxSources
 	client.diagnostics = true
 	if diagnostics, ok := client.diagnosticsBySource[source]; ok {
 		return diagnostics, nil
