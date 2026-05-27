@@ -53,6 +53,22 @@ func TestDiscoverLinkedScriptSourcesExtractsUniqueScriptSrcs(t *testing.T) {
 	}
 }
 
+func TestDiscoverLinkedScriptSourcesExtractsQuotedJavaScriptReferences(t *testing.T) {
+	html := `
+		<script>boot("/owa/prem/boot.js?ver=1")</script>
+		<script>var next = 'scripts/app.js';</script>
+		<script>var ignored = "/owa/prem/theme.css";</script>
+		<script>var duplicate = "/owa/prem/boot.js?ver=1";</script>
+	`
+
+	sources := owa.DiscoverLinkedScriptSources(html)
+
+	expected := []string{"/owa/prem/boot.js?ver=1", "scripts/app.js"}
+	if !slices.Equal(sources, expected) {
+		t.Fatalf("expected quoted script sources %#v, got %#v", expected, sources)
+	}
+}
+
 func TestCompareDiscoveredServiceActionsReportsUnknownAndMissing(t *testing.T) {
 	discovered := []string{
 		"FindItem",
@@ -135,6 +151,91 @@ func TestTransportDiscoversActionsFromLinkedScripts(t *testing.T) {
 	expected := []string{"FindItem", "GetAttachment"}
 	if !slices.Equal(actions, expected) {
 		t.Fatalf("expected linked script actions %#v, got %#v", expected, actions)
+	}
+}
+
+func TestTransportReportsDiscoveryDiagnostics(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		switch request.URL.Path {
+		case "/owa/auth.owa":
+			http.SetCookie(response, &http.Cookie{Name: "X-OWA-CANARY", Value: "canary-secret"})
+			response.WriteHeader(http.StatusOK)
+		case "/owa/":
+			response.Header().Set("Content-Type", "text/html")
+			_, _ = response.Write([]byte(`<script src="/owa/scripts/app.js"></script>`))
+		case "/owa/scripts/app.js":
+			response.Header().Set("Content-Type", "application/javascript")
+			_, _ = response.Write([]byte(`fetch("/owa/service.svc?action=FindItem");`))
+		default:
+			t.Fatalf("unexpected path: %s", request.URL.String())
+		}
+	}))
+	defer server.Close()
+	client := owa.NewTransport(owa.Config{
+		BaseURL:   server.URL,
+		Username:  "DOMAIN\\user",
+		SecretRef: secret.Ref("memory:owa"),
+	}, secret.NewMemoryStore(map[string]string{"memory:owa": "password"}), server.Client())
+
+	diagnostics, err := client.DiscoverServiceActionsFromURLDiagnostics(context.Background(), "/owa/", owa.DiscoveryOptions{IncludeLinkedScripts: true})
+
+	if err != nil {
+		t.Fatalf("discover diagnostics: %v", err)
+	}
+	expectedActions := []string{"FindItem"}
+	if !slices.Equal(diagnostics.Actions, expectedActions) {
+		t.Fatalf("expected actions %#v, got %#v", expectedActions, diagnostics.Actions)
+	}
+	if len(diagnostics.Sources) != 2 {
+		t.Fatalf("expected page and script source diagnostics, got %#v", diagnostics.Sources)
+	}
+	if diagnostics.Sources[0].Source != "/owa/" {
+		t.Fatalf("expected root source first, got %#v", diagnostics.Sources)
+	}
+	if diagnostics.Sources[0].Status != 200 || diagnostics.Sources[0].ContentType != "text/html" {
+		t.Fatalf("expected root status/content type diagnostics, got %#v", diagnostics.Sources[0])
+	}
+	if diagnostics.Sources[0].LinkedScripts != 1 || diagnostics.Sources[0].Actions != 0 {
+		t.Fatalf("unexpected root diagnostics: %#v", diagnostics.Sources[0])
+	}
+	if diagnostics.Sources[1].Source != "/owa/scripts/app.js" {
+		t.Fatalf("expected linked script source second, got %#v", diagnostics.Sources)
+	}
+	if diagnostics.Sources[1].Actions != 1 {
+		t.Fatalf("unexpected linked script diagnostics: %#v", diagnostics.Sources[1])
+	}
+}
+
+func TestTransportDiscoveryDiagnosticsDetectsLogonPage(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		switch request.URL.Path {
+		case "/owa/auth.owa":
+			http.SetCookie(response, &http.Cookie{Name: "X-OWA-CANARY", Value: "canary-secret"})
+			response.WriteHeader(http.StatusOK)
+		case "/owa/":
+			response.Header().Set("Content-Type", "text/html")
+			_, _ = response.Write([]byte(`<form action="/owa/auth.owa"><input name="username"><input name="password"></form>`))
+		default:
+			t.Fatalf("unexpected path: %s", request.URL.String())
+		}
+	}))
+	defer server.Close()
+	client := owa.NewTransport(owa.Config{
+		BaseURL:   server.URL,
+		Username:  "DOMAIN\\user",
+		SecretRef: secret.Ref("memory:owa"),
+	}, secret.NewMemoryStore(map[string]string{"memory:owa": "password"}), server.Client())
+
+	diagnostics, err := client.DiscoverServiceActionsFromURLDiagnostics(context.Background(), "/owa/", owa.DiscoveryOptions{})
+
+	if err != nil {
+		t.Fatalf("discover diagnostics: %v", err)
+	}
+	if len(diagnostics.Sources) != 1 {
+		t.Fatalf("expected one source diagnostic, got %#v", diagnostics.Sources)
+	}
+	if !diagnostics.Sources[0].LooksLikeLogonPage {
+		t.Fatalf("expected logon page marker in diagnostics: %#v", diagnostics.Sources[0])
 	}
 }
 

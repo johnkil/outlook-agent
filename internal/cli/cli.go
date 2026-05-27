@@ -26,6 +26,10 @@ type owaActionDiscoverer interface {
 	DiscoverServiceActionsFromURLWithOptions(ctx context.Context, source string, options owa.DiscoveryOptions) ([]string, error)
 }
 
+type owaActionDiscoveryDiagnoser interface {
+	DiscoverServiceActionsFromURLDiagnostics(ctx context.Context, source string, options owa.DiscoveryOptions) (owa.DiscoveryDiagnostics, error)
+}
+
 // Run executes the CLI command and returns the process exit code.
 func Run(args []string, stdout io.Writer, stderr io.Writer) int {
 	return RunWithRuntime(args, stdout, stderr, Runtime{})
@@ -123,6 +127,7 @@ func runOWADiscoverActions(args []string, options Options, runtime Runtime, stdo
 		return 1
 	}
 	discovered := make([]string, 0)
+	diagnosticSources := make([]owa.DiscoverySourceDiagnostics, 0)
 	for _, path := range sources.Files {
 		data, err := os.ReadFile(path)
 		if err != nil {
@@ -141,13 +146,28 @@ func runOWADiscoverActions(args []string, options Options, runtime Runtime, stdo
 			fmt.Fprintf(stderr, "build transport: %v\n", err)
 			return 4
 		}
-		discoverer, ok := client.(owaActionDiscoverer)
-		if !ok {
-			fmt.Fprintln(stderr, "configured transport does not support OWA action discovery")
-			return 4
-		}
 		for _, source := range sources.URLs {
-			actions, err := discoverer.DiscoverServiceActionsFromURLWithOptions(context.Background(), source, owa.DiscoveryOptions{IncludeLinkedScripts: sources.IncludeLinkedScripts})
+			options := owa.DiscoveryOptions{IncludeLinkedScripts: sources.IncludeLinkedScripts}
+			var actions []string
+			var err error
+			if sources.Diagnostics {
+				diagnoser, ok := client.(owaActionDiscoveryDiagnoser)
+				if !ok {
+					fmt.Fprintln(stderr, "configured transport does not support OWA discovery diagnostics")
+					return 4
+				}
+				diagnostics, diagnosticErr := diagnoser.DiscoverServiceActionsFromURLDiagnostics(context.Background(), source, options)
+				actions = diagnostics.Actions
+				diagnosticSources = append(diagnosticSources, diagnostics.Sources...)
+				err = diagnosticErr
+			} else {
+				discoverer, ok := client.(owaActionDiscoverer)
+				if !ok {
+					fmt.Fprintln(stderr, "configured transport does not support OWA action discovery")
+					return 4
+				}
+				actions, err = discoverer.DiscoverServiceActionsFromURLWithOptions(context.Background(), source, options)
+			}
 			if err != nil {
 				fmt.Fprintf(stderr, "discover OWA actions: %v\n", err)
 				return 4
@@ -155,13 +175,24 @@ func runOWADiscoverActions(args []string, options Options, runtime Runtime, stdo
 			discovered = append(discovered, actions...)
 		}
 	}
-	return writeJSON(stdout, owa.CompareDiscoveredServiceActions(discovered))
+	report := owa.CompareDiscoveredServiceActions(discovered)
+	if sources.Diagnostics {
+		return writeJSON(stdout, struct {
+			owa.DiscoveryReport
+			Sources []owa.DiscoverySourceDiagnostics `json:"sources"`
+		}{
+			DiscoveryReport: report,
+			Sources:         diagnosticSources,
+		})
+	}
+	return writeJSON(stdout, report)
 }
 
 type discoverActionSources struct {
 	Files                []string
 	URLs                 []string
 	IncludeLinkedScripts bool
+	Diagnostics          bool
 }
 
 func parseDiscoverActionsArgs(args []string) (discoverActionSources, error) {
@@ -182,6 +213,8 @@ func parseDiscoverActionsArgs(args []string) (discoverActionSources, error) {
 			sources.URLs = append(sources.URLs, args[index])
 		case "--include-linked-scripts":
 			sources.IncludeLinkedScripts = true
+		case "--diagnostics":
+			sources.Diagnostics = true
 		default:
 			return discoverActionSources{}, fmt.Errorf("unknown discover-actions argument: %s", args[index])
 		}

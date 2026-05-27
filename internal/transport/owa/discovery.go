@@ -21,12 +21,30 @@ var serviceActionPatterns = []*regexp.Regexp{
 	regexp.MustCompile(`["']Action["']\s*:\s*["']([A-Z][A-Za-z0-9]+)["']`),
 }
 
-var scriptSourcePattern = regexp.MustCompile(`(?is)<script\b[^>]*\bsrc\s*=\s*["']([^"']+)["']`)
+var scriptSourcePatterns = []*regexp.Regexp{
+	regexp.MustCompile(`(?is)<script\b[^>]*\bsrc\s*=\s*["']([^"']+)["']`),
+	regexp.MustCompile(`(?i)["']([^"']+\.js(?:\?[^"']*)?)["']`),
+}
 
 const maxDiscoveryBytes = 10 * 1024 * 1024
 
 type DiscoveryOptions struct {
 	IncludeLinkedScripts bool
+}
+
+type DiscoveryDiagnostics struct {
+	Actions []string
+	Sources []DiscoverySourceDiagnostics
+}
+
+type DiscoverySourceDiagnostics struct {
+	Source             string `json:"source"`
+	Status             int    `json:"status"`
+	ContentType        string `json:"content_type,omitempty"`
+	Bytes              int    `json:"bytes"`
+	Actions            int    `json:"actions"`
+	LinkedScripts      int    `json:"linked_scripts"`
+	LooksLikeLogonPage bool   `json:"looks_like_logon_page,omitempty"`
 }
 
 type DiscoveryReport struct {
@@ -52,15 +70,17 @@ func DiscoverServiceActions(text string) []string {
 
 func DiscoverLinkedScriptSources(text string) []string {
 	found := map[string]struct{}{}
-	for _, match := range scriptSourcePattern.FindAllStringSubmatch(text, -1) {
-		if len(match) < 2 {
-			continue
+	for _, pattern := range scriptSourcePatterns {
+		for _, match := range pattern.FindAllStringSubmatch(text, -1) {
+			if len(match) < 2 {
+				continue
+			}
+			source := strings.TrimSpace(match[1])
+			if source == "" {
+				continue
+			}
+			found[source] = struct{}{}
 		}
-		source := strings.TrimSpace(match[1])
-		if source == "" {
-			continue
-		}
-		found[source] = struct{}{}
 	}
 	return sortedKeys(found)
 }
@@ -70,58 +90,101 @@ func (client *Transport) DiscoverServiceActionsFromURL(ctx context.Context, sour
 }
 
 func (client *Transport) DiscoverServiceActionsFromURLWithOptions(ctx context.Context, source string, options DiscoveryOptions) ([]string, error) {
-	session, err := client.login(ctx)
+	diagnostics, err := client.DiscoverServiceActionsFromURLDiagnostics(ctx, source, options)
 	if err != nil {
 		return nil, err
 	}
-	text, resolved, err := client.fetchDiscoveryText(ctx, session, source)
-	if err != nil {
-		return nil, err
-	}
-	discovered := DiscoverServiceActions(text)
-	if options.IncludeLinkedScripts {
-		for _, scriptSource := range DiscoverLinkedScriptSources(text) {
-			scriptText, _, err := client.fetchDiscoveryTextRelativeTo(ctx, session, scriptSource, resolved)
-			if err != nil {
-				return nil, err
-			}
-			discovered = append(discovered, DiscoverServiceActions(scriptText)...)
-		}
-	}
-	return sortedUnique(discovered), nil
+	return diagnostics.Actions, nil
 }
 
-func (client *Transport) fetchDiscoveryText(ctx context.Context, session Session, source string) (string, string, error) {
+func (client *Transport) DiscoverServiceActionsFromURLDiagnostics(ctx context.Context, source string, options DiscoveryOptions) (DiscoveryDiagnostics, error) {
+	session, err := client.login(ctx)
+	if err != nil {
+		return DiscoveryDiagnostics{}, err
+	}
+	text, resolved, bytesRead, status, contentType, err := client.fetchDiscoveryText(ctx, session, source)
+	if err != nil {
+		return DiscoveryDiagnostics{}, err
+	}
+	discovered := DiscoverServiceActions(text)
+	linkedScripts := DiscoverLinkedScriptSources(text)
+	diagnostics := DiscoveryDiagnostics{
+		Actions: discovered,
+		Sources: []DiscoverySourceDiagnostics{
+			{
+				Source:             source,
+				Status:             status,
+				ContentType:        contentType,
+				Bytes:              bytesRead,
+				Actions:            len(discovered),
+				LinkedScripts:      len(linkedScripts),
+				LooksLikeLogonPage: looksLikeLogonPage(text),
+			},
+		},
+	}
+	if options.IncludeLinkedScripts {
+		for _, scriptSource := range linkedScripts {
+			scriptText, _, scriptBytes, scriptStatus, scriptContentType, err := client.fetchDiscoveryTextRelativeTo(ctx, session, scriptSource, resolved)
+			if err != nil {
+				return DiscoveryDiagnostics{}, err
+			}
+			scriptActions := DiscoverServiceActions(scriptText)
+			scriptLinkedSources := DiscoverLinkedScriptSources(scriptText)
+			diagnostics.Actions = append(diagnostics.Actions, scriptActions...)
+			diagnostics.Sources = append(diagnostics.Sources, DiscoverySourceDiagnostics{
+				Source:             scriptSource,
+				Status:             scriptStatus,
+				ContentType:        scriptContentType,
+				Bytes:              scriptBytes,
+				Actions:            len(scriptActions),
+				LinkedScripts:      len(scriptLinkedSources),
+				LooksLikeLogonPage: looksLikeLogonPage(scriptText),
+			})
+		}
+	}
+	diagnostics.Actions = sortedUnique(diagnostics.Actions)
+	return diagnostics, nil
+}
+
+func (client *Transport) fetchDiscoveryText(ctx context.Context, session Session, source string) (string, string, int, int, string, error) {
 	return client.fetchDiscoveryTextRelativeTo(ctx, session, source, "")
 }
 
-func (client *Transport) fetchDiscoveryTextRelativeTo(ctx context.Context, session Session, source string, reference string) (string, string, error) {
+func (client *Transport) fetchDiscoveryTextRelativeTo(ctx context.Context, session Session, source string, reference string) (string, string, int, int, string, error) {
 	resolved, err := client.config.discoveryURLRelativeTo(source, reference)
 	if err != nil {
-		return "", "", err
+		return "", "", 0, 0, "", err
 	}
 	request, err := http.NewRequestWithContext(ctx, http.MethodGet, resolved, nil)
 	if err != nil {
-		return "", "", err
+		return "", "", 0, 0, "", err
 	}
 	request.Header.Set("User-Agent", "Mozilla/5.0")
 	request.Header.Set("X-OWA-CANARY", session.Canary)
 	response, err := session.Client.Do(request)
 	if err != nil {
-		return "", "", err
+		return "", "", 0, 0, "", err
 	}
 	defer response.Body.Close()
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
-		return "", "", fmt.Errorf("owa discovery returned HTTP %d", response.StatusCode)
+		return "", "", 0, response.StatusCode, response.Header.Get("Content-Type"), fmt.Errorf("owa discovery returned HTTP %d", response.StatusCode)
 	}
 	data, err := io.ReadAll(io.LimitReader(response.Body, maxDiscoveryBytes+1))
 	if err != nil {
-		return "", "", err
+		return "", "", 0, response.StatusCode, response.Header.Get("Content-Type"), err
 	}
 	if len(data) > maxDiscoveryBytes {
-		return "", "", fmt.Errorf("owa discovery response exceeds %d bytes", maxDiscoveryBytes)
+		return "", "", 0, response.StatusCode, response.Header.Get("Content-Type"), fmt.Errorf("owa discovery response exceeds %d bytes", maxDiscoveryBytes)
 	}
-	return string(data), resolved, nil
+	return string(data), resolved, len(data), response.StatusCode, response.Header.Get("Content-Type"), nil
+}
+
+func looksLikeLogonPage(text string) bool {
+	lower := strings.ToLower(text)
+	if strings.Contains(lower, "auth/logon.aspx") || strings.Contains(lower, "/owa/auth.owa") {
+		return true
+	}
+	return strings.Contains(lower, "name=\"username\"") && strings.Contains(lower, "name=\"password\"")
 }
 
 func (config Config) discoveryURL(source string) (string, error) {

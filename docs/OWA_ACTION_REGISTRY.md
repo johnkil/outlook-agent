@@ -30,6 +30,7 @@ OWA page or static asset through the authenticated session:
 ```bash
 outlook-agent --config .local/outlook-agent.json owa discover-actions --url /owa/
 outlook-agent --config .local/outlook-agent.json owa discover-actions --url /owa/ --include-linked-scripts
+outlook-agent --config .local/outlook-agent.json owa discover-actions --url /owa/ --include-linked-scripts --diagnostics
 outlook-agent --config .local/outlook-agent.json owa discover-actions --url /owa/scripts/app.js
 ```
 
@@ -39,6 +40,11 @@ host. `--include-linked-scripts` scans same-origin `<script src="...">` assets
 linked from the fetched page, resolves relative script paths against that page,
 and also keeps those assets in memory only.
 
+Use `--diagnostics` when a live source returns no actions. It adds per-source
+counts for HTTP status, content type, bytes, direct action matches, linked
+script references, and logon-page markers without printing or storing raw HTML
+or JavaScript.
+
 The output includes:
 
 - `discovered`: sorted unique service-action names found in the file;
@@ -46,6 +52,7 @@ The output includes:
 - `unknown`: discovered names not yet classified;
 - `missing_classified`: registry names not seen in that particular input file;
 - `classes`: safety classes for discovered names.
+- `sources`: only when `--diagnostics` is used; sanitized source-level counts.
 
 Do not commit downloaded OWA assets or tenant-specific documentation. Commit
 only new generic action names, safety classifications, tests, and sanitized

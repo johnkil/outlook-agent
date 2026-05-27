@@ -169,6 +169,44 @@ func TestOWADiscoverActionsFromAuthenticatedURLIncludesLinkedScripts(t *testing.
 	}
 }
 
+func TestOWADiscoverActionsDiagnosticsFromAuthenticatedURL(t *testing.T) {
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	client := &discoveringTransport{
+		actions: []string{"FindItem"},
+		sources: []owa.DiscoverySourceDiagnostics{
+			{Source: "/owa/", Bytes: 128, Actions: 0, LinkedScripts: 1},
+			{Source: "/owa/scripts/app.js", Bytes: 256, Actions: 1, LinkedScripts: 0},
+		},
+	}
+
+	code := RunWithRuntime([]string{"owa", "discover-actions", "--url", "/owa/", "--include-linked-scripts", "--diagnostics"}, &stdout, &stderr, Runtime{
+		BuildTransport: func(_ context.Context, options Options) (transport.Transport, string, error) {
+			return client, "work", nil
+		},
+	})
+
+	if code != 0 {
+		t.Fatalf("expected exit code 0, got %d, stderr=%s", code, stderr.String())
+	}
+	var payload struct {
+		Classified []string                         `json:"classified"`
+		Sources    []owa.DiscoverySourceDiagnostics `json:"sources"`
+	}
+	if err := json.Unmarshal(stdout.Bytes(), &payload); err != nil {
+		t.Fatalf("diagnostic discovery output is not JSON: %v; output=%s", err, stdout.String())
+	}
+	if !stringSliceContains(payload.Classified, "FindItem") {
+		t.Fatalf("expected classified FindItem in output: %#v", payload)
+	}
+	if len(payload.Sources) != 2 {
+		t.Fatalf("expected source diagnostics, got %#v", payload.Sources)
+	}
+	if payload.Sources[0].LinkedScripts != 1 || payload.Sources[1].Actions != 1 {
+		t.Fatalf("unexpected source diagnostics: %#v", payload.Sources)
+	}
+}
+
 func TestUnknownCommandReturnsValidationError(t *testing.T) {
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer
@@ -189,8 +227,10 @@ func TestUnknownCommandReturnsValidationError(t *testing.T) {
 type discoveringTransport struct {
 	transport.Transport
 	actions              []string
+	sources              []owa.DiscoverySourceDiagnostics
 	source               string
 	includeLinkedScripts bool
+	diagnostics          bool
 }
 
 func (client *discoveringTransport) Name() string {
@@ -217,6 +257,13 @@ func (client *discoveringTransport) DiscoverServiceActionsFromURLWithOptions(_ c
 	client.source = source
 	client.includeLinkedScripts = options.IncludeLinkedScripts
 	return client.actions, nil
+}
+
+func (client *discoveringTransport) DiscoverServiceActionsFromURLDiagnostics(_ context.Context, source string, options owa.DiscoveryOptions) (owa.DiscoveryDiagnostics, error) {
+	client.source = source
+	client.includeLinkedScripts = options.IncludeLinkedScripts
+	client.diagnostics = true
+	return owa.DiscoveryDiagnostics{Actions: client.actions, Sources: client.sources}, nil
 }
 
 func stringSliceContains(values []string, expected string) bool {
