@@ -66,7 +66,7 @@ func TestTransportAuthenticatesWithInboxMailFolder(t *testing.T) {
 	}
 }
 
-func TestTransportGraphCapabilitiesIncludeMailMetadata(t *testing.T) {
+func TestTransportGraphCapabilitiesIncludeCalendarMetadata(t *testing.T) {
 	client := graph.NewTransport(graph.Config{
 		BaseURL:   "https://graph.example.test/v1.0",
 		SecretRef: secret.Ref("memory:graph"),
@@ -80,6 +80,8 @@ func TestTransportGraphCapabilitiesIncludeMailMetadata(t *testing.T) {
 		{name: "GetMailFolder", level: action.LevelRawGuardedExecution},
 		{name: "mail.search", level: action.LevelHighLevelMCPTool},
 		{name: "mail.fetch_metadata", level: action.LevelHighLevelMCPTool},
+		{name: "calendar.list", level: action.LevelHighLevelMCPTool},
+		{name: "calendar.availability", level: action.LevelHighLevelMCPTool},
 	} {
 		definition, ok := findGraphCapability(capabilities.Actions, tt.name)
 		if !ok {
@@ -225,6 +227,130 @@ func TestTransportExecutesMailFetchMetadata(t *testing.T) {
 	}
 }
 
+func TestTransportExecutesCalendarList(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		if request.Method != http.MethodGet || request.URL.Path != "/v1.0/me/calendarView" {
+			t.Fatalf("unexpected request: %s %s", request.Method, request.URL.String())
+		}
+		if request.Header.Get("Authorization") != "Bearer token-secret" {
+			t.Fatal("expected bearer token header")
+		}
+		if request.URL.Query().Get("startDateTime") != "2026-05-28T00:00:00Z" {
+			t.Fatalf("unexpected startDateTime: %q", request.URL.Query().Get("startDateTime"))
+		}
+		if request.URL.Query().Get("endDateTime") != "2026-05-29T00:00:00Z" {
+			t.Fatalf("unexpected endDateTime: %q", request.URL.Query().Get("endDateTime"))
+		}
+		assertGraphEventSelect(t, request.URL.Query().Get("$select"))
+		response.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(response).Encode(map[string]any{
+			"value": []any{
+				graphEventResponse("event-1", "Planning", "2026-05-28T09:00:00", "2026-05-28T09:30:00", "Room 1"),
+			},
+		})
+	}))
+	defer server.Close()
+
+	client := graph.NewTransport(graph.Config{
+		BaseURL:   server.URL + "/v1.0",
+		SecretRef: secret.Ref("memory:graph"),
+	}, secret.NewMemoryStore(map[string]string{"memory:graph": "token-secret"}), server.Client())
+
+	result := client.Execute(context.Background(), transport.ActionRequest{
+		Name: "calendar.list",
+		Payload: map[string]any{
+			"start": "2026-05-28T00:00:00Z",
+			"end":   "2026-05-29T00:00:00Z",
+		},
+	})
+
+	if !result.OK {
+		t.Fatalf("expected calendar.list ok, got %#v", result)
+	}
+	events := result.Data["events"].([]any)
+	if len(events) != 1 {
+		t.Fatalf("expected one event, got %#v", events)
+	}
+	event := events[0].(map[string]any)
+	if event["id"] != "event-1" || event["title"] != "Planning" || event["location"] != "Room 1" {
+		t.Fatalf("unexpected event metadata: %#v", event)
+	}
+	if event["start"] != "2026-05-28T09:00:00" || event["end"] != "2026-05-28T09:30:00" {
+		t.Fatalf("unexpected event time fields: %#v", event)
+	}
+}
+
+func TestTransportExecutesCalendarAvailability(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		if request.Method != http.MethodPost || request.URL.Path != "/v1.0/me/calendar/getSchedule" {
+			t.Fatalf("unexpected request: %s %s", request.Method, request.URL.String())
+		}
+		if request.Header.Get("Authorization") != "Bearer token-secret" {
+			t.Fatal("expected bearer token header")
+		}
+		var body map[string]any
+		if err := json.NewDecoder(request.Body).Decode(&body); err != nil {
+			t.Fatalf("decode request body: %v", err)
+		}
+		schedules := body["schedules"].([]any)
+		if len(schedules) != 1 || schedules[0] != "alex@example.com" {
+			t.Fatalf("unexpected schedules: %#v", schedules)
+		}
+		start := body["startTime"].(map[string]any)
+		end := body["endTime"].(map[string]any)
+		if start["dateTime"] != "2026-05-28T09:00:00" || end["dateTime"] != "2026-05-28T18:00:00" {
+			t.Fatalf("unexpected availability range: %#v", body)
+		}
+		if start["timeZone"] != "UTC" || end["timeZone"] != "UTC" {
+			t.Fatalf("expected UTC default timezone, got %#v", body)
+		}
+		if body["availabilityViewInterval"] != float64(30) {
+			t.Fatalf("unexpected availability interval: %#v", body["availabilityViewInterval"])
+		}
+		response.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(response).Encode(map[string]any{
+			"value": []any{
+				map[string]any{
+					"scheduleId": "alex@example.com",
+					"scheduleItems": []any{
+						graphScheduleItemResponse("busy", "2026-05-28T10:00:00", "2026-05-28T10:30:00", "Focus"),
+					},
+				},
+			},
+		})
+	}))
+	defer server.Close()
+
+	client := graph.NewTransport(graph.Config{
+		BaseURL:   server.URL + "/v1.0",
+		SecretRef: secret.Ref("memory:graph"),
+	}, secret.NewMemoryStore(map[string]string{"memory:graph": "token-secret"}), server.Client())
+
+	result := client.Execute(context.Background(), transport.ActionRequest{
+		Name: "calendar.availability",
+		Payload: map[string]any{
+			"email": "alex@example.com",
+			"start": "2026-05-28T09:00:00",
+			"end":   "2026-05-28T18:00:00",
+		},
+	})
+
+	if !result.OK {
+		t.Fatalf("expected calendar.availability ok, got %#v", result)
+	}
+	windows := result.Data["windows"].([]any)
+	if len(windows) != 1 {
+		t.Fatalf("expected one availability window, got %#v", windows)
+	}
+	window := windows[0].(map[string]any)
+	if window["status"] != "busy" || window["subject"] != "Focus" {
+		t.Fatalf("unexpected availability metadata: %#v", window)
+	}
+	if window["start"] != "2026-05-28T10:00:00" || window["end"] != "2026-05-28T10:30:00" {
+		t.Fatalf("unexpected availability time fields: %#v", window)
+	}
+}
+
 func TestTransportReportsHTTPErrorWithoutToken(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
 		response.Header().Set("Content-Type", "application/json")
@@ -286,9 +412,51 @@ func graphMessageResponse(id string, subject string, name string, address string
 	}
 }
 
+func graphEventResponse(id string, subject string, start string, end string, location string) map[string]any {
+	return map[string]any{
+		"id":      id,
+		"subject": subject,
+		"start": map[string]any{
+			"dateTime": start,
+			"timeZone": "UTC",
+		},
+		"end": map[string]any{
+			"dateTime": end,
+			"timeZone": "UTC",
+		},
+		"location": map[string]any{
+			"displayName": location,
+		},
+	}
+}
+
+func graphScheduleItemResponse(status string, start string, end string, subject string) map[string]any {
+	return map[string]any{
+		"status":  status,
+		"subject": subject,
+		"start": map[string]any{
+			"dateTime": start,
+			"timeZone": "UTC",
+		},
+		"end": map[string]any{
+			"dateTime": end,
+			"timeZone": "UTC",
+		},
+	}
+}
+
 func assertGraphMessageSelect(t *testing.T, selectValue string) {
 	t.Helper()
 	for _, field := range []string{"id", "subject", "from", "receivedDateTime", "importance", "isRead", "hasAttachments"} {
+		if !strings.Contains(selectValue, field) {
+			t.Fatalf("expected $select to contain %q, got %q", field, selectValue)
+		}
+	}
+}
+
+func assertGraphEventSelect(t *testing.T, selectValue string) {
+	t.Helper()
+	for _, field := range []string{"id", "subject", "start", "end", "location"} {
 		if !strings.Contains(selectValue, field) {
 			t.Fatalf("expected $select to contain %q, got %q", field, selectValue)
 		}

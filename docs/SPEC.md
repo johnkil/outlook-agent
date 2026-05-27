@@ -129,9 +129,10 @@ Configured transports:
 - `graph`: initial Microsoft Graph REST transport. Profiles use optional
   `settings.base_url` and `secret_ref` for a bearer access token. Supported
   read-metadata actions are `GetMailFolder`, `mail.search`, and
-  `mail.fetch_metadata`; `auth check` probes `/me/mailFolders/inbox`. OAuth
-  token acquisition, admin consent, and token refresh are outside the public
-  runtime in this phase.
+  `mail.fetch_metadata`, plus calendar metadata actions `calendar.list` and
+  `calendar.availability`; `auth check` probes `/me/mailFolders/inbox`.
+  OAuth token acquisition, admin consent, and token refresh are outside the
+  public runtime in this phase.
 
 ## Redaction
 

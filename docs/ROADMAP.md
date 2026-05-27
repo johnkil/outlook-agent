@@ -68,9 +68,9 @@ Status: implemented initial slice.
 
 - Fake transport for tests and examples.
 - Graph transport where delegated OAuth is available: initial bearer-token
-  `GetMailFolder`, `mail.search`, and `mail.fetch_metadata` read-metadata
-  actions implemented; OAuth acquisition, refresh, admin consent, and broader
-  body/calendar/mutation coverage remain.
+  `GetMailFolder`, `mail.search`, `mail.fetch_metadata`, `calendar.list`, and
+  `calendar.availability` read-metadata actions implemented; OAuth acquisition,
+  refresh, admin consent, and broader body/mutation coverage remain.
 - EWS transport where Exchange policy allows it: initial SOAP `GetFolder`
   read-metadata probe/action implemented; broader action coverage and live
   environment/auth enablement remain.
