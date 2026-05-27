@@ -25,11 +25,16 @@ Status: implemented initial slice.
 
 ## Phase 2: MCP Contract
 
+- Status: started.
+
 - Local stdio MCP server.
-- Tool registration for the initial public tool set.
-- JSON schema generation or stable hand-written schemas.
+- Tool registration for the initial public tool set: started with auth,
+  capabilities, mail search, and action dry-run.
+- JSON schema generation or stable hand-written schemas: started through typed
+  MCP handlers.
 - MCP inspector smoke tests.
-- OpenCode local MCP configuration example.
+- SDK in-memory MCP smoke tests: started.
+- OpenCode local MCP configuration example: added.
 
 ## Phase 3: Mail and Calendar High-Level Tools
 

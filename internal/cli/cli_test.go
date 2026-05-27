@@ -2,6 +2,7 @@ package cli
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"testing"
 )
@@ -75,5 +76,25 @@ func TestUnknownCommandReturnsValidationError(t *testing.T) {
 	}
 	if stderr.Len() == 0 {
 		t.Fatal("expected stderr to explain unknown command")
+	}
+}
+
+func TestMCPCommandDispatchesRunner(t *testing.T) {
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	called := false
+
+	code := RunWithRuntime([]string{"mcp"}, &stdout, &stderr, Runtime{
+		RunMCP: func(context.Context) error {
+			called = true
+			return nil
+		},
+	})
+
+	if code != 0 {
+		t.Fatalf("expected exit code 0, got %d, stderr=%s", code, stderr.String())
+	}
+	if !called {
+		t.Fatal("expected MCP runner to be called")
 	}
 }

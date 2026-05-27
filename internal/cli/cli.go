@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -8,8 +9,16 @@ import (
 	"github.com/johnkil/outlook-agent/internal/policy"
 )
 
+type Runtime struct {
+	RunMCP func(context.Context) error
+}
+
 // Run executes the CLI command and returns the process exit code.
 func Run(args []string, stdout io.Writer, stderr io.Writer) int {
+	return RunWithRuntime(args, stdout, stderr, Runtime{})
+}
+
+func RunWithRuntime(args []string, stdout io.Writer, stderr io.Writer, runtime Runtime) int {
 	if len(args) == 0 {
 		fmt.Fprintln(stderr, "missing command")
 		return 1
@@ -40,8 +49,15 @@ func Run(args []string, stdout io.Writer, stderr io.Writer) int {
 			})
 		}
 	case "mcp":
-		fmt.Fprintln(stderr, "mcp server is not implemented yet")
-		return 4
+		if runtime.RunMCP == nil {
+			fmt.Fprintln(stderr, "mcp runner is not configured")
+			return 4
+		}
+		if err := runtime.RunMCP(context.Background()); err != nil {
+			fmt.Fprintf(stderr, "mcp server failed: %v\n", err)
+			return 4
+		}
+		return 0
 	}
 
 	fmt.Fprintf(stderr, "unknown command: %s\n", args[0])
