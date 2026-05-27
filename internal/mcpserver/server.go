@@ -427,7 +427,7 @@ func actionConfirmHandler(runtime *Runtime) func(context.Context, *mcp.CallToolR
 
 func rawActionHandler(runtime *Runtime) func(context.Context, *mcp.CallToolRequest, RawActionInput) (*mcp.CallToolResult, ActionResultOutput, error) {
 	return func(ctx context.Context, _ *mcp.CallToolRequest, input RawActionInput) (*mcp.CallToolResult, ActionResultOutput, error) {
-		class := safetyClassFor(runtime.client, input.Action)
+		class := safetyClassForPayload(runtime.client, input.Action, input.Payload)
 		decision := policy.Evaluate(policy.Request{
 			Class:          class,
 			ExplicitTarget: input.ExplicitTarget || hasExplicitTarget(input.Payload),
@@ -471,10 +471,27 @@ func safetyClassFor(client transport.Transport, actionName string) policy.Safety
 
 func confirmedActionDecision(client transport.Transport, actionName string, payload map[string]any, unsafeMode bool) policy.Decision {
 	return policy.EvaluateConfirmed(policy.Request{
-		Class:          safetyClassFor(client, actionName),
+		Class:          safetyClassForPayload(client, actionName, payload),
 		ExplicitTarget: hasExplicitTarget(payload),
 		UnsafeMode:     unsafeMode,
 	})
+}
+
+func safetyClassForPayload(client transport.Transport, actionName string, payload map[string]any) policy.SafetyClass {
+	class := safetyClassFor(client, actionName)
+	if class == policy.Destructive && isMoveToDeletedItems(actionName, payload) {
+		return policy.ReversibleBulk
+	}
+	return class
+}
+
+func isMoveToDeletedItems(actionName string, payload map[string]any) bool {
+	if actionName != "DeleteItem" && actionName != "DeleteFolder" {
+		return false
+	}
+	body, _ := payload["Body"].(map[string]any)
+	deleteType, _ := body["DeleteType"].(string)
+	return deleteType == "MoveToDeletedItems"
 }
 
 func hasExplicitTarget(payload map[string]any) bool {

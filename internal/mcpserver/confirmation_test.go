@@ -159,6 +159,48 @@ func TestActionConfirmAllowsDestructiveTokenWithUnsafe(t *testing.T) {
 	}
 }
 
+func TestDryRunAllowsRawDeleteItemMoveToDeletedItemsWithoutUnsafe(t *testing.T) {
+	client := newRecordingTransport(action.Definition{Name: "DeleteItem", Transport: "test", Class: policy.Destructive, Level: action.LevelRawGuardedExecution})
+	runtime := NewRuntime(client)
+	payload := map[string]any{"Body": map[string]any{"DeleteType": "MoveToDeletedItems", "ItemIds": []any{"msg-1"}}}
+
+	_, output, err := dryRunHandler(runtime)(context.Background(), nil, DryRunInput{
+		Action:  "DeleteItem",
+		Payload: payload,
+	})
+	if err != nil {
+		t.Fatalf("dry-run handler: %v", err)
+	}
+	if !output.OK || output.ConfirmationToken == "" || output.RequiresUnsafe {
+		t.Fatalf("expected reversible raw DeleteItem dry-run token without unsafe: %#v", output)
+	}
+}
+
+func TestActionConfirmAllowsRawDeleteItemMoveToDeletedItemsWithoutUnsafe(t *testing.T) {
+	client := newRecordingTransport(action.Definition{Name: "DeleteItem", Transport: "test", Class: policy.Destructive, Level: action.LevelRawGuardedExecution})
+	runtime := NewRuntime(client)
+	payload := map[string]any{"Body": map[string]any{"DeleteType": "MoveToDeletedItems", "ItemIds": []any{"msg-1"}}}
+	token, err := runtime.confirm.Generate(bindingFor(client, "default", "DeleteItem", payload, false), 10*time.Minute)
+	if err != nil {
+		t.Fatalf("generate confirmation token: %v", err)
+	}
+
+	_, output, err := actionConfirmHandler(runtime)(context.Background(), nil, ActionConfirmInput{
+		ConfirmToken: token,
+		Action:       "DeleteItem",
+		Payload:      payload,
+	})
+	if err != nil {
+		t.Fatalf("confirm handler: %v", err)
+	}
+	if !output.OK {
+		t.Fatalf("expected reversible raw DeleteItem confirm without unsafe to execute: %#v", output)
+	}
+	if !client.executed {
+		t.Fatal("expected reversible raw DeleteItem to execute after confirmation")
+	}
+}
+
 func TestCapabilitiesHandlerReturnsPolicyMetadata(t *testing.T) {
 	client := newRecordingTransport(action.Definition{
 		Name:      "DeleteItem",

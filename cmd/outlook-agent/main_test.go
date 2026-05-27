@@ -616,6 +616,81 @@ func TestLiveBinaryMCPStdioDraftBodyFetchAndCleanupSmoke(t *testing.T) {
 	cleanupDone = true
 }
 
+func TestLiveBinaryMCPStdioRawReversibleConfirmCleanupSmoke(t *testing.T) {
+	configPath := os.Getenv("OUTLOOK_AGENT_LIVE_CONFIG")
+	if configPath == "" {
+		t.Skip("OUTLOOK_AGENT_LIVE_CONFIG is not set")
+	}
+	if os.Getenv("OUTLOOK_AGENT_LIVE_MUTATION_SMOKE") != "1" {
+		t.Skip("OUTLOOK_AGENT_LIVE_MUTATION_SMOKE=1 is not set")
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+
+	args := []string{"--config", configPath}
+	if profile := os.Getenv("OUTLOOK_AGENT_LIVE_PROFILE"); profile != "" {
+		args = append(args, "--profile", profile)
+	}
+	args = append(args, "mcp")
+
+	command := exec.CommandContext(ctx, buildBinary(t), args...)
+	client := mcp.NewClient(&mcp.Implementation{Name: "stdio-live-raw-reversible-smoke-test", Version: "0.0.1"}, nil)
+	session, err := client.Connect(ctx, &mcp.CommandTransport{Command: command, TerminateDuration: time.Second}, nil)
+	if err != nil {
+		t.Fatalf("connect to live stdio MCP server: %v", err)
+	}
+	defer session.Close()
+
+	auth, err := session.CallTool(ctx, &mcp.CallToolParams{Name: "outlook.auth_check"})
+	if err != nil {
+		t.Fatalf("call auth_check: %v", err)
+	}
+	if auth.IsError {
+		t.Fatalf("expected auth_check success, got %#v", auth)
+	}
+	var authOutput struct {
+		OK bool `json:"ok"`
+	}
+	decodeStructuredContent(t, auth, &authOutput)
+	if !authOutput.OK {
+		t.Fatalf("expected live auth_check ok output, got %#v", authOutput)
+	}
+
+	stamp := time.Now().UTC().Format("20060102T150405.000000000Z")
+	createDraft, err := session.CallTool(ctx, &mcp.CallToolParams{
+		Name: "outlook.mail_create_draft",
+		Arguments: map[string]any{
+			"subject": "outlook-agent raw reversible smoke draft " + stamp,
+			"body":    "Created by an opt-in Outlook Agent raw reversible live smoke.",
+			"to":      []string{},
+		},
+	})
+	if err != nil {
+		t.Fatalf("call mail_create_draft: %v", err)
+	}
+	if createDraft.IsError {
+		t.Fatalf("expected mail_create_draft success envelope, got %#v", createDraft)
+	}
+	var draftOutput struct {
+		Draft any `json:"draft"`
+	}
+	decodeStructuredContent(t, createDraft, &draftOutput)
+	draftID := messageIDFromToolValue(draftOutput.Draft)
+	if draftID == "" {
+		t.Fatalf("expected draft id in sanitized output, got %#v", draftOutput.Draft)
+	}
+	rawCleanupDone := false
+	defer func() {
+		if !rawCleanupDone {
+			cleanupDraftFixture(t, ctx, session, draftID)
+		}
+	}()
+
+	cleanupDraftFixtureWithRawDeleteItem(t, ctx, session, draftID)
+	rawCleanupDone = true
+}
+
 func TestBinaryMCPStdioRejectsMissingExplicitConfig(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
@@ -739,6 +814,54 @@ func cleanupDraftFixture(t *testing.T, ctx context.Context, session *mcp.ClientS
 	decodeStructuredContent(t, move, &moveOutput)
 	if !moveOutput.OK || moveOutput.Data["moved_count"] != float64(1) {
 		t.Errorf("expected fixture to be moved to Deleted Items, got %#v", moveOutput)
+	}
+}
+
+func cleanupDraftFixtureWithRawDeleteItem(t *testing.T, ctx context.Context, session *mcp.ClientSession, draftID string) {
+	t.Helper()
+	payload := map[string]any{
+		"__type": "DeleteItemJsonRequest:#Exchange",
+		"Header": map[string]any{
+			"__type":               "JsonRequestHeaders:#Exchange",
+			"RequestServerVersion": "Exchange2013",
+		},
+		"Body": map[string]any{
+			"__type":                   "DeleteItemRequest:#Exchange",
+			"DeleteType":               "MoveToDeletedItems",
+			"SendMeetingCancellations": "SendToNone",
+			"ItemIds": []any{
+				map[string]any{"__type": "ItemId:#Exchange", "Id": draftID},
+			},
+		},
+	}
+	dryRun := callDryRun(t, ctx, session, map[string]any{
+		"action":  "DeleteItem",
+		"payload": payload,
+	})
+	if !dryRun.OK || dryRun.ConfirmationToken == "" || dryRun.Count != 1 || !dryRun.Reversible || dryRun.RequiresUnsafe {
+		t.Fatalf("expected raw reversible DeleteItem dry-run token for fixture: %#v", dryRun)
+	}
+	confirm, err := session.CallTool(ctx, &mcp.CallToolParams{
+		Name: "outlook.action_confirm",
+		Arguments: map[string]any{
+			"action":        "DeleteItem",
+			"payload":       payload,
+			"confirm_token": dryRun.ConfirmationToken,
+		},
+	})
+	if err != nil {
+		t.Fatalf("call raw DeleteItem action_confirm: %v", err)
+	}
+	if confirm.IsError {
+		t.Fatalf("expected raw DeleteItem confirm success envelope, got %#v", confirm)
+	}
+	var output struct {
+		OK    bool   `json:"ok"`
+		Error string `json:"error"`
+	}
+	decodeStructuredContent(t, confirm, &output)
+	if !output.OK {
+		t.Fatalf("expected raw DeleteItem cleanup ok, got %#v", output)
 	}
 }
 

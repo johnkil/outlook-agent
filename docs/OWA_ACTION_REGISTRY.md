@@ -141,7 +141,10 @@ notes.
   `mail.create_draft` tool, which builds `MessageDisposition=SaveOnly`.
 - `DeleteItem` and `DeleteFolder` are classified as `destructive` at the raw
   action layer because raw payloads can hard-delete. The safe move-to-trash path
-  is the high-level `mail.move_to_deleted_items` tool.
+  is the high-level `mail.move_to_deleted_items` tool. Raw `DeleteItem` and
+  `DeleteFolder` payloads with `DeleteType=MoveToDeletedItems` are treated as
+  payload-sensitive reversible bulk operations by the MCP dry-run/confirm
+  policy; hard-delete and soft-delete payloads still require unsafe mode.
 - Registry completeness is expected to grow through live discovery and
   documentation review. A newly discovered action must start as `unknown` or be
   added here with a safety class and tests.
