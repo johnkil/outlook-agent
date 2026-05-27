@@ -75,6 +75,7 @@ tokens, cookies, or canary values.
 - [RFC](docs/RFC.md)
 - [SPEC](docs/SPEC.md)
 - [Action Coverage](docs/ACTION_COVERAGE.md)
+- [OWA Action Registry](docs/OWA_ACTION_REGISTRY.md)
 - [Security Model](docs/SECURITY_MODEL.md)
 - [Roadmap](docs/ROADMAP.md)
 - [OpenCode Integration](docs/OPENCODE.md)

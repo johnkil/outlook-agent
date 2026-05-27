@@ -6,8 +6,6 @@ import (
 	"fmt"
 	"net/http"
 
-	"github.com/johnkil/outlook-agent/internal/action"
-	"github.com/johnkil/outlook-agent/internal/policy"
 	"github.com/johnkil/outlook-agent/internal/secret"
 	"github.com/johnkil/outlook-agent/internal/transport"
 )
@@ -50,22 +48,8 @@ func (client *Transport) Authenticate(ctx context.Context, _ string) transport.A
 }
 
 func (client *Transport) Capabilities(context.Context) transport.CapabilitySet {
-	return transport.CapabilitySet{Actions: []action.Definition{
-		{Name: "mail.search", Transport: "owa", Class: policy.ReadMetadata, Level: action.LevelHighLevelMCPTool},
-		{Name: "mail.fetch_metadata", Transport: "owa", Class: policy.ReadMetadata, Level: action.LevelHighLevelMCPTool},
-		{Name: "mail.fetch_body", Transport: "owa", Class: policy.ReadBodyExplicit, Level: action.LevelHighLevelMCPTool},
-		{Name: "mail.create_draft", Transport: "owa", Class: policy.DraftOnly, Level: action.LevelHighLevelMCPTool},
-		{Name: "mail.move_to_deleted_items", Transport: "owa", Class: policy.ReversibleBulk, Level: action.LevelHighLevelMCPTool},
-		{Name: "calendar.list", Transport: "owa", Class: policy.ReadMetadata, Level: action.LevelHighLevelMCPTool},
-		{Name: "calendar.availability", Transport: "owa", Class: policy.ReadMetadata, Level: action.LevelHighLevelMCPTool},
-		{Name: "FindPeople", Transport: "owa", Class: policy.ReadMetadata, Level: action.LevelRawGuardedExecution},
-		{Name: "FindItem", Transport: "owa", Class: policy.ReadMetadata, Level: action.LevelRawGuardedExecution},
-		{Name: "GetItem", Transport: "owa", Class: policy.ReadBodyExplicit, Level: action.LevelRawGuardedExecution},
-		{Name: "CreateItem", Transport: "owa", Class: policy.DraftOnly, Level: action.LevelRawGuardedExecution},
-		{Name: "DeleteItem", Transport: "owa", Class: policy.ReversibleBulk, Level: action.LevelRawGuardedExecution},
-		{Name: "GetCalendarView", Transport: "owa", Class: policy.ReadMetadata, Level: action.LevelRawGuardedExecution},
-		{Name: "GetUserAvailabilityInternal", Transport: "owa", Class: policy.ReadMetadata, Level: action.LevelRawGuardedExecution},
-	}}
+	actions := append(highLevelCapabilities(), rawServiceCapabilities()...)
+	return transport.CapabilitySet{Actions: actions}
 }
 
 func (client *Transport) Execute(ctx context.Context, request transport.ActionRequest) transport.ActionResponse {

@@ -5,8 +5,11 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"testing"
 
+	"github.com/johnkil/outlook-agent/internal/action"
+	"github.com/johnkil/outlook-agent/internal/policy"
 	"github.com/johnkil/outlook-agent/internal/secret"
 	"github.com/johnkil/outlook-agent/internal/transport"
 	"github.com/johnkil/outlook-agent/internal/transport/owa"
@@ -58,6 +61,119 @@ func TestTransportAuthenticatesAndExecutesServiceAction(t *testing.T) {
 	}
 	if !sawCanaryHeader {
 		t.Fatal("expected service request to include canary header")
+	}
+}
+
+func TestTransportCapabilitiesIncludeClassifiedOWAServiceActions(t *testing.T) {
+	client := owa.NewTransport(owa.Config{
+		BaseURL:   "https://example.test",
+		Username:  "DOMAIN\\user",
+		SecretRef: secret.Ref("memory:owa"),
+	}, secret.NewMemoryStore(map[string]string{"memory:owa": "password"}), nil)
+
+	capabilities := client.Capabilities(context.Background())
+	byName := map[string]action.Definition{}
+	for _, definition := range capabilities.Actions {
+		if _, exists := byName[definition.Name]; exists {
+			t.Fatalf("duplicate capability %q in %#v", definition.Name, capabilities.Actions)
+		}
+		byName[definition.Name] = definition
+	}
+
+	for _, expected := range []string{
+		"ArchiveItem",
+		"ConvertId",
+		"CopyFolder",
+		"CopyItem",
+		"CreateAttachment",
+		"CreateFolder",
+		"CreateFolderPath",
+		"CreateItem",
+		"DeleteAttachment",
+		"DeleteFolder",
+		"DeleteItem",
+		"ExpandDL",
+		"FindItem",
+		"FindPeople",
+		"FindConversation",
+		"FindFolder",
+		"GetAttachment",
+		"GetConversationItems",
+		"GetFolder",
+		"GetCalendarView",
+		"GetInboxRules",
+		"GetItem",
+		"GetMailTips",
+		"GetPersona",
+		"GetReminders",
+		"GetRoomLists",
+		"GetRooms",
+		"GetServerTimeZones",
+		"GetServiceConfiguration",
+		"GetSharingFolder",
+		"GetSharingMetadata",
+		"GetUserAvailability",
+		"GetUserAvailabilityInternal",
+		"GetUserOofSettings",
+		"GetUserPhoto",
+		"GetUserRetentionPolicyTags",
+		"MarkAllItemsAsRead",
+		"MarkAsJunk",
+		"MoveFolder",
+		"MoveItem",
+		"PerformReminderAction",
+		"ResolveNames",
+		"SendItem",
+		"SyncFolderHierarchy",
+		"SyncFolderItems",
+		"UpdateFolder",
+		"UpdateItem",
+	} {
+		definition, ok := byName[expected]
+		if !ok {
+			t.Fatalf("expected OWA raw capability %q in %#v", expected, capabilities.Actions)
+		}
+		if definition.Transport != "owa" {
+			t.Fatalf("expected %s transport owa, got %#v", expected, definition)
+		}
+		if definition.Level != action.LevelRawGuardedExecution {
+			t.Fatalf("expected %s raw guarded level, got %#v", expected, definition)
+		}
+	}
+
+	assertClass(t, byName, "FindItem", policy.ReadMetadata)
+	assertClass(t, byName, "GetItem", policy.ReadBodyExplicit)
+	assertClass(t, byName, "GetAttachment", policy.ReadAttachmentExplicit)
+	assertClass(t, byName, "CreateItem", policy.SendLike)
+	assertClass(t, byName, "SendItem", policy.SendLike)
+	assertClass(t, byName, "DeleteItem", policy.Destructive)
+	assertClass(t, byName, "DeleteFolder", policy.Destructive)
+	assertClass(t, byName, "MoveItem", policy.ReversibleBulk)
+	assertClass(t, byName, "UpdateItem", policy.SettingsOrRules)
+
+	assertMissing(t, capabilities.Actions, "UpdateInboxRules")
+}
+
+func assertClass(t *testing.T, byName map[string]action.Definition, name string, class policy.SafetyClass) {
+	t.Helper()
+	definition, ok := byName[name]
+	if !ok {
+		if class == policy.Unknown {
+			return
+		}
+		t.Fatalf("missing capability %q", name)
+	}
+	if definition.Class != class {
+		t.Fatalf("expected %s class %s, got %#v", name, class, definition)
+	}
+}
+
+func assertMissing(t *testing.T, definitions []action.Definition, name string) {
+	t.Helper()
+	if slices.ContainsFunc(definitions, func(definition action.Definition) bool {
+		return definition.Name == name
+	}) {
+		t.Fatalf("%s should not appear until explicitly classified", name)
 	}
 }
 
