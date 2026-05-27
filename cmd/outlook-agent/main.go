@@ -12,16 +12,16 @@ import (
 
 func main() {
 	os.Exit(cli.RunWithRuntime(os.Args[1:], os.Stdout, os.Stderr, cli.Runtime{
-		BuildTransport: func(_ context.Context, options cli.Options) (transport.Transport, error) {
-			client, _, err := app.BuildTransport(app.Options{ConfigPath: options.ConfigPath, Profile: options.Profile})
-			return client, err
+		BuildTransport: func(_ context.Context, options cli.Options) (transport.Transport, string, error) {
+			result, err := app.BuildTransportResult(app.Options{ConfigPath: options.ConfigPath, Profile: options.Profile})
+			return result.Client, result.Profile, err
 		},
 		RunMCP: func(ctx context.Context, options cli.Options) error {
-			client, _, err := app.BuildTransport(app.Options{ConfigPath: options.ConfigPath, Profile: options.Profile})
+			result, err := app.BuildTransportResult(app.Options{ConfigPath: options.ConfigPath, Profile: options.Profile})
 			if err != nil {
 				return err
 			}
-			return mcpserver.RunStdioWithTransport(ctx, client)
+			return mcpserver.RunStdioWithTransportProfile(ctx, result.Client, result.Profile)
 		},
 	}))
 }

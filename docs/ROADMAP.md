@@ -74,6 +74,8 @@ Status: implemented initial slice.
 - OWA high-level mappings: implemented for mail search, metadata/body fetch,
   draft save, move to Deleted Items, calendar list, and calendar availability;
   mail search and availability have live opt-in smoke tests.
+- MCP stdio smoke: implemented for the packaged binary, including resolved
+  config profile propagation and an opt-in live OWA availability smoke.
 - Private enterprise adapter outside the public core.
 
 ## Phase 6: Production Readiness

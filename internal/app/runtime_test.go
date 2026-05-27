@@ -31,6 +31,26 @@ func TestBuildTransportDefaultsToFakeWithoutConfig(t *testing.T) {
 	}
 }
 
+func TestBuildTransportResultResolvesConfiguredDefaultProfile(t *testing.T) {
+	path := writeConfig(t, `{
+		"default_profile": "work",
+		"profiles": {
+			"work": {"transport": "fake"}
+		}
+	}`)
+
+	result, err := app.BuildTransportResult(app.Options{ConfigPath: path})
+	if err != nil {
+		t.Fatalf("build transport result: %v", err)
+	}
+	if result.Profile != "work" {
+		t.Fatalf("expected resolved profile work, got %q", result.Profile)
+	}
+	if result.Client.Name() != "fake" {
+		t.Fatalf("expected fake transport, got %q", result.Client.Name())
+	}
+}
+
 func TestBuildTransportCreatesOWAProfile(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
 		if request.URL.Path != "/owa/auth.owa" {

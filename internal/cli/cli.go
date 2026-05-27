@@ -16,7 +16,7 @@ type Options struct {
 }
 
 type Runtime struct {
-	BuildTransport func(context.Context, Options) (transport.Transport, error)
+	BuildTransport func(context.Context, Options) (transport.Transport, string, error)
 	RunMCP         func(context.Context, Options) error
 }
 
@@ -80,7 +80,7 @@ func runAuthCheck(stdout io.Writer, options Options, runtime Runtime) int {
 			"error":   "transport profile is not configured",
 		})
 	}
-	client, err := runtime.BuildTransport(context.Background(), options)
+	client, profile, err := runtime.BuildTransport(context.Background(), options)
 	if err != nil {
 		writeJSON(stdout, map[string]any{
 			"ok":      false,
@@ -89,7 +89,6 @@ func runAuthCheck(stdout io.Writer, options Options, runtime Runtime) int {
 		})
 		return 3
 	}
-	profile := options.Profile
 	if profile == "" {
 		profile = "default"
 	}

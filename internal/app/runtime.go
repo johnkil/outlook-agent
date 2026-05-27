@@ -18,32 +18,49 @@ type Options struct {
 	HTTPClient *http.Client
 }
 
+type TransportResult struct {
+	Client  transport.Transport
+	Source  config.Source
+	Profile string
+}
+
 func BuildTransport(options Options) (transport.Transport, config.Source, error) {
+	result, err := BuildTransportResult(options)
+	if err != nil {
+		return nil, result.Source, err
+	}
+	return result.Client, result.Source, nil
+}
+
+func BuildTransportResult(options Options) (TransportResult, error) {
 	loaded, source, err := config.Load(config.Options{ExplicitPath: options.ConfigPath})
 	if err != nil {
-		return nil, source, err
+		return TransportResult{Source: source}, err
 	}
-	if len(loaded.Profiles) == 0 {
-		return fake.New(), source, nil
-	}
-
 	profileName := options.Profile
 	if profileName == "" {
 		profileName = loaded.DefaultProfile
 	}
+	if len(loaded.Profiles) == 0 {
+		return TransportResult{Client: fake.New(), Source: source, Profile: profileName}, nil
+	}
+
 	profile, ok := loaded.Profiles[profileName]
 	if !ok {
-		return nil, source, fmt.Errorf("profile %q is not configured", profileName)
+		return TransportResult{Source: source, Profile: profileName}, fmt.Errorf("profile %q is not configured", profileName)
 	}
 
 	switch profile.Transport {
 	case "", "fake":
-		return fake.New(), source, nil
+		return TransportResult{Client: fake.New(), Source: source, Profile: profileName}, nil
 	case "owa":
 		client, err := buildOWATransport(profile, options)
-		return client, source, err
+		if err != nil {
+			return TransportResult{Source: source, Profile: profileName}, err
+		}
+		return TransportResult{Client: client, Source: source, Profile: profileName}, nil
 	default:
-		return nil, source, fmt.Errorf("transport %q is not supported", profile.Transport)
+		return TransportResult{Source: source, Profile: profileName}, fmt.Errorf("transport %q is not supported", profile.Transport)
 	}
 }
 

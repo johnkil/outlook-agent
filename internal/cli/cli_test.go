@@ -114,9 +114,9 @@ func TestAuthCheckUsesConfiguredRuntimeProfile(t *testing.T) {
 	var gotOptions Options
 
 	code := RunWithRuntime([]string{"auth", "check", "--config", "/tmp/outlook-agent.json", "--profile", "work"}, &stdout, &stderr, Runtime{
-		BuildTransport: func(_ context.Context, options Options) (transport.Transport, error) {
+		BuildTransport: func(_ context.Context, options Options) (transport.Transport, string, error) {
 			gotOptions = options
-			return fake.New(), nil
+			return fake.New(), "work", nil
 		},
 	})
 
@@ -148,8 +148,8 @@ func TestAuthCheckReportsTransportBuildError(t *testing.T) {
 	var stderr bytes.Buffer
 
 	code := RunWithRuntime([]string{"auth", "check", "--profile", "missing"}, &stdout, &stderr, Runtime{
-		BuildTransport: func(context.Context, Options) (transport.Transport, error) {
-			return nil, errors.New(`profile "missing" is not configured`)
+		BuildTransport: func(context.Context, Options) (transport.Transport, string, error) {
+			return nil, "missing", errors.New(`profile "missing" is not configured`)
 		},
 	})
 

@@ -132,6 +132,7 @@ type RawActionInput struct {
 type Runtime struct {
 	client  transport.Transport
 	confirm *confirm.Store
+	profile string
 }
 
 func Catalog() ToolCatalog {
@@ -165,6 +166,10 @@ func RunStdioWithTransport(ctx context.Context, client transport.Transport) erro
 	return normalizeRunError(NewWithTransport(client).Run(ctx, &mcp.StdioTransport{}))
 }
 
+func RunStdioWithTransportProfile(ctx context.Context, client transport.Transport, profile string) error {
+	return normalizeRunError(NewWithTransportProfile(client, profile).Run(ctx, &mcp.StdioTransport{}))
+}
+
 func normalizeRunError(err error) error {
 	if errors.Is(err, io.EOF) {
 		return nil
@@ -176,9 +181,17 @@ func normalizeRunError(err error) error {
 }
 
 func NewRuntime(client transport.Transport) *Runtime {
+	return NewRuntimeWithProfile(client, "default")
+}
+
+func NewRuntimeWithProfile(client transport.Transport, profile string) *Runtime {
+	if strings.TrimSpace(profile) == "" {
+		profile = "default"
+	}
 	return &Runtime{
 		client:  client,
 		confirm: confirm.NewStore(time.Now),
+		profile: profile,
 	}
 }
 
@@ -186,10 +199,14 @@ func NewWithTransport(client transport.Transport) *mcp.Server {
 	return NewWithRuntime(NewRuntime(client))
 }
 
+func NewWithTransportProfile(client transport.Transport, profile string) *mcp.Server {
+	return NewWithRuntime(NewRuntimeWithProfile(client, profile))
+}
+
 func NewWithRuntime(runtime *Runtime) *mcp.Server {
 	server := mcp.NewServer(&mcp.Implementation{Name: "outlook-agent", Version: "0.1.0"}, nil)
 
-	mcp.AddTool(server, &mcp.Tool{Name: "outlook.auth_check", Description: "Check Outlook Agent authentication for the selected profile."}, authCheckHandler(runtime.client))
+	mcp.AddTool(server, &mcp.Tool{Name: "outlook.auth_check", Description: "Check Outlook Agent authentication for the selected profile."}, authCheckHandler(runtime))
 	mcp.AddTool(server, &mcp.Tool{Name: "outlook.capabilities", Description: "List Outlook Agent transport capabilities."}, capabilitiesHandler(runtime.client))
 	mcp.AddTool(server, &mcp.Tool{Name: "outlook.mail_search", Description: "Search mail metadata using the configured transport."}, mailSearchHandler(runtime.client))
 	mcp.AddTool(server, &mcp.Tool{Name: "outlook.mail_fetch_metadata", Description: "Fetch metadata for a single message."}, mailFetchMetadataHandler(runtime.client))
@@ -205,13 +222,9 @@ func NewWithRuntime(runtime *Runtime) *mcp.Server {
 	return server
 }
 
-func authCheckHandler(client transport.Transport) func(context.Context, *mcp.CallToolRequest, AuthCheckInput) (*mcp.CallToolResult, AuthCheckOutput, error) {
+func authCheckHandler(runtime *Runtime) func(context.Context, *mcp.CallToolRequest, AuthCheckInput) (*mcp.CallToolResult, AuthCheckOutput, error) {
 	return func(ctx context.Context, _ *mcp.CallToolRequest, input AuthCheckInput) (*mcp.CallToolResult, AuthCheckOutput, error) {
-		profile := input.Profile
-		if profile == "" {
-			profile = "default"
-		}
-		result := client.Authenticate(ctx, profile)
+		result := runtime.client.Authenticate(ctx, runtime.profileOrDefault(input.Profile))
 		return nil, AuthCheckOutput{OK: result.OK, Principal: result.Principal, Error: result.Error}, nil
 	}
 }
@@ -276,7 +289,7 @@ func mailMoveToDeletedItemsHandler(runtime *Runtime) func(context.Context, *mcp.
 			return nil, ActionResultOutput{OK: false, Error: "confirm_token required"}, nil
 		}
 		payload := map[string]any{"ids": stringsToAny(input.IDs)}
-		if !runtime.confirm.Consume(input.ConfirmToken, bindingFor(runtime.client, "default", "mail.move_to_deleted_items", payload, false)) {
+		if !runtime.confirm.Consume(input.ConfirmToken, bindingFor(runtime.client, runtime.profile, "mail.move_to_deleted_items", payload, false)) {
 			return nil, ActionResultOutput{OK: false, Error: "confirmation token is invalid"}, nil
 		}
 		response := runtime.client.Execute(ctx, transport.ActionRequest{Name: "mail.move_to_deleted_items", Payload: payload})
@@ -309,7 +322,7 @@ func calendarAvailabilityHandler(client transport.Transport) func(context.Contex
 func dryRunHandler(runtime *Runtime) func(context.Context, *mcp.CallToolRequest, DryRunInput) (*mcp.CallToolResult, DryRunOutput, error) {
 	return func(ctx context.Context, _ *mcp.CallToolRequest, input DryRunInput) (*mcp.CallToolResult, DryRunOutput, error) {
 		summary := runtime.client.DryRun(ctx, transport.ActionRequest{Name: input.Action, Payload: input.Payload, UnsafeMode: input.UnsafeMode})
-		token, err := runtime.confirm.Generate(bindingFor(runtime.client, profileOrDefault(input.Profile), input.Action, input.Payload, input.UnsafeMode), 10*time.Minute)
+		token, err := runtime.confirm.Generate(bindingFor(runtime.client, runtime.profileOrDefault(input.Profile), input.Action, input.Payload, input.UnsafeMode), 10*time.Minute)
 		if err != nil {
 			return nil, DryRunOutput{}, err
 		}
@@ -325,7 +338,7 @@ func dryRunHandler(runtime *Runtime) func(context.Context, *mcp.CallToolRequest,
 
 func actionConfirmHandler(runtime *Runtime) func(context.Context, *mcp.CallToolRequest, ActionConfirmInput) (*mcp.CallToolResult, ActionResultOutput, error) {
 	return func(ctx context.Context, _ *mcp.CallToolRequest, input ActionConfirmInput) (*mcp.CallToolResult, ActionResultOutput, error) {
-		if !runtime.confirm.Consume(input.ConfirmToken, bindingFor(runtime.client, profileOrDefault(input.Profile), input.Action, input.Payload, input.UnsafeMode)) {
+		if !runtime.confirm.Consume(input.ConfirmToken, bindingFor(runtime.client, runtime.profileOrDefault(input.Profile), input.Action, input.Payload, input.UnsafeMode)) {
 			return nil, ActionResultOutput{OK: false, Error: "confirmation token is invalid"}, nil
 		}
 		response := runtime.client.Execute(ctx, transport.ActionRequest{Name: input.Action, Payload: input.Payload, UnsafeMode: input.UnsafeMode})
@@ -362,9 +375,9 @@ func bindingFor(client transport.Transport, profile string, action string, paylo
 	}
 }
 
-func profileOrDefault(profile string) string {
-	if profile == "" {
-		return "default"
+func (runtime *Runtime) profileOrDefault(profile string) string {
+	if strings.TrimSpace(profile) == "" {
+		return runtime.profile
 	}
 	return profile
 }

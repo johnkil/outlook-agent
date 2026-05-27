@@ -125,6 +125,10 @@ Configuration should support:
 
 Config values may reference secret-store keys but must not store secret values.
 
+When a config is loaded, runtime entrypoints must preserve the resolved profile
+name. CLI auth checks, MCP auth checks, and confirmation-token bindings default
+to that resolved profile unless the tool call explicitly overrides it.
+
 ## Test Requirements
 
 - Policy unit tests for every safety class.
