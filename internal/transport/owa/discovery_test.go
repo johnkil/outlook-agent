@@ -38,6 +38,47 @@ func TestDiscoverServiceActionsFromTextExtractsOWAPatterns(t *testing.T) {
 	}
 }
 
+func TestDiscoverServiceActionContextsSanitizesNearbyIdentifiers(t *testing.T) {
+	text := `
+		const request = {
+			"__type": "FindFolderJsonRequest:#Exchange",
+			"Body": {
+				"__type": "FindFolderRequest:#Exchange",
+				"FolderShape": {"BaseShape": "Default"},
+				"ParentFolderIds": [{"Id": "inbox"}],
+				"Traversal": "Shallow"
+			}
+		};
+		fetch("/owa/service.svc?action=FindFolder");
+		const privateHost = "mail.example.com";
+	`
+
+	contexts := owa.DiscoverServiceActionContexts(text, "FindFolder")
+
+	var kinds []string
+	var identifiers []string
+	for _, context := range contexts {
+		kinds = append(kinds, context.Kind)
+		identifiers = append(identifiers, context.NearbyIdentifiers...)
+		if context.Marker == "mail.example.com" {
+			t.Fatalf("raw private string leaked into context marker: %#v", context)
+		}
+	}
+	for _, expected := range []string{"service_url", "json_request_type", "body_request_type"} {
+		if !slices.Contains(kinds, expected) {
+			t.Fatalf("expected context kind %q in %#v", expected, contexts)
+		}
+	}
+	for _, expected := range []string{"FolderShape", "ParentFolderIds", "Traversal"} {
+		if !slices.Contains(identifiers, expected) {
+			t.Fatalf("expected nearby identifier %q in %#v", expected, contexts)
+		}
+	}
+	if slices.Contains(identifiers, "mail.example.com") {
+		t.Fatalf("raw private string leaked into identifiers: %#v", identifiers)
+	}
+}
+
 func TestDiscoverLinkedScriptSourcesExtractsUniqueScriptSrcs(t *testing.T) {
 	html := `
 		<script src="/owa/scripts/boot.js"></script>

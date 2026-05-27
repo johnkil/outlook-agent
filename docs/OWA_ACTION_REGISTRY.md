@@ -36,6 +36,13 @@ outlook-agent --config .local/outlook-agent.json owa discover-actions --url /owa
 outlook-agent --config .local/outlook-agent.json owa discover-actions --url /owa/scripts/app.js
 ```
 
+When an action is classified but live payload shape remains unclear, inspect
+sanitized caller context instead of saving raw JavaScript:
+
+```bash
+outlook-agent --config .local/outlook-agent.json owa discover-action-context --action FindFolder --url /owa/?layout=mouse --include-linked-scripts --max-sources 120
+```
+
 Authenticated discovery keeps downloaded content in memory only and rejects
 cross-origin URLs so session cookies and canary headers are not sent to another
 host. `--include-linked-scripts` scans same-origin `<script src="...">` assets
@@ -117,6 +124,10 @@ The output includes:
   same-origin path plus query only, de-duplicated, emitted in traversal order,
   and capped at 20 entries per source. Hosts, fragments, raw titles, cookies,
   canary values, and response bodies are never emitted.
+- `owa discover-action-context` emits `action`, `sources`, per-source
+  `occurrences`, and bounded `matches` with `kind`, sanitized `marker`, and
+  `nearby_identifiers`. It does not emit raw snippets, raw strings, response
+  bodies, hosts, fragments, cookies, or canary values.
 
 Do not commit downloaded OWA assets or tenant-specific documentation. Commit
 only new generic action names, safety classifications, tests, and sanitized

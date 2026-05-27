@@ -31,6 +31,10 @@ type owaActionDiscoveryDiagnoser interface {
 	DiscoverServiceActionsFromURLDiagnostics(ctx context.Context, source string, options owa.DiscoveryOptions) (owa.DiscoveryDiagnostics, error)
 }
 
+type owaActionContextDiagnoser interface {
+	DiscoverServiceActionContextsFromURLDiagnostics(ctx context.Context, source string, action string, options owa.DiscoveryOptions) (owa.ActionContextDiagnostics, error)
+}
+
 // Run executes the CLI command and returns the process exit code.
 func Run(args []string, stdout io.Writer, stderr io.Writer) int {
 	return RunWithRuntime(args, stdout, stderr, Runtime{})
@@ -66,6 +70,9 @@ func RunWithRuntime(args []string, stdout io.Writer, stderr io.Writer, runtime R
 	case "owa":
 		if len(commandArgs) >= 2 && commandArgs[1] == "discover-actions" {
 			return runOWADiscoverActions(commandArgs[2:], options, runtime, stdout, stderr)
+		}
+		if len(commandArgs) >= 2 && commandArgs[1] == "discover-action-context" {
+			return runOWADiscoverActionContext(commandArgs[2:], options, runtime, stdout, stderr)
 		}
 	case "auth":
 		if len(commandArgs) == 2 && commandArgs[1] == "check" {
@@ -194,12 +201,60 @@ func runOWADiscoverActions(args []string, options Options, runtime Runtime, stdo
 	return writeJSON(stdout, report)
 }
 
+func runOWADiscoverActionContext(args []string, options Options, runtime Runtime, stdout io.Writer, stderr io.Writer) int {
+	sources, err := parseDiscoverActionContextArgs(args)
+	if err != nil {
+		fmt.Fprintln(stderr, err)
+		return 1
+	}
+	if runtime.BuildTransport == nil {
+		fmt.Fprintln(stderr, "transport profile is not configured")
+		return 4
+	}
+	client, _, err := runtime.BuildTransport(context.Background(), options)
+	if err != nil {
+		fmt.Fprintf(stderr, "build transport: %v\n", err)
+		return 4
+	}
+	diagnoser, ok := client.(owaActionContextDiagnoser)
+	if !ok {
+		fmt.Fprintln(stderr, "configured transport does not support OWA action context discovery")
+		return 4
+	}
+	output := owa.ActionContextDiagnostics{
+		Action:  sources.Action,
+		Sources: []owa.ActionContextSourceDiagnostics{},
+	}
+	for _, source := range sources.URLs {
+		diagnostics, err := diagnoser.DiscoverServiceActionContextsFromURLDiagnostics(context.Background(), source, sources.Action, owa.DiscoveryOptions{
+			IncludeLinkedScripts:  sources.IncludeLinkedScripts,
+			FollowNavigationHints: sources.FollowNavigationHints,
+			ContinueOnHTTPError:   true,
+			MaxSources:            sources.MaxSources,
+		})
+		if err != nil {
+			fmt.Fprintf(stderr, "discover OWA action context: %v\n", err)
+			return 4
+		}
+		output.Sources = append(output.Sources, diagnostics.Sources...)
+	}
+	return writeJSON(stdout, output)
+}
+
 type discoverActionSources struct {
 	Files                 []string
 	URLs                  []string
 	IncludeLinkedScripts  bool
 	FollowNavigationHints bool
 	Diagnostics           bool
+	MaxSources            int
+}
+
+type discoverActionContextSources struct {
+	Action                string
+	URLs                  []string
+	IncludeLinkedScripts  bool
+	FollowNavigationHints bool
 	MaxSources            int
 }
 
@@ -241,6 +296,49 @@ func parseDiscoverActionsArgs(args []string) (discoverActionSources, error) {
 	}
 	if len(sources.Files) == 0 && len(sources.URLs) == 0 {
 		return discoverActionSources{}, fmt.Errorf("owa discover-actions requires --file or --url")
+	}
+	return sources, nil
+}
+
+func parseDiscoverActionContextArgs(args []string) (discoverActionContextSources, error) {
+	var sources discoverActionContextSources
+	for index := 0; index < len(args); index++ {
+		switch args[index] {
+		case "--action":
+			index++
+			if index >= len(args) {
+				return discoverActionContextSources{}, fmt.Errorf("--action requires a value")
+			}
+			sources.Action = args[index]
+		case "--url":
+			index++
+			if index >= len(args) {
+				return discoverActionContextSources{}, fmt.Errorf("--url requires a value")
+			}
+			sources.URLs = append(sources.URLs, args[index])
+		case "--include-linked-scripts":
+			sources.IncludeLinkedScripts = true
+		case "--follow-navigation-hints":
+			sources.FollowNavigationHints = true
+		case "--max-sources":
+			index++
+			if index >= len(args) {
+				return discoverActionContextSources{}, fmt.Errorf("--max-sources requires a value")
+			}
+			value, err := strconv.Atoi(args[index])
+			if err != nil || value <= 0 {
+				return discoverActionContextSources{}, fmt.Errorf("--max-sources requires a positive integer")
+			}
+			sources.MaxSources = value
+		default:
+			return discoverActionContextSources{}, fmt.Errorf("unknown discover-action-context argument: %s", args[index])
+		}
+	}
+	if sources.Action == "" {
+		return discoverActionContextSources{}, fmt.Errorf("owa discover-action-context requires --action")
+	}
+	if len(sources.URLs) == 0 {
+		return discoverActionContextSources{}, fmt.Errorf("owa discover-action-context requires --url")
 	}
 	return sources, nil
 }

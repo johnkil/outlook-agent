@@ -41,6 +41,9 @@ level 5: workflow skill guidance
   manifests.
 - For OWA, authenticated discovery may scan same-origin pages or static assets
   in memory and emit only sanitized registry deltas.
+- For OWA payload-shape diagnostics, authenticated action-context discovery may
+  scan the same in-memory source set for one action and emit only sanitized
+  occurrence counts, match kinds, markers, and nearby identifier tokens.
 - Add every discovered action to the registry with a safety class.
 - Unknown actions start as `unknown`.
 - Read-like unknown actions may be tested against the fake transport before

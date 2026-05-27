@@ -226,6 +226,73 @@ func TestOWADiscoverActionsForwardsMaxSources(t *testing.T) {
 	}
 }
 
+func TestOWADiscoverActionContextFromAuthenticatedURL(t *testing.T) {
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	client := &discoveringTransport{
+		actionContextsBySource: map[string]owa.ActionContextDiagnostics{
+			"/owa/": {
+				Action: "FindFolder",
+				Sources: []owa.ActionContextSourceDiagnostics{
+					{
+						Source:      "/owa/scripts/app.js",
+						Status:      200,
+						FinalPath:   "/owa/scripts/app.js",
+						Bytes:       512,
+						Occurrences: 2,
+						Matches: []owa.ActionContextMatch{
+							{Kind: "json_request_type", Marker: "FindFolderJsonRequest:#Exchange", NearbyIdentifiers: []string{"FolderShape", "ParentFolderIds"}},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	code := RunWithRuntime([]string{"owa", "discover-action-context", "--action", "FindFolder", "--url", "/owa/", "--include-linked-scripts", "--follow-navigation-hints", "--max-sources", "75"}, &stdout, &stderr, Runtime{
+		BuildTransport: func(_ context.Context, options Options) (transport.Transport, string, error) {
+			return client, "work", nil
+		},
+	})
+
+	if code != 0 {
+		t.Fatalf("expected exit code 0, got %d, stderr=%s", code, stderr.String())
+	}
+	if client.actionContextAction != "FindFolder" || client.actionContextSource != "/owa/" {
+		t.Fatalf("expected action context request to be forwarded, got action=%q source=%q", client.actionContextAction, client.actionContextSource)
+	}
+	if !client.includeLinkedScripts || !client.followNavigationHints || client.maxSources != 75 {
+		t.Fatalf("expected discovery options to be forwarded, got include=%v follow=%v max=%d", client.includeLinkedScripts, client.followNavigationHints, client.maxSources)
+	}
+	var payload owa.ActionContextDiagnostics
+	if err := json.Unmarshal(stdout.Bytes(), &payload); err != nil {
+		t.Fatalf("context output is not JSON: %v; output=%s", err, stdout.String())
+	}
+	if payload.Action != "FindFolder" {
+		t.Fatalf("expected action in output, got %#v", payload)
+	}
+	if len(payload.Sources) != 1 || payload.Sources[0].Occurrences != 2 {
+		t.Fatalf("expected sanitized context source diagnostics, got %#v", payload.Sources)
+	}
+	if payload.Sources[0].Matches[0].Marker != "FindFolderJsonRequest:#Exchange" {
+		t.Fatalf("expected sanitized marker, got %#v", payload.Sources[0].Matches)
+	}
+}
+
+func TestOWADiscoverActionContextRequiresAction(t *testing.T) {
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+
+	code := Run([]string{"owa", "discover-action-context", "--url", "/owa/"}, &stdout, &stderr)
+
+	if code != 1 {
+		t.Fatalf("expected exit code 1, got %d", code)
+	}
+	if !bytes.Contains(stderr.Bytes(), []byte("owa discover-action-context requires --action")) {
+		t.Fatalf("expected missing action validation error, got %s", stderr.String())
+	}
+}
+
 func TestOWADiscoverActionsRejectsInvalidMaxSources(t *testing.T) {
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer
@@ -331,15 +398,18 @@ func TestUnknownCommandReturnsValidationError(t *testing.T) {
 
 type discoveringTransport struct {
 	transport.Transport
-	actions               []string
-	sources               []owa.DiscoverySourceDiagnostics
-	source                string
-	includeLinkedScripts  bool
-	followNavigationHints bool
-	continueOnHTTPError   bool
-	maxSources            int
-	diagnostics           bool
-	diagnosticsBySource   map[string]owa.DiscoveryDiagnostics
+	actions                []string
+	sources                []owa.DiscoverySourceDiagnostics
+	source                 string
+	includeLinkedScripts   bool
+	followNavigationHints  bool
+	continueOnHTTPError    bool
+	maxSources             int
+	diagnostics            bool
+	diagnosticsBySource    map[string]owa.DiscoveryDiagnostics
+	actionContextAction    string
+	actionContextSource    string
+	actionContextsBySource map[string]owa.ActionContextDiagnostics
 }
 
 func (client *discoveringTransport) Name() string {
@@ -382,6 +452,19 @@ func (client *discoveringTransport) DiscoverServiceActionsFromURLDiagnostics(_ c
 		return diagnostics, nil
 	}
 	return owa.DiscoveryDiagnostics{Actions: client.actions, Sources: client.sources}, nil
+}
+
+func (client *discoveringTransport) DiscoverServiceActionContextsFromURLDiagnostics(_ context.Context, source string, action string, options owa.DiscoveryOptions) (owa.ActionContextDiagnostics, error) {
+	client.actionContextAction = action
+	client.actionContextSource = source
+	client.includeLinkedScripts = options.IncludeLinkedScripts
+	client.followNavigationHints = options.FollowNavigationHints
+	client.continueOnHTTPError = options.ContinueOnHTTPError
+	client.maxSources = options.MaxSources
+	if diagnostics, ok := client.actionContextsBySource[source]; ok {
+		return diagnostics, nil
+	}
+	return owa.ActionContextDiagnostics{Action: action, Sources: []owa.ActionContextSourceDiagnostics{}}, nil
 }
 
 func stringSliceContains(values []string, expected string) bool {

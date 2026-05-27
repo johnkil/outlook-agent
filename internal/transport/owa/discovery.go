@@ -36,10 +36,14 @@ var htmlBaseHrefPattern = regexp.MustCompile(`(?is)<base\b[^>]*\bhref\s*=\s*["']
 var titlePattern = regexp.MustCompile(`(?is)<title\b[^>]*>(.*?)</title>`)
 var scriptTagPattern = regexp.MustCompile(`(?is)<script\b([^>]*)>`)
 var scriptSourceAttributePattern = regexp.MustCompile(`(?i)\bsrc\s*=`)
+var actionContextIdentifierPattern = regexp.MustCompile(`[A-Za-z_$][A-Za-z0-9_$]{2,}`)
 
 const maxDiscoveryBytes = 10 * 1024 * 1024
 const defaultMaxDiscoverySources = 30
 const maxDiscoveryTargetPreviews = 20
+const maxActionContextMatchesPerSource = 12
+const maxActionContextIdentifiers = 20
+const actionContextWindowBytes = 280
 
 type DiscoveryOptions struct {
 	IncludeLinkedScripts  bool
@@ -73,6 +77,38 @@ type DiscoverySourceDiagnostics struct {
 	FetchError            string   `json:"fetch_error,omitempty"`
 }
 
+type ActionContextMatch struct {
+	Kind              string   `json:"kind"`
+	Marker            string   `json:"marker"`
+	NearbyIdentifiers []string `json:"nearby_identifiers,omitempty"`
+}
+
+type ActionContextDiagnostics struct {
+	Action  string                           `json:"action"`
+	Sources []ActionContextSourceDiagnostics `json:"sources"`
+}
+
+type ActionContextSourceDiagnostics struct {
+	Source                string               `json:"source"`
+	Status                int                  `json:"status"`
+	ContentType           string               `json:"content_type,omitempty"`
+	FinalPath             string               `json:"final_path,omitempty"`
+	FinalPathChanged      bool                 `json:"final_path_changed,omitempty"`
+	Bytes                 int                  `json:"bytes"`
+	Occurrences           int                  `json:"occurrences"`
+	Matches               []ActionContextMatch `json:"matches,omitempty"`
+	LinkedScripts         int                  `json:"linked_scripts"`
+	NavigationHints       int                  `json:"navigation_hints"`
+	LinkedScriptPaths     []string             `json:"linked_script_paths,omitempty"`
+	NavigationHintPaths   []string             `json:"navigation_hint_paths,omitempty"`
+	TitlePresent          bool                 `json:"title_present,omitempty"`
+	TitleKind             string               `json:"title_kind,omitempty"`
+	ScriptBlocks          int                  `json:"script_blocks,omitempty"`
+	LooksLikeLogonPage    bool                 `json:"looks_like_logon_page,omitempty"`
+	LooksLikeOWAErrorPage bool                 `json:"looks_like_owa_error_page,omitempty"`
+	FetchError            string               `json:"fetch_error,omitempty"`
+}
+
 type DiscoveryReport struct {
 	Discovered        []string                      `json:"discovered"`
 	Classified        []string                      `json:"classified"`
@@ -92,6 +128,108 @@ func DiscoverServiceActions(text string) []string {
 		}
 	}
 	return sortedKeys(found)
+}
+
+func DiscoverServiceActionContexts(text string, action string) []ActionContextMatch {
+	action = strings.TrimSpace(action)
+	if action == "" {
+		return nil
+	}
+	matches := make([]ActionContextMatch, 0)
+	seen := map[string]struct{}{}
+	for _, pattern := range actionContextPatterns(action) {
+		for _, indexes := range pattern.Expression.FindAllStringIndex(text, -1) {
+			if len(indexes) != 2 {
+				continue
+			}
+			key := fmt.Sprintf("%s:%d:%d", pattern.Kind, indexes[0], indexes[1])
+			if _, exists := seen[key]; exists {
+				continue
+			}
+			seen[key] = struct{}{}
+			matches = append(matches, ActionContextMatch{
+				Kind:              pattern.Kind,
+				Marker:            pattern.Marker,
+				NearbyIdentifiers: nearbyActionContextIdentifiers(text, indexes[0], indexes[1]),
+			})
+			if len(matches) >= maxActionContextMatchesPerSource {
+				return matches
+			}
+		}
+	}
+	return matches
+}
+
+type actionContextPattern struct {
+	Kind       string
+	Marker     string
+	Expression *regexp.Regexp
+}
+
+func actionContextPatterns(action string) []actionContextPattern {
+	quoted := regexp.QuoteMeta(action)
+	return []actionContextPattern{
+		{
+			Kind:       "service_url",
+			Marker:     "service.svc?action=" + action,
+			Expression: regexp.MustCompile(`(?i)service\.svc\?action=` + quoted + `\b`),
+		},
+		{
+			Kind:       "json_request_type",
+			Marker:     action + "JsonRequest:#Exchange",
+			Expression: regexp.MustCompile(`["']` + quoted + `JsonRequest:#Exchange["']`),
+		},
+		{
+			Kind:       "body_request_type",
+			Marker:     action + "Request:#Exchange",
+			Expression: regexp.MustCompile(`["']` + quoted + `Request:#Exchange["']`),
+		},
+		{
+			Kind:       "action_header",
+			Marker:     "Action:" + action,
+			Expression: regexp.MustCompile(`["']Action["']\s*:\s*["']` + quoted + `["']`),
+		},
+	}
+}
+
+func nearbyActionContextIdentifiers(text string, start int, end int) []string {
+	windowStart := start - actionContextWindowBytes
+	if windowStart < 0 {
+		windowStart = 0
+	}
+	windowEnd := end + actionContextWindowBytes
+	if windowEnd > len(text) {
+		windowEnd = len(text)
+	}
+	window := text[windowStart:windowEnd]
+	identifiers := make([]string, 0, maxActionContextIdentifiers)
+	seen := map[string]struct{}{}
+	for _, token := range actionContextIdentifierPattern.FindAllString(window, -1) {
+		if !isUsefulActionContextIdentifier(token) {
+			continue
+		}
+		if _, exists := seen[token]; exists {
+			continue
+		}
+		seen[token] = struct{}{}
+		identifiers = append(identifiers, token)
+		if len(identifiers) >= maxActionContextIdentifiers {
+			break
+		}
+	}
+	return identifiers
+}
+
+func isUsefulActionContextIdentifier(token string) bool {
+	if len(token) > 80 {
+		return false
+	}
+	switch token {
+	case "const", "let", "var", "function", "return", "fetch", "true", "false", "null", "undefined":
+		return false
+	default:
+		return true
+	}
 }
 
 func DiscoverLinkedScriptSources(text string) []string {
@@ -187,6 +325,26 @@ func (client *Transport) DiscoverServiceActionsFromURLDiagnostics(ctx context.Co
 	return diagnostics, nil
 }
 
+func (client *Transport) DiscoverServiceActionContextsFromURLDiagnostics(ctx context.Context, source string, action string, options DiscoveryOptions) (ActionContextDiagnostics, error) {
+	action = strings.TrimSpace(action)
+	if action == "" {
+		return ActionContextDiagnostics{}, fmt.Errorf("action is required")
+	}
+	session, err := client.login(ctx)
+	if err != nil {
+		return ActionContextDiagnostics{}, err
+	}
+	diagnostics := ActionContextDiagnostics{
+		Action:  action,
+		Sources: []ActionContextSourceDiagnostics{},
+	}
+	seen := map[string]struct{}{}
+	if err := client.discoverActionContextSource(ctx, session, source, "", action, options, seen, &diagnostics); err != nil {
+		return ActionContextDiagnostics{}, err
+	}
+	return diagnostics, nil
+}
+
 func (client *Transport) discoverSource(ctx context.Context, session Session, source string, reference string, options DiscoveryOptions, seen map[string]struct{}, diagnostics *DiscoveryDiagnostics) error {
 	if len(seen) >= options.effectiveMaxSources() {
 		return nil
@@ -277,6 +435,103 @@ func (client *Transport) discoverSource(ctx context.Context, session Session, so
 				continue
 			}
 			if err := client.discoverSource(ctx, session, scriptSource, reference, options, seen, diagnostics); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+func (client *Transport) discoverActionContextSource(ctx context.Context, session Session, source string, reference string, action string, options DiscoveryOptions, seen map[string]struct{}, diagnostics *ActionContextDiagnostics) error {
+	if len(seen) >= options.effectiveMaxSources() {
+		return nil
+	}
+	resolvedForSeen, err := client.config.discoveryURLRelativeTo(source, reference)
+	if err != nil {
+		return err
+	}
+	if _, exists := seen[resolvedForSeen]; exists {
+		return nil
+	}
+	seen[resolvedForSeen] = struct{}{}
+
+	text, requested, resolved, bytesRead, status, contentType, err := client.fetchDiscoveryTextRelativeTo(ctx, session, source, reference)
+	if err != nil {
+		var statusError discoveryHTTPStatusError
+		if options.ContinueOnHTTPError && errors.As(err, &statusError) {
+			diagnostics.Sources = append(diagnostics.Sources, ActionContextSourceDiagnostics{
+				Source:      source,
+				Status:      statusError.Status,
+				ContentType: statusError.ContentType,
+				FinalPath:   sanitizedURLPathQuery(statusError.FinalURL),
+				Bytes:       0,
+				FetchError:  "http_status",
+			})
+			return nil
+		}
+		if options.ContinueOnHTTPError {
+			diagnostics.Sources = append(diagnostics.Sources, ActionContextSourceDiagnostics{
+				Source:     source,
+				FinalPath:  sanitizedURLPathQuery(resolvedForSeen),
+				Bytes:      0,
+				FetchError: "fetch_failed",
+			})
+			return nil
+		}
+		return err
+	}
+	matches := DiscoverServiceActionContexts(text, action)
+	linkedScripts := DiscoverLinkedScriptSources(text)
+	navigationHints := DiscoverNavigationHintSources(text)
+	linkedScriptReference := resolved
+	if baseReference := discoverHTMLBaseReference(text); baseReference != "" {
+		if resolvedBase, err := client.config.discoveryURLRelativeTo(baseReference, resolved); err == nil {
+			linkedScriptReference = resolvedBase
+		}
+	}
+	bareScriptReference := client.config.staticScriptDirectoryReference(linkedScripts, linkedScriptReference)
+	requestedPath := sanitizedURLPathQuery(requested)
+	finalPath := sanitizedURLPathQuery(resolved)
+	titlePresent, titleKind := discoverTitleMarker(text)
+	diagnostics.Sources = append(diagnostics.Sources, ActionContextSourceDiagnostics{
+		Source:                source,
+		Status:                status,
+		ContentType:           contentType,
+		FinalPath:             finalPath,
+		FinalPathChanged:      requestedPath != "" && finalPath != "" && requestedPath != finalPath,
+		Bytes:                 bytesRead,
+		Occurrences:           len(matches),
+		Matches:               matches,
+		LinkedScripts:         len(linkedScripts),
+		NavigationHints:       len(navigationHints),
+		LinkedScriptPaths:     sanitizedLinkedScriptTargetPaths(client.config, linkedScripts, linkedScriptReference, bareScriptReference),
+		NavigationHintPaths:   sanitizedDiscoveryTargetPaths(client.config, navigationHints, resolved),
+		TitlePresent:          titlePresent,
+		TitleKind:             titleKind,
+		ScriptBlocks:          countInlineScriptBlocks(text),
+		LooksLikeLogonPage:    looksLikeLogonPage(text),
+		LooksLikeOWAErrorPage: looksLikeOWAErrorPage(text),
+	})
+	if options.FollowNavigationHints {
+		for _, navigationHint := range navigationHints {
+			if _, err := client.config.discoveryURLRelativeTo(navigationHint, resolved); err != nil {
+				continue
+			}
+			if err := client.discoverActionContextSource(ctx, session, navigationHint, resolved, action, options, seen, diagnostics); err != nil {
+				return err
+			}
+		}
+	}
+	if options.IncludeLinkedScripts {
+		for _, scriptSource := range linkedScripts {
+			reference := linkedScriptReference
+			if isBareJavaScriptFilename(scriptSource) && bareScriptReference != "" {
+				reference = bareScriptReference
+			}
+			if _, err := client.config.discoveryURLRelativeTo(scriptSource, reference); err != nil {
+				continue
+			}
+			if err := client.discoverActionContextSource(ctx, session, scriptSource, reference, action, options, seen, diagnostics); err != nil {
 				return err
 			}
 		}
