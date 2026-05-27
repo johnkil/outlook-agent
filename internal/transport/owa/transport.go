@@ -125,8 +125,9 @@ func countRequestItems(payload map[string]any) int {
 		"ItemIds", "Items", "ItemId", "Item",
 		"FolderIds", "Folders", "FolderId", "Folder",
 		"AttachmentIds", "Attachments", "AttachmentId", "Attachment",
-		"Rules", "Rule", "SweepRule", "SenderEmailAddress",
-		"UserConfigurations", "UserConfiguration",
+		"ConversationIds", "ReminderItemActions", "ItemChanges",
+		"Rules", "Rule", "SweepRule", "SenderEmailAddress", "MailboxSmtpAddress", "Mailbox",
+		"UserConfigurations", "UserConfiguration", "FolderPath",
 	} {
 		if count := countValue(body[key]); count > 0 {
 			return count

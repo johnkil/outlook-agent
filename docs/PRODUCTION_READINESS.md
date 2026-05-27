@@ -24,7 +24,7 @@ Status values:
 | High-level mail/calendar workflows | Partial | Search, metadata/body fetch, draft save, move to Deleted Items, calendar list, and availability are implemented with tests; only search and availability are documented as live smoke-tested so far. |
 | Live verification | Partial | Authenticated discovery has sanitized evidence for the useful OWA app shell and 25 live-discovered actions; high-level mail search, availability, stdio MCP availability, read-only raw `FindPeople`, read-only raw metadata actions (`GetServerTimeZones`, `GetRoomLists`, `GetFolder`, `ResolveNames`), and representative MCP dry-run gates for reversible, destructive, send-like, settings/rules, attachment, folder, and rule/config OWA actions have opt-in live smoke coverage. Full live execution of every raw action is intentionally not attempted because many actions are destructive, send-like, or settings-changing. |
 | Public/private split | Ready | Generic examples use placeholder hosts/accounts; `opencode.jsonc` uses the fake transport; security docs and grep gates prevent committed tenant-specific values. Private enterprise values belong in ignored local config and secret stores. |
-| Security and redaction | Partial for production operations | Runtime policy classes, explicit target rules, dry-run tokens, confirmation binding, unsafe requirements, dry-run count summaries for attachment/folder/rule/config payload shapes, and redaction have unit or MCP tests; CI now adds a public-safety check and dependency vulnerability scan baseline. |
+| Security and redaction | Partial for production operations | Runtime policy classes, explicit target rules, dry-run tokens, confirmation binding, unsafe requirements, dry-run count summaries for attachment/folder/rule/config payload shapes, sanitized dry-run payload examples for all 26 mutating raw OWA actions, and redaction have unit or MCP tests; CI now adds a public-safety check and dependency vulnerability scan baseline. |
 | Workflow skills | Ready initial set | `skills/` contains mail and calendar workflow skills for triage, reply drafting, task extraction, subscription cleanup, daily brief, meeting prep, and freeing time. |
 | Release readiness | Partial | `docs/RELEASE.md`, `scripts/release-build.sh`, `.github/workflows/ci.yml`, and `.github/workflows/release.yml` define cross-platform archives, checksums, optional signing, CI, and tag-driven publishing; signing key operations and installer distribution are still open. |
 | Graph/EWS adapters | Gap | Architecture reserves Graph and EWS transports, but production adapters are not implemented in this repository yet. |
@@ -73,8 +73,8 @@ Status values:
   - broader opt-in non-destructive OWA live smoke suite;
   - `FindFolder` live payload-shape follow-up after three metadata-only
     candidates returned the same internal OWA error;
-  - broader live MCP dry-run smoke across the full mutating registry without
-    executing mutating actions.
+  - optional live MCP dry-run smoke can now iterate the mutating payload
+    catalog without executing mutating actions.
 
 ## Verification Commands
 

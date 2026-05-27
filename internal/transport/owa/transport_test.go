@@ -304,6 +304,43 @@ func TestTransportDryRunCountsAttachmentFolderAndRulePayloadShapes(t *testing.T)
 	}
 }
 
+func TestTransportDryRunPayloadExamplesCoverEveryMutatingRawAction(t *testing.T) {
+	client := owa.NewTransport(owa.Config{
+		BaseURL:   "https://example.test",
+		Username:  "DOMAIN\\user",
+		SecretRef: secret.Ref("memory:owa"),
+	}, secret.NewMemoryStore(map[string]string{"memory:owa": "password"}), nil)
+
+	mutatingCount := 0
+	for _, definition := range client.Capabilities(context.Background()).Actions {
+		if definition.Transport != "owa" || definition.Level != action.LevelRawGuardedExecution || !requiresDryRunExample(definition.Class) {
+			continue
+		}
+		mutatingCount++
+		payload, ok := owa.DryRunPayloadExample(definition.Name)
+		if !ok {
+			t.Fatalf("missing dry-run payload example for %s (%s)", definition.Name, definition.Class)
+		}
+		summary := client.DryRun(context.Background(), transport.ActionRequest{
+			Name:    definition.Name,
+			Payload: payload,
+		})
+		if summary.Count == 0 {
+			t.Fatalf("expected non-zero dry-run count for %s example payload %#v", definition.Name, payload)
+		}
+	}
+	if mutatingCount != 26 {
+		t.Fatalf("expected 26 mutating raw OWA actions, got %d", mutatingCount)
+	}
+}
+
+func requiresDryRunExample(class policy.SafetyClass) bool {
+	return class == policy.ReversibleBulk ||
+		class == policy.Destructive ||
+		class == policy.SendLike ||
+		class == policy.SettingsOrRules
+}
+
 func TestTransportExecuteReportsHTTPStatusError(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
 		switch request.URL.Path {
