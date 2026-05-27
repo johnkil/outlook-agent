@@ -12,14 +12,16 @@ Status: started.
 
 ## Phase 1: Core Runtime
 
-- CLI command framework.
-- Config discovery.
-- Secret-store abstraction.
-- Policy engine.
-- Redaction engine.
-- Dry-run and confirmation-token store.
-- Action registry.
-- Fake transport covering every public action shape.
+Status: in progress.
+
+- CLI command framework: started.
+- Config discovery: pending.
+- Secret-store abstraction: pending.
+- Policy engine: implemented initial package with tests.
+- Redaction engine: implemented initial package with tests.
+- Dry-run and confirmation-token store: implemented in-memory package with tests.
+- Action registry: implemented initial package with tests.
+- Fake transport covering every public action shape: implemented initial package with tests.
 
 ## Phase 2: MCP Contract
 
@@ -66,4 +68,3 @@ Status: started.
 - Admin/operator docs.
 - Live opt-in smoke test profile.
 - Backward-compatible MCP tool versioning.
-

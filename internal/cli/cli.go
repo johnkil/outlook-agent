@@ -4,20 +4,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-)
 
-var safetyClasses = []string{
-	"read_metadata",
-	"read_body_explicit",
-	"read_attachment_explicit",
-	"draft_only",
-	"reversible_single_item",
-	"reversible_bulk",
-	"destructive",
-	"send_like",
-	"settings_or_rules",
-	"unknown",
-}
+	"github.com/johnkil/outlook-agent/internal/policy"
+)
 
 // Run executes the CLI command and returns the process exit code.
 func Run(args []string, stdout io.Writer, stderr io.Writer) int {
@@ -39,7 +28,7 @@ func Run(args []string, stdout io.Writer, stderr io.Writer) int {
 			return writeJSON(stdout, map[string]any{
 				"ok":             true,
 				"command":        "policy explain",
-				"safety_classes": safetyClasses,
+				"safety_classes": policy.SafetyClassNames(),
 			})
 		}
 	case "auth":
