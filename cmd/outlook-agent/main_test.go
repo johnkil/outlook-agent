@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/johnkil/outlook-agent/internal/transport/owa"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
@@ -387,6 +388,71 @@ func TestLiveBinaryMCPStdioAttachmentFolderRuleDryRunSmoke(t *testing.T) {
 	}
 }
 
+func TestLiveBinaryMCPStdioMutatingCatalogDryRunSmoke(t *testing.T) {
+	configPath := os.Getenv("OUTLOOK_AGENT_LIVE_CONFIG")
+	if configPath == "" {
+		t.Skip("OUTLOOK_AGENT_LIVE_CONFIG is not set")
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+
+	args := []string{"--config", configPath}
+	if profile := os.Getenv("OUTLOOK_AGENT_LIVE_PROFILE"); profile != "" {
+		args = append(args, "--profile", profile)
+	}
+	args = append(args, "mcp")
+
+	command := exec.CommandContext(ctx, buildBinary(t), args...)
+	client := mcp.NewClient(&mcp.Implementation{Name: "stdio-live-mutating-catalog-smoke-test", Version: "0.0.1"}, nil)
+	session, err := client.Connect(ctx, &mcp.CommandTransport{Command: command, TerminateDuration: time.Second}, nil)
+	if err != nil {
+		t.Fatalf("connect to live stdio MCP server: %v", err)
+	}
+	defer session.Close()
+
+	auth, err := session.CallTool(ctx, &mcp.CallToolParams{Name: "outlook.auth_check"})
+	if err != nil {
+		t.Fatalf("call auth_check: %v", err)
+	}
+	if auth.IsError {
+		t.Fatalf("expected auth_check success, got %#v", auth)
+	}
+	var authOutput struct {
+		OK bool `json:"ok"`
+	}
+	decodeStructuredContent(t, auth, &authOutput)
+	if !authOutput.OK {
+		t.Fatalf("expected live auth_check ok output, got %#v", authOutput)
+	}
+
+	for _, tt := range mutatingCatalogDryRunSmokeCases(t) {
+		t.Run(tt.action, func(t *testing.T) {
+			if tt.destructive {
+				withoutUnsafe := callDryRun(t, ctx, session, map[string]any{
+					"action":  tt.action,
+					"payload": tt.payload,
+				})
+				if withoutUnsafe.OK || withoutUnsafe.ConfirmationToken != "" || !withoutUnsafe.RequiresUnsafe || withoutUnsafe.Count == 0 {
+					t.Fatalf("expected destructive catalog dry-run to require unsafe before token: %#v", withoutUnsafe)
+				}
+			}
+
+			arguments := map[string]any{
+				"action":  tt.action,
+				"payload": tt.payload,
+			}
+			if tt.destructive {
+				arguments["unsafe_mode"] = true
+			}
+			dryRun := callDryRun(t, ctx, session, arguments)
+			if !dryRun.OK || dryRun.ConfirmationToken == "" || dryRun.Count == 0 {
+				t.Fatalf("expected catalog dry-run token with non-zero count: %#v", dryRun)
+			}
+		})
+	}
+}
+
 func TestBinaryMCPStdioRejectsMissingExplicitConfig(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
@@ -425,6 +491,42 @@ func callDryRun(t *testing.T, ctx context.Context, session *mcp.ClientSession, a
 	var output dryRunOutput
 	decodeStructuredContent(t, result, &output)
 	return output
+}
+
+type catalogDryRunCase struct {
+	action      string
+	payload     map[string]any
+	destructive bool
+}
+
+func mutatingCatalogDryRunSmokeCases(t *testing.T) []catalogDryRunCase {
+	t.Helper()
+	actions := owa.DryRunPayloadExampleActions()
+	if len(actions) != 26 {
+		t.Fatalf("expected 26 mutating catalog actions, got %d", len(actions))
+	}
+	cases := make([]catalogDryRunCase, 0, len(actions))
+	for _, action := range actions {
+		payload, ok := owa.DryRunPayloadExample(action)
+		if !ok {
+			t.Fatalf("missing dry-run catalog payload for %s", action)
+		}
+		cases = append(cases, catalogDryRunCase{
+			action:      action,
+			payload:     payload,
+			destructive: isDestructiveCatalogAction(action),
+		})
+	}
+	return cases
+}
+
+func isDestructiveCatalogAction(action string) bool {
+	switch action {
+	case "ApplyBulkItemAction", "ApplyConversationAction", "ApplyMessageAction", "DeleteAttachment", "DeleteFolder", "DeleteItem", "EmptyFolder":
+		return true
+	default:
+		return false
+	}
 }
 
 func buildBinary(t *testing.T) string {

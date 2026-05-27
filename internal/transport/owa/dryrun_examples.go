@@ -53,6 +53,42 @@ func DryRunPayloadExample(actionName string) (map[string]any, bool) {
 	}
 }
 
+// DryRunPayloadExampleActions returns the raw OWA actions that have sanitized
+// dry-run example payloads.
+func DryRunPayloadExampleActions() []string {
+	actions := []string{
+		"ArchiveItem",
+		"CopyItem",
+		"MarkAsJunk",
+		"MoveItem",
+		"SendItem",
+		"ApplyBulkItemAction",
+		"ApplyMessageAction",
+		"MarkAllItemsAsRead",
+		"CopyFolder",
+		"MoveFolder",
+		"CreateAttachment",
+		"PerformReminderAction",
+		"CreateItem",
+		"DeleteAttachment",
+		"DeleteFolder",
+		"DeleteItem",
+		"ApplyConversationAction",
+		"EmptyFolder",
+		"CreateFolder",
+		"CreateFolderPath",
+		"CreateSweepRuleForSender",
+		"GetInboxRules",
+		"GetUserOofSettings",
+		"UpdateFolder",
+		"UpdateItem",
+		"UpdateUserConfiguration",
+	}
+	output := make([]string, len(actions))
+	copy(output, actions)
+	return output
+}
+
 func bodyPayload(key string, value any) map[string]any {
 	return map[string]any{"Body": map[string]any{key: value}}
 }
