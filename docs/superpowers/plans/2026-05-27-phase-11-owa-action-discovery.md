@@ -52,4 +52,4 @@
 - [x] Run public-safety grep with the local company-specific pattern set.
 - [x] Run CLI smoke against a temporary generic fixture and remove it.
 - [x] Update local spike log.
-- [ ] Commit and push the branch.
+- [x] Commit and push the branch.
