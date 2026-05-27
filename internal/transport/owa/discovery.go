@@ -40,6 +40,7 @@ var scriptSourceAttributePattern = regexp.MustCompile(`(?i)\bsrc\s*=`)
 
 const maxDiscoveryBytes = 10 * 1024 * 1024
 const maxDiscoverySources = 30
+const maxDiscoveryTargetPreviews = 20
 
 type DiscoveryOptions struct {
 	IncludeLinkedScripts  bool
@@ -53,21 +54,23 @@ type DiscoveryDiagnostics struct {
 }
 
 type DiscoverySourceDiagnostics struct {
-	Source                string `json:"source"`
-	Status                int    `json:"status"`
-	ContentType           string `json:"content_type,omitempty"`
-	FinalPath             string `json:"final_path,omitempty"`
-	FinalPathChanged      bool   `json:"final_path_changed,omitempty"`
-	Bytes                 int    `json:"bytes"`
-	Actions               int    `json:"actions"`
-	LinkedScripts         int    `json:"linked_scripts"`
-	NavigationHints       int    `json:"navigation_hints"`
-	TitlePresent          bool   `json:"title_present,omitempty"`
-	TitleKind             string `json:"title_kind,omitempty"`
-	ScriptBlocks          int    `json:"script_blocks,omitempty"`
-	LooksLikeLogonPage    bool   `json:"looks_like_logon_page,omitempty"`
-	LooksLikeOWAErrorPage bool   `json:"looks_like_owa_error_page,omitempty"`
-	FetchError            string `json:"fetch_error,omitempty"`
+	Source                string   `json:"source"`
+	Status                int      `json:"status"`
+	ContentType           string   `json:"content_type,omitempty"`
+	FinalPath             string   `json:"final_path,omitempty"`
+	FinalPathChanged      bool     `json:"final_path_changed,omitempty"`
+	Bytes                 int      `json:"bytes"`
+	Actions               int      `json:"actions"`
+	LinkedScripts         int      `json:"linked_scripts"`
+	NavigationHints       int      `json:"navigation_hints"`
+	LinkedScriptPaths     []string `json:"linked_script_paths,omitempty"`
+	NavigationHintPaths   []string `json:"navigation_hint_paths,omitempty"`
+	TitlePresent          bool     `json:"title_present,omitempty"`
+	TitleKind             string   `json:"title_kind,omitempty"`
+	ScriptBlocks          int      `json:"script_blocks,omitempty"`
+	LooksLikeLogonPage    bool     `json:"looks_like_logon_page,omitempty"`
+	LooksLikeOWAErrorPage bool     `json:"looks_like_owa_error_page,omitempty"`
+	FetchError            string   `json:"fetch_error,omitempty"`
 }
 
 type DiscoveryReport struct {
@@ -217,6 +220,8 @@ func (client *Transport) discoverSource(ctx context.Context, session Session, so
 		Actions:               len(discovered),
 		LinkedScripts:         len(linkedScripts),
 		NavigationHints:       len(navigationHints),
+		LinkedScriptPaths:     sanitizedDiscoveryTargetPaths(client.config, linkedScripts, resolved),
+		NavigationHintPaths:   sanitizedDiscoveryTargetPaths(client.config, navigationHints, resolved),
 		TitlePresent:          titlePresent,
 		TitleKind:             titleKind,
 		ScriptBlocks:          countInlineScriptBlocks(text),
@@ -359,6 +364,26 @@ func sanitizedURLPathQuery(raw string) string {
 		path += "?" + parsed.RawQuery
 	}
 	return path
+}
+
+func sanitizedDiscoveryTargetPaths(config Config, targets []string, reference string) []string {
+	found := map[string]struct{}{}
+	for _, target := range targets {
+		resolved, err := config.discoveryURLRelativeTo(target, reference)
+		if err != nil {
+			continue
+		}
+		path := sanitizedURLPathQuery(resolved)
+		if path == "" {
+			continue
+		}
+		found[path] = struct{}{}
+	}
+	paths := sortedKeys(found)
+	if len(paths) > maxDiscoveryTargetPreviews {
+		paths = paths[:maxDiscoveryTargetPreviews]
+	}
+	return paths
 }
 
 func (config Config) discoveryURL(source string) (string, error) {

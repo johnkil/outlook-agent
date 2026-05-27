@@ -267,6 +267,54 @@ func TestTransportDiscoveryDiagnosticsReportsFinalPathTitleMarkerAndScriptBlocks
 	}
 }
 
+func TestTransportDiscoveryDiagnosticsReportsSanitizedTargetPreviews(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		switch request.URL.Path {
+		case "/owa/auth.owa":
+			http.SetCookie(response, &http.Cookie{Name: "X-OWA-CANARY", Value: "canary-secret"})
+			response.WriteHeader(http.StatusOK)
+		case "/owa/start/page.aspx":
+			response.Header().Set("Content-Type", "text/html")
+			_, _ = response.Write([]byte(`
+				<html>
+					<script src="../scripts/app.js?v=1"></script>
+					<script>
+						const boot = "/owa/prem/15.2.1748/scripts/boot.js";
+						const ignored = "https://other.example.test/owa/scripts/evil.js";
+						window.location = "shell/start.aspx";
+					</script>
+					<meta http-equiv="refresh" content="0; URL=/owa/bootstrap.aspx?layout=1">
+				</html>
+			`))
+		default:
+			t.Fatalf("unexpected path: %s", request.URL.String())
+		}
+	}))
+	defer server.Close()
+	client := owa.NewTransport(owa.Config{
+		BaseURL:   server.URL,
+		Username:  "DOMAIN\\user",
+		SecretRef: secret.Ref("memory:owa"),
+	}, secret.NewMemoryStore(map[string]string{"memory:owa": "password"}), server.Client())
+
+	diagnostics, err := client.DiscoverServiceActionsFromURLDiagnostics(context.Background(), "/owa/start/page.aspx", owa.DiscoveryOptions{})
+
+	if err != nil {
+		t.Fatalf("discover diagnostics: %v", err)
+	}
+	if len(diagnostics.Sources) != 1 {
+		t.Fatalf("expected one source diagnostic, got %#v", diagnostics.Sources)
+	}
+	expectedScripts := []string{"/owa/prem/15.2.1748/scripts/boot.js", "/owa/scripts/app.js?v=1"}
+	if !slices.Equal(diagnostics.Sources[0].LinkedScriptPaths, expectedScripts) {
+		t.Fatalf("expected sanitized linked script paths %#v, got %#v", expectedScripts, diagnostics.Sources[0])
+	}
+	expectedNavigation := []string{"/owa/bootstrap.aspx?layout=1", "/owa/start/shell/start.aspx"}
+	if !slices.Equal(diagnostics.Sources[0].NavigationHintPaths, expectedNavigation) {
+		t.Fatalf("expected sanitized navigation hint paths %#v, got %#v", expectedNavigation, diagnostics.Sources[0])
+	}
+}
+
 func TestTransportFollowsNavigationHints(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
 		switch request.URL.Path {
