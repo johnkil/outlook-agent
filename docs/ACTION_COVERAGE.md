@@ -74,7 +74,7 @@ Implemented high-level OWA mappings:
 | --- | --- | --- |
 | `mail.search` | `FindItem` | implemented and live smoke-tested |
 | `mail.fetch_metadata` | `GetItem` | implemented and live smoke-tested through a real inbox item id |
-| `mail.fetch_body` | `GetItem` | implemented with mocked OWA test |
+| `mail.fetch_body` | `GetItem` | implemented and live MCP smoke-tested only against an explicit draft fixture target |
 | `mail.create_draft` | `CreateItem` | implemented as `SaveOnly` draft and live MCP smoke-tested with a fixture |
 | `mail.move_to_deleted_items` | `DeleteItem` | implemented as `MoveToDeletedItems` and live MCP smoke-tested through dry-run/confirmation cleanup of the draft fixture |
 | `calendar.list` | `GetCalendarView` | implemented and live smoke-tested for a one-day range |

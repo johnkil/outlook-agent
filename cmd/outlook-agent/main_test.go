@@ -518,36 +518,102 @@ func TestLiveBinaryMCPStdioDraftCreateAndReversibleCleanupSmoke(t *testing.T) {
 		t.Fatalf("expected draft id in sanitized output, got %#v", draftOutput.Draft)
 	}
 
-	payload := map[string]any{"ids": []any{draftID}}
-	dryRun := callDryRun(t, ctx, session, map[string]any{
-		"action":  "mail.move_to_deleted_items",
-		"payload": payload,
-	})
-	if !dryRun.OK || dryRun.ConfirmationToken == "" || dryRun.Count != 1 || !dryRun.Reversible || dryRun.RequiresUnsafe {
-		t.Fatalf("expected reversible move-to-deleted dry-run token: %#v", dryRun)
+	cleanupDraftFixture(t, ctx, session, draftID)
+}
+
+func TestLiveBinaryMCPStdioDraftBodyFetchAndCleanupSmoke(t *testing.T) {
+	configPath := os.Getenv("OUTLOOK_AGENT_LIVE_CONFIG")
+	if configPath == "" {
+		t.Skip("OUTLOOK_AGENT_LIVE_CONFIG is not set")
+	}
+	if os.Getenv("OUTLOOK_AGENT_LIVE_MUTATION_SMOKE") != "1" {
+		t.Skip("OUTLOOK_AGENT_LIVE_MUTATION_SMOKE=1 is not set")
 	}
 
-	move, err := session.CallTool(ctx, &mcp.CallToolParams{
-		Name: "outlook.mail_move_to_deleted_items",
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+
+	args := []string{"--config", configPath}
+	if profile := os.Getenv("OUTLOOK_AGENT_LIVE_PROFILE"); profile != "" {
+		args = append(args, "--profile", profile)
+	}
+	args = append(args, "mcp")
+
+	command := exec.CommandContext(ctx, buildBinary(t), args...)
+	client := mcp.NewClient(&mcp.Implementation{Name: "stdio-live-body-fixture-smoke-test", Version: "0.0.1"}, nil)
+	session, err := client.Connect(ctx, &mcp.CommandTransport{Command: command, TerminateDuration: time.Second}, nil)
+	if err != nil {
+		t.Fatalf("connect to live stdio MCP server: %v", err)
+	}
+	defer session.Close()
+
+	auth, err := session.CallTool(ctx, &mcp.CallToolParams{Name: "outlook.auth_check"})
+	if err != nil {
+		t.Fatalf("call auth_check: %v", err)
+	}
+	if auth.IsError {
+		t.Fatalf("expected auth_check success, got %#v", auth)
+	}
+	var authOutput struct {
+		OK bool `json:"ok"`
+	}
+	decodeStructuredContent(t, auth, &authOutput)
+	if !authOutput.OK {
+		t.Fatalf("expected live auth_check ok output, got %#v", authOutput)
+	}
+
+	stamp := time.Now().UTC().Format("20060102T150405.000000000Z")
+	body := "outlook-agent explicit body fixture " + stamp
+	createDraft, err := session.CallTool(ctx, &mcp.CallToolParams{
+		Name: "outlook.mail_create_draft",
 		Arguments: map[string]any{
-			"ids":           []string{draftID},
-			"confirm_token": dryRun.ConfirmationToken,
+			"subject": "outlook-agent body smoke draft " + stamp,
+			"body":    body,
+			"to":      []string{},
 		},
 	})
 	if err != nil {
-		t.Fatalf("call mail_move_to_deleted_items: %v", err)
+		t.Fatalf("call mail_create_draft: %v", err)
 	}
-	if move.IsError {
-		t.Fatalf("expected mail_move_to_deleted_items success envelope, got %#v", move)
+	if createDraft.IsError {
+		t.Fatalf("expected mail_create_draft success envelope, got %#v", createDraft)
 	}
-	var moveOutput struct {
-		OK   bool           `json:"ok"`
-		Data map[string]any `json:"data"`
+	var draftOutput struct {
+		Draft any `json:"draft"`
 	}
-	decodeStructuredContent(t, move, &moveOutput)
-	if !moveOutput.OK || moveOutput.Data["moved_count"] != float64(1) {
-		t.Fatalf("expected draft fixture to be moved to Deleted Items, got %#v", moveOutput)
+	decodeStructuredContent(t, createDraft, &draftOutput)
+	draftID := messageIDFromToolValue(draftOutput.Draft)
+	if draftID == "" {
+		t.Fatalf("expected draft id in sanitized output, got %#v", draftOutput.Draft)
 	}
+	cleanupDone := false
+	defer func() {
+		if !cleanupDone {
+			cleanupDraftFixture(t, ctx, session, draftID)
+		}
+	}()
+
+	fetchBody, err := session.CallTool(ctx, &mcp.CallToolParams{
+		Name:      "outlook.mail_fetch_body",
+		Arguments: map[string]any{"id": draftID},
+	})
+	if err != nil {
+		t.Fatalf("call mail_fetch_body: %v", err)
+	}
+	if fetchBody.IsError {
+		t.Fatalf("expected mail_fetch_body success envelope, got %#v", fetchBody)
+	}
+	var bodyOutput struct {
+		ID       any    `json:"id"`
+		BodyText string `json:"body_text"`
+	}
+	decodeStructuredContent(t, fetchBody, &bodyOutput)
+	if bodyOutput.ID != draftID || bodyTextFromToolValue(bodyOutput.BodyText) != body {
+		t.Fatalf("expected fixture body for draft %q, got %#v", draftID, bodyOutput)
+	}
+
+	cleanupDraftFixture(t, ctx, session, draftID)
+	cleanupDone = true
 }
 
 func TestBinaryMCPStdioRejectsMissingExplicitConfig(t *testing.T) {
@@ -633,6 +699,47 @@ func messageIDFromToolValue(value any) string {
 	}
 	id, _ := message["id"].(string)
 	return id
+}
+
+func bodyTextFromToolValue(value any) string {
+	body, _ := value.(string)
+	return body
+}
+
+func cleanupDraftFixture(t *testing.T, ctx context.Context, session *mcp.ClientSession, draftID string) {
+	t.Helper()
+	payload := map[string]any{"ids": []any{draftID}}
+	dryRun := callDryRun(t, ctx, session, map[string]any{
+		"action":  "mail.move_to_deleted_items",
+		"payload": payload,
+	})
+	if !dryRun.OK || dryRun.ConfirmationToken == "" || dryRun.Count != 1 || !dryRun.Reversible || dryRun.RequiresUnsafe {
+		t.Errorf("expected reversible cleanup dry-run token for fixture: %#v", dryRun)
+		return
+	}
+	move, err := session.CallTool(ctx, &mcp.CallToolParams{
+		Name: "outlook.mail_move_to_deleted_items",
+		Arguments: map[string]any{
+			"ids":           []string{draftID},
+			"confirm_token": dryRun.ConfirmationToken,
+		},
+	})
+	if err != nil {
+		t.Errorf("call fixture cleanup move_to_deleted_items: %v", err)
+		return
+	}
+	if move.IsError {
+		t.Errorf("expected fixture cleanup success envelope, got %#v", move)
+		return
+	}
+	var moveOutput struct {
+		OK   bool           `json:"ok"`
+		Data map[string]any `json:"data"`
+	}
+	decodeStructuredContent(t, move, &moveOutput)
+	if !moveOutput.OK || moveOutput.Data["moved_count"] != float64(1) {
+		t.Errorf("expected fixture to be moved to Deleted Items, got %#v", moveOutput)
+	}
 }
 
 func buildBinary(t *testing.T) string {
