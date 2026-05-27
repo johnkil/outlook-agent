@@ -23,6 +23,10 @@
 - Create: `internal/transport/transport.go` - transport interface and request/response types.
 - Create: `internal/transport/fake/fake.go` - fake transport for tests and demos.
 - Test: `internal/transport/fake/fake_test.go` - fake transport contract checks.
+- Create: `internal/config/config.go` - config model and discovery.
+- Test: `internal/config/config_test.go` - explicit path, environment path, and default discovery behavior.
+- Create: `internal/secret/secret.go` - secret-store interface and in-memory implementation for tests.
+- Test: `internal/secret/secret_test.go` - lookup behavior without leaking secret values.
 - Modify: `internal/cli/cli.go` - use policy package for `policy explain`.
 - Modify: `internal/cli/cli_test.go` - assert policy output stays stable.
 
@@ -145,14 +149,39 @@ Expected: PASS.
 - [x] Verify fake transport covers the initial high-level action shapes.
 - [x] Verify `go test ./...` passes.
 
-## Task 6: Phase 1 Completion Gate
+## Task 6: Config Discovery
+
+**Files:**
+- Create: `internal/config/config_test.go`
+- Create: `internal/config/config.go`
+
+- [x] Write failing tests for explicit config path, environment config path,
+  and missing config fallback.
+- [x] Implement JSON config loading with no secret values in the model.
+- [x] Verify `go test ./internal/config` passes.
+- [x] Verify `go test ./...` passes.
+
+## Task 7: Secret Store Abstraction
+
+**Files:**
+- Create: `internal/secret/secret_test.go`
+- Create: `internal/secret/secret.go`
+
+- [x] Write failing tests for memory store lookup, missing secret errors, and
+  safe secret references.
+- [x] Implement `Store` interface and `MemoryStore` test implementation.
+- [x] Verify `go test ./internal/secret` passes.
+- [x] Verify `go test ./...` passes.
+
+## Task 8: Phase 1 Completion Gate
 
 **Files:**
 - Modify: `docs/ROADMAP.md`
 
-- [ ] Mark Phase 1 items implemented only after tests cover policy, redaction,
-  confirmation tokens, action registry, and fake transport.
-- [ ] Run full tests:
+- [x] Mark Phase 1 items implemented only after tests cover policy, redaction,
+  confirmation tokens, action registry, fake transport, config discovery, and
+  secret-store abstraction.
+- [x] Run full tests:
 
 ```bash
 GOCACHE="$PWD/.cache/go-build" go test ./...

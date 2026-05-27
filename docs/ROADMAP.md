@@ -12,11 +12,11 @@ Status: started.
 
 ## Phase 1: Core Runtime
 
-Status: in progress.
+Status: implemented initial slice.
 
 - CLI command framework: started.
-- Config discovery: pending.
-- Secret-store abstraction: pending.
+- Config discovery: implemented initial package with tests.
+- Secret-store abstraction: implemented interface and memory store with tests.
 - Policy engine: implemented initial package with tests.
 - Redaction engine: implemented initial package with tests.
 - Dry-run and confirmation-token store: implemented in-memory package with tests.
