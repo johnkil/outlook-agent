@@ -106,10 +106,13 @@ type DryRunInput struct {
 
 type DryRunOutput struct {
 	Action               string `json:"action"`
+	OK                   bool   `json:"ok"`
 	Count                int    `json:"count"`
 	Reversible           bool   `json:"reversible"`
 	RequiresConfirmation bool   `json:"requires_confirmation"`
+	RequiresUnsafe       bool   `json:"requires_unsafe,omitempty"`
 	ConfirmationToken    string `json:"confirmation_token,omitempty"`
+	Error                string `json:"error,omitempty"`
 }
 
 type ActionConfirmInput struct {
@@ -322,15 +325,29 @@ func calendarAvailabilityHandler(client transport.Transport) func(context.Contex
 func dryRunHandler(runtime *Runtime) func(context.Context, *mcp.CallToolRequest, DryRunInput) (*mcp.CallToolResult, DryRunOutput, error) {
 	return func(ctx context.Context, _ *mcp.CallToolRequest, input DryRunInput) (*mcp.CallToolResult, DryRunOutput, error) {
 		summary := runtime.client.DryRun(ctx, transport.ActionRequest{Name: input.Action, Payload: input.Payload, UnsafeMode: input.UnsafeMode})
+		decision := confirmedActionDecision(runtime.client, input.Action, input.Payload, input.UnsafeMode)
+		if !decision.Allowed {
+			return nil, DryRunOutput{
+				Action:               summary.Action,
+				OK:                   false,
+				Count:                summary.Count,
+				Reversible:           summary.Reversible,
+				RequiresConfirmation: true,
+				RequiresUnsafe:       decision.RequiresUnsafe,
+				Error:                decision.Reason,
+			}, nil
+		}
 		token, err := runtime.confirm.Generate(bindingFor(runtime.client, runtime.profileOrDefault(input.Profile), input.Action, input.Payload, input.UnsafeMode), 10*time.Minute)
 		if err != nil {
 			return nil, DryRunOutput{}, err
 		}
 		return nil, DryRunOutput{
 			Action:               summary.Action,
+			OK:                   true,
 			Count:                summary.Count,
 			Reversible:           summary.Reversible,
 			RequiresConfirmation: summary.RequiresConfirmation,
+			RequiresUnsafe:       decision.RequiresUnsafe,
 			ConfirmationToken:    token,
 		}, nil
 	}
@@ -340,6 +357,10 @@ func actionConfirmHandler(runtime *Runtime) func(context.Context, *mcp.CallToolR
 	return func(ctx context.Context, _ *mcp.CallToolRequest, input ActionConfirmInput) (*mcp.CallToolResult, ActionResultOutput, error) {
 		if !runtime.confirm.Consume(input.ConfirmToken, bindingFor(runtime.client, runtime.profileOrDefault(input.Profile), input.Action, input.Payload, input.UnsafeMode)) {
 			return nil, ActionResultOutput{OK: false, Error: "confirmation token is invalid"}, nil
+		}
+		decision := confirmedActionDecision(runtime.client, input.Action, input.Payload, input.UnsafeMode)
+		if !decision.Allowed {
+			return nil, ActionResultOutput{OK: false, Error: decision.Reason}, nil
 		}
 		response := runtime.client.Execute(ctx, transport.ActionRequest{Name: input.Action, Payload: input.Payload, UnsafeMode: input.UnsafeMode})
 		redacted := redact.Value(response.Data).(map[string]any)
@@ -389,6 +410,14 @@ func safetyClassFor(client transport.Transport, actionName string) policy.Safety
 		}
 	}
 	return policy.Unknown
+}
+
+func confirmedActionDecision(client transport.Transport, actionName string, payload map[string]any, unsafeMode bool) policy.Decision {
+	return policy.EvaluateConfirmed(policy.Request{
+		Class:          safetyClassFor(client, actionName),
+		ExplicitTarget: hasExplicitTarget(payload),
+		UnsafeMode:     unsafeMode,
+	})
 }
 
 func hasExplicitTarget(payload map[string]any) bool {

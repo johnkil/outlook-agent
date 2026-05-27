@@ -14,7 +14,11 @@
 - Go policy engine classifies every action before transport execution.
 - Skills are guidance only; the runtime enforces policy.
 - Dry-run tokens bind to exact normalized payloads.
+- Dry-run does not issue confirmation tokens for destructive or unknown actions
+  unless unsafe mode is explicit.
 - Unsafe mode bypasses allowlists but not confirmation gates.
+- Confirmation tokens do not bypass unsafe-mode or explicit-target policy
+  checks; confirmed actions are rechecked before transport execution.
 - Output redaction runs before responses leave the runtime.
 - Live transports must keep session material in memory unless a secret-store
   backed cache is explicitly implemented.
@@ -38,4 +42,3 @@ Logs must not include:
 - raw message bodies;
 - attachment contents;
 - raw session dumps.
-

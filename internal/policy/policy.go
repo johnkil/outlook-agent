@@ -134,3 +134,23 @@ func Evaluate(request Request) Decision {
 		}
 	}
 }
+
+func EvaluateConfirmed(request Request) Decision {
+	switch request.Class {
+	case ReversibleSingleItem, ReversibleBulk, SendLike, SettingsOrRules:
+		return Decision{Allowed: true}
+	case Destructive:
+		if request.UnsafeMode {
+			return Decision{Allowed: true}
+		}
+		return Decision{
+			Allowed:              false,
+			RequiresDryRun:       true,
+			RequiresConfirmation: true,
+			RequiresUnsafe:       true,
+			Reason:               "destructive action requires unsafe dry-run confirmation",
+		}
+	default:
+		return Evaluate(request)
+	}
+}

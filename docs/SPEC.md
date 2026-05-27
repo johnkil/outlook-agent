@@ -44,6 +44,12 @@ Key tool inputs:
 - `outlook.calendar_availability`: `start`, `end`, and optional `email`.
   When `email` is omitted, OWA profiles use `settings.mailbox_email` if
   configured.
+- `outlook.action_dry_run`: returns `ok=false`, `error`, and no
+  `confirmation_token` when the requested confirmed action is not permitted in
+  the selected mode. For example, destructive and unknown actions require
+  `unsafe_mode=true`.
+- `outlook.action_confirm`: validates the exact confirmation token binding and
+  then applies confirmed-action policy again before transport execution.
 
 ## Safety Classes
 
@@ -72,6 +78,12 @@ Policy behavior:
 - `send_like`: requires exact recipient/content confirmation.
 - `settings_or_rules`: requires explicit intent and dry-run where possible.
 - `unknown`: blocked unless unsafe mode is explicit.
+
+After a successful dry-run, confirmation changes only the confirmation state; it
+does not bypass unsafe mode or explicit-target requirements. Confirmed bulk,
+send-like, settings/rules, and reversible single-item actions may execute with a
+matching token. Confirmed destructive and unknown actions still require explicit
+unsafe mode.
 
 ## Transport Interface
 

@@ -45,6 +45,8 @@ level 5: workflow skill guidance
   live promotion.
 - Mutating unknown actions require unsafe mode and confirmation gates.
 - High-use actions graduate to typed schemas and high-level MCP tools.
+- Dry-run confirmation is a gate, not a bypass: confirmed actions still pass
+  policy checks before transport execution.
 
 ## OWA Transport Status
 
