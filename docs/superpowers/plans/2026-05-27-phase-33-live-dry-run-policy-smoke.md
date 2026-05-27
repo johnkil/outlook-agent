@@ -43,7 +43,7 @@ Expected: PASS after live auth; `MoveItem` dry-run gets a token without unsafe,
 `DeleteItem` hard-delete dry-run is blocked without unsafe, and unsafe dry-run
 gets a token without executing anything.
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add cmd docs
