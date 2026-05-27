@@ -67,7 +67,7 @@ Status values:
   - Graph adapter;
   - EWS adapter.
 - Live validation:
-  - `FindFolder` live payload/endpoint compatibility follow-up after five
+  - `FindFolder` live payload/endpoint compatibility follow-up after six
     metadata-only candidates returned the same internal OWA error;
 
 ## Verification Commands
