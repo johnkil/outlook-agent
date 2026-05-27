@@ -39,4 +39,4 @@ OpenCode, Codex, and other MCP-capable agents:
 - [SPEC](docs/SPEC.md)
 - [Action Coverage](docs/ACTION_COVERAGE.md)
 - [Security Model](docs/SECURITY_MODEL.md)
-
+- [Roadmap](docs/ROADMAP.md)
