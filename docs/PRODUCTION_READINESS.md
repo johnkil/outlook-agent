@@ -24,9 +24,9 @@ Status values:
 | High-level mail/calendar workflows | Partial | Search, metadata/body fetch, draft save, move to Deleted Items, calendar list, and availability are implemented with tests; only search and availability are documented as live smoke-tested so far. |
 | Live verification | Partial | Authenticated discovery has sanitized evidence for the useful OWA app shell and 25 live-discovered actions; high-level mail search and availability have opt-in live smoke coverage. Full live execution of every raw action is intentionally not attempted because many actions are destructive, send-like, or settings-changing. |
 | Public/private split | Ready | Generic examples use placeholder hosts/accounts; security docs and grep gates prevent committed tenant-specific values. Private enterprise values belong in ignored local config and secret stores. |
-| Security and redaction | Ready for runtime controls | Policy classes, explicit target rules, dry-run tokens, confirmation binding, unsafe requirements, and redaction all have unit or MCP tests. |
+| Security and redaction | Partial for production operations | Runtime policy classes, explicit target rules, dry-run tokens, confirmation binding, unsafe requirements, and redaction have unit or MCP tests; CI now adds a public-safety check and dependency vulnerability scan baseline. |
 | Workflow skills | Ready initial set | `skills/` contains mail and calendar workflow skills for triage, reply drafting, task extraction, subscription cleanup, daily brief, meeting prep, and freeing time. |
-| Release readiness | Gap | Cross-platform release artifacts, signed checksums, installation docs, versioning policy, and dependency/security scan automation are not yet complete. |
+| Release readiness | Partial | `docs/RELEASE.md`, `scripts/release-build.sh`, `.github/workflows/ci.yml`, and `.github/workflows/release.yml` define cross-platform archives, checksums, optional signing, CI, and tag-driven publishing; signing key operations and installer distribution are still open. |
 | Graph/EWS adapters | Gap | Architecture reserves Graph and EWS transports, but production adapters are not implemented in this repository yet. |
 
 ## Current Evidence
@@ -55,14 +55,13 @@ Status values:
 ## Remaining Gaps
 
 - Build and release:
-  - cross-platform build matrix;
-  - release archive naming;
-  - signed checksums;
-  - install/upgrade docs.
+  - signing key publication and rotation policy;
+  - installer or package-manager distribution;
+  - upgrade and rollback runbooks.
 - Security operations:
-  - automated dependency vulnerability scan;
-  - automated secret scan in CI;
-  - operator guidance for storing enterprise config outside the repository.
+  - organization-managed secret scanning policy;
+  - operator incident and credential revocation runbooks;
+  - enterprise config examples that live outside the public repository.
 - Protocol breadth:
   - Graph adapter;
   - EWS adapter;
@@ -80,6 +79,8 @@ Use these commands before making readiness claims:
 GOPATH=$PWD/.cache/go GOCACHE=$PWD/.cache/go-build GOMODCACHE=$PWD/.cache/go-mod go test -count=1 ./...
 GOPATH=$PWD/.cache/go GOCACHE=$PWD/.cache/go-build GOMODCACHE=$PWD/.cache/go-mod go build -o /private/tmp/outlook-agent-build-check ./cmd/outlook-agent
 rm -f /private/tmp/outlook-agent-build-check
+bash -n scripts/release-build.sh scripts/public-safety-check.sh
+scripts/public-safety-check.sh
 git diff --check
 ```
 

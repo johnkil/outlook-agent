@@ -85,3 +85,4 @@ tokens, cookies, or canary values.
 - [Roadmap](docs/ROADMAP.md)
 - [OpenCode Integration](docs/OPENCODE.md)
 - [Production Readiness Audit](docs/PRODUCTION_READINESS.md)
+- [Release Process](docs/RELEASE.md)
