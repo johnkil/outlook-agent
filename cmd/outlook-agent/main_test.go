@@ -199,6 +199,73 @@ func TestLiveBinaryMCPStdioDryRunPolicySmoke(t *testing.T) {
 	}
 }
 
+func TestLiveBinaryMCPStdioSendLikeAndSettingsDryRunSmoke(t *testing.T) {
+	configPath := os.Getenv("OUTLOOK_AGENT_LIVE_CONFIG")
+	if configPath == "" {
+		t.Skip("OUTLOOK_AGENT_LIVE_CONFIG is not set")
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
+	defer cancel()
+
+	args := []string{"--config", configPath}
+	if profile := os.Getenv("OUTLOOK_AGENT_LIVE_PROFILE"); profile != "" {
+		args = append(args, "--profile", profile)
+	}
+	args = append(args, "mcp")
+
+	command := exec.CommandContext(ctx, buildBinary(t), args...)
+	client := mcp.NewClient(&mcp.Implementation{Name: "stdio-live-send-settings-smoke-test", Version: "0.0.1"}, nil)
+	session, err := client.Connect(ctx, &mcp.CommandTransport{Command: command, TerminateDuration: time.Second}, nil)
+	if err != nil {
+		t.Fatalf("connect to live stdio MCP server: %v", err)
+	}
+	defer session.Close()
+
+	auth, err := session.CallTool(ctx, &mcp.CallToolParams{Name: "outlook.auth_check"})
+	if err != nil {
+		t.Fatalf("call auth_check: %v", err)
+	}
+	if auth.IsError {
+		t.Fatalf("expected auth_check success, got %#v", auth)
+	}
+	var authOutput struct {
+		OK bool `json:"ok"`
+	}
+	decodeStructuredContent(t, auth, &authOutput)
+	if !authOutput.OK {
+		t.Fatalf("expected live auth_check ok output, got %#v", authOutput)
+	}
+
+	createPayload := map[string]any{
+		"Body": map[string]any{
+			"Items": []any{
+				map[string]any{"Subject": "dry-run only"},
+			},
+		},
+	}
+	createDryRun := callDryRun(t, ctx, session, map[string]any{
+		"action":  "CreateItem",
+		"payload": createPayload,
+	})
+	if !createDryRun.OK || createDryRun.ConfirmationToken == "" || createDryRun.Count != 1 || createDryRun.RequiresUnsafe {
+		t.Fatalf("expected send-like CreateItem dry-run token without unsafe: %#v", createDryRun)
+	}
+
+	settingsPayload := map[string]any{
+		"Body": map[string]any{
+			"Items": []any{"dry-run-settings"},
+		},
+	}
+	settingsDryRun := callDryRun(t, ctx, session, map[string]any{
+		"action":  "UpdateUserConfiguration",
+		"payload": settingsPayload,
+	})
+	if !settingsDryRun.OK || settingsDryRun.ConfirmationToken == "" || settingsDryRun.Count != 1 || settingsDryRun.RequiresUnsafe {
+		t.Fatalf("expected settings UpdateUserConfiguration dry-run token without unsafe: %#v", settingsDryRun)
+	}
+}
+
 func TestBinaryMCPStdioRejectsMissingExplicitConfig(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
