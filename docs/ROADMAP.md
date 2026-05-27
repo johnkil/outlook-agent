@@ -63,10 +63,13 @@ Status: implemented initial slice.
 
 ## Phase 5: Transports
 
+- Status: started.
+
 - Fake transport for tests and examples.
 - Graph transport where delegated OAuth is available.
 - EWS transport where Exchange policy allows it.
-- OWA-like REST transport interface.
+- OWA-like REST transport interface: implemented initial generic adapter with
+  mocked auth/service tests.
 - Private enterprise adapter outside the public core.
 
 ## Phase 6: Production Readiness
