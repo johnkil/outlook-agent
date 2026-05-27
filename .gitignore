@@ -1,0 +1,5 @@
+.cache/
+outlook-agent
+dist/
+coverage.out
+
