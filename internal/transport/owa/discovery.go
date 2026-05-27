@@ -51,19 +51,20 @@ type DiscoveryDiagnostics struct {
 }
 
 type DiscoverySourceDiagnostics struct {
-	Source             string `json:"source"`
-	Status             int    `json:"status"`
-	ContentType        string `json:"content_type,omitempty"`
-	FinalPath          string `json:"final_path,omitempty"`
-	FinalPathChanged   bool   `json:"final_path_changed,omitempty"`
-	Bytes              int    `json:"bytes"`
-	Actions            int    `json:"actions"`
-	LinkedScripts      int    `json:"linked_scripts"`
-	NavigationHints    int    `json:"navigation_hints"`
-	TitlePresent       bool   `json:"title_present,omitempty"`
-	TitleKind          string `json:"title_kind,omitempty"`
-	ScriptBlocks       int    `json:"script_blocks,omitempty"`
-	LooksLikeLogonPage bool   `json:"looks_like_logon_page,omitempty"`
+	Source                string `json:"source"`
+	Status                int    `json:"status"`
+	ContentType           string `json:"content_type,omitempty"`
+	FinalPath             string `json:"final_path,omitempty"`
+	FinalPathChanged      bool   `json:"final_path_changed,omitempty"`
+	Bytes                 int    `json:"bytes"`
+	Actions               int    `json:"actions"`
+	LinkedScripts         int    `json:"linked_scripts"`
+	NavigationHints       int    `json:"navigation_hints"`
+	TitlePresent          bool   `json:"title_present,omitempty"`
+	TitleKind             string `json:"title_kind,omitempty"`
+	ScriptBlocks          int    `json:"script_blocks,omitempty"`
+	LooksLikeLogonPage    bool   `json:"looks_like_logon_page,omitempty"`
+	LooksLikeOWAErrorPage bool   `json:"looks_like_owa_error_page,omitempty"`
 }
 
 type DiscoveryReport struct {
@@ -192,19 +193,20 @@ func (client *Transport) discoverSource(ctx context.Context, session Session, so
 	titlePresent, titleKind := discoverTitleMarker(text)
 	diagnostics.Actions = append(diagnostics.Actions, discovered...)
 	diagnostics.Sources = append(diagnostics.Sources, DiscoverySourceDiagnostics{
-		Source:             source,
-		Status:             status,
-		ContentType:        contentType,
-		FinalPath:          finalPath,
-		FinalPathChanged:   requestedPath != "" && finalPath != "" && requestedPath != finalPath,
-		Bytes:              bytesRead,
-		Actions:            len(discovered),
-		LinkedScripts:      len(linkedScripts),
-		NavigationHints:    len(navigationHints),
-		TitlePresent:       titlePresent,
-		TitleKind:          titleKind,
-		ScriptBlocks:       countInlineScriptBlocks(text),
-		LooksLikeLogonPage: looksLikeLogonPage(text),
+		Source:                source,
+		Status:                status,
+		ContentType:           contentType,
+		FinalPath:             finalPath,
+		FinalPathChanged:      requestedPath != "" && finalPath != "" && requestedPath != finalPath,
+		Bytes:                 bytesRead,
+		Actions:               len(discovered),
+		LinkedScripts:         len(linkedScripts),
+		NavigationHints:       len(navigationHints),
+		TitlePresent:          titlePresent,
+		TitleKind:             titleKind,
+		ScriptBlocks:          countInlineScriptBlocks(text),
+		LooksLikeLogonPage:    looksLikeLogonPage(text),
+		LooksLikeOWAErrorPage: looksLikeOWAErrorPage(text),
 	})
 	if options.FollowNavigationHints {
 		for _, navigationHint := range navigationHints {
@@ -269,6 +271,13 @@ func looksLikeLogonPage(text string) bool {
 		return true
 	}
 	return strings.Contains(lower, "name=\"username\"") && strings.Contains(lower, "name=\"password\"")
+}
+
+func looksLikeOWAErrorPage(text string) bool {
+	lower := strings.ToLower(text)
+	return strings.Contains(lower, "themes/resources/error2.css") ||
+		strings.Contains(lower, "themes/base/errorbg.gif") ||
+		strings.Contains(lower, "errorfe.aspx")
 }
 
 func discoverTitleMarker(text string) (bool, string) {

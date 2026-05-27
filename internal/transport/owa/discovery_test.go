@@ -355,6 +355,44 @@ func TestTransportDiscoveryDiagnosticsDetectsLogonPage(t *testing.T) {
 	}
 }
 
+func TestTransportDiscoveryDiagnosticsDetectsOWAErrorPage(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		switch request.URL.Path {
+		case "/owa/auth.owa":
+			http.SetCookie(response, &http.Cookie{Name: "X-OWA-CANARY", Value: "canary-secret"})
+			response.WriteHeader(http.StatusOK)
+		case "/owa/":
+			response.Header().Set("Content-Type", "text/html")
+			_, _ = response.Write([]byte(`
+				<html>
+					<link rel="stylesheet" href="/owa/15.2.1748.10/themes/resources/error2.css">
+					<img src="/owa/15.2.1748.10/themes/base/errorBG.gif">
+				</html>
+			`))
+		default:
+			t.Fatalf("unexpected path: %s", request.URL.String())
+		}
+	}))
+	defer server.Close()
+	client := owa.NewTransport(owa.Config{
+		BaseURL:   server.URL,
+		Username:  "DOMAIN\\user",
+		SecretRef: secret.Ref("memory:owa"),
+	}, secret.NewMemoryStore(map[string]string{"memory:owa": "password"}), server.Client())
+
+	diagnostics, err := client.DiscoverServiceActionsFromURLDiagnostics(context.Background(), "/owa/", owa.DiscoveryOptions{})
+
+	if err != nil {
+		t.Fatalf("discover diagnostics: %v", err)
+	}
+	if len(diagnostics.Sources) != 1 {
+		t.Fatalf("expected one source diagnostic, got %#v", diagnostics.Sources)
+	}
+	if !diagnostics.Sources[0].LooksLikeOWAErrorPage {
+		t.Fatalf("expected OWA error-page marker in diagnostics: %#v", diagnostics.Sources[0])
+	}
+}
+
 func TestTransportDiscoversActionsFromAuthenticatedURL(t *testing.T) {
 	var sawSessionCookie bool
 	var sawCanaryHeader bool
