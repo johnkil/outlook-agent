@@ -114,6 +114,55 @@ func TestLiveOWARawFindPeopleSmoke(t *testing.T) {
 	}
 }
 
+func TestLiveOWARawReadOnlyMetadataSuiteSmoke(t *testing.T) {
+	configPath := os.Getenv("OUTLOOK_AGENT_LIVE_CONFIG")
+	if configPath == "" {
+		t.Skip("OUTLOOK_AGENT_LIVE_CONFIG is not set")
+	}
+	profile := os.Getenv("OUTLOOK_AGENT_LIVE_PROFILE")
+
+	ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
+	defer cancel()
+
+	client, _, err := app.BuildTransport(app.Options{ConfigPath: configPath, Profile: profile})
+	if err != nil {
+		t.Fatalf("build live transport: %v", err)
+	}
+	auth := client.Authenticate(ctx, profile)
+	if !auth.OK {
+		t.Fatalf("live auth failed: %s", auth.Error)
+	}
+
+	for _, action := range readOnlyRawMetadataSmokeCases() {
+		t.Run(action.name, func(t *testing.T) {
+			response := client.Execute(ctx, transport.ActionRequest{
+				Name:    action.name,
+				Payload: action.payload,
+			})
+			if !response.OK {
+				t.Fatalf("live %s failed: %s summary=%#v", action.name, response.Error, responseSummary(response.Data))
+			}
+			if len(response.Data) == 0 {
+				t.Fatalf("expected non-empty %s response data", action.name)
+			}
+		})
+	}
+}
+
+type readOnlyRawMetadataSmokeCase struct {
+	name    string
+	payload map[string]any
+}
+
+func readOnlyRawMetadataSmokeCases() []readOnlyRawMetadataSmokeCase {
+	return []readOnlyRawMetadataSmokeCase{
+		{name: "GetServerTimeZones", payload: getServerTimeZonesPayload()},
+		{name: "GetRoomLists", payload: getRoomListsPayload()},
+		{name: "GetFolder", payload: getFolderPayload()},
+		{name: "ResolveNames", payload: resolveNamesPayload("test")},
+	}
+}
+
 func findPeoplePayload(query string) map[string]any {
 	return map[string]any{
 		"__type": "FindPeopleJsonRequest:#Exchange",
@@ -137,6 +186,66 @@ func findPeoplePayload(query string) map[string]any {
 			"ShouldResolveOneOffEmailAddress": true,
 			"SearchPeopleSuggestionIndex":     false,
 		},
+	}
+}
+
+func getServerTimeZonesPayload() map[string]any {
+	return map[string]any{
+		"__type": "GetServerTimeZonesJsonRequest:#Exchange",
+		"Header": requestHeaderPayload("Exchange2013"),
+		"Body": map[string]any{
+			"__type":                 "GetServerTimeZonesRequest:#Exchange",
+			"Ids":                    []any{},
+			"ReturnFullTimeZoneData": false,
+		},
+	}
+}
+
+func getRoomListsPayload() map[string]any {
+	return map[string]any{
+		"__type": "GetRoomListsJsonRequest:#Exchange",
+		"Header": requestHeaderPayload("Exchange2013"),
+		"Body": map[string]any{
+			"__type": "GetRoomListsRequest:#Exchange",
+		},
+	}
+}
+
+func getFolderPayload() map[string]any {
+	return map[string]any{
+		"__type": "GetFolderJsonRequest:#Exchange",
+		"Header": requestHeaderPayload("Exchange2013"),
+		"Body": map[string]any{
+			"__type": "GetFolderRequest:#Exchange",
+			"FolderShape": map[string]any{
+				"__type":    "FolderResponseShape:#Exchange",
+				"BaseShape": "IdOnly",
+			},
+			"FolderIds": []any{
+				map[string]any{"__type": "DistinguishedFolderId:#Exchange", "Id": "inbox"},
+			},
+		},
+	}
+}
+
+func resolveNamesPayload(query string) map[string]any {
+	return map[string]any{
+		"__type": "ResolveNamesJsonRequest:#Exchange",
+		"Header": requestHeaderPayload("Exchange2013"),
+		"Body": map[string]any{
+			"__type":                "ResolveNamesRequest:#Exchange",
+			"UnresolvedEntry":       query,
+			"ReturnFullContactData": false,
+			"SearchScope":           "ActiveDirectory",
+			"ContactDataShape":      "IdOnly",
+		},
+	}
+}
+
+func requestHeaderPayload(serverVersion string) map[string]any {
+	return map[string]any{
+		"__type":               "JsonRequestHeaders:#Exchange",
+		"RequestServerVersion": serverVersion,
 	}
 }
 

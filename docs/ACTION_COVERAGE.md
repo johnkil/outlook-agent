@@ -80,6 +80,7 @@ Implemented high-level OWA mappings:
 | `calendar.list` | `GetCalendarView` | implemented with mocked OWA test |
 | `calendar.availability` | `GetUserAvailabilityInternal` | implemented and live smoke-tested; MCP tool accepts optional mailbox email |
 | raw read-only people search | `FindPeople` | raw guarded execution live smoke-tested with opt-in env; request maps are normalized so `__type` is emitted first |
+| raw read-only metadata suite | `GetServerTimeZones`, `GetRoomLists`, `GetFolder`, `ResolveNames` | raw guarded execution live smoke-tested with opt-in env; metadata-only payloads and sanitized assertions |
 | dry-run reversible gate | `MoveItem` | stdio MCP dry-run live smoke-tested after auth; token issued without unsafe and without execution |
 | dry-run destructive gate | `DeleteItem` | stdio MCP dry-run live smoke-tested after auth; unsafe required before token issuance and no confirmation executed |
 | dry-run send-like gate | `CreateItem` | stdio MCP dry-run live smoke-tested after auth; token issued without unsafe and without execution |
@@ -90,3 +91,8 @@ Important OWA compatibility note: high-level OWA JSON payloads use ordered JSON
 objects because this endpoint can reject request maps where `__type` is not the
 first field. Raw OWA payload maps are normalized recursively before encoding so
 agent-supplied `__type` fields are emitted first at each object level.
+
+`FindFolder` remains classified and available as a raw read-metadata action,
+but the first live metadata-only candidate payload returned an internal OWA
+error. Treat it as a payload-shape follow-up rather than evidence against the
+generic raw action transport.
