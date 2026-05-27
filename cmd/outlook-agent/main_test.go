@@ -123,6 +123,106 @@ func TestLiveBinaryMCPStdioCalendarAvailabilitySmoke(t *testing.T) {
 	}
 }
 
+func TestLiveBinaryMCPStdioDryRunPolicySmoke(t *testing.T) {
+	configPath := os.Getenv("OUTLOOK_AGENT_LIVE_CONFIG")
+	if configPath == "" {
+		t.Skip("OUTLOOK_AGENT_LIVE_CONFIG is not set")
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
+	defer cancel()
+
+	args := []string{"--config", configPath}
+	if profile := os.Getenv("OUTLOOK_AGENT_LIVE_PROFILE"); profile != "" {
+		args = append(args, "--profile", profile)
+	}
+	args = append(args, "mcp")
+
+	command := exec.CommandContext(ctx, buildBinary(t), args...)
+	client := mcp.NewClient(&mcp.Implementation{Name: "stdio-live-dry-run-smoke-test", Version: "0.0.1"}, nil)
+	session, err := client.Connect(ctx, &mcp.CommandTransport{Command: command, TerminateDuration: time.Second}, nil)
+	if err != nil {
+		t.Fatalf("connect to live stdio MCP server: %v", err)
+	}
+	defer session.Close()
+
+	auth, err := session.CallTool(ctx, &mcp.CallToolParams{Name: "outlook.auth_check"})
+	if err != nil {
+		t.Fatalf("call auth_check: %v", err)
+	}
+	if auth.IsError {
+		t.Fatalf("expected auth_check success, got %#v", auth)
+	}
+	var authOutput struct {
+		OK bool `json:"ok"`
+	}
+	decodeStructuredContent(t, auth, &authOutput)
+	if !authOutput.OK {
+		t.Fatalf("expected live auth_check ok output, got %#v", authOutput)
+	}
+
+	movePayload := map[string]any{
+		"Body": map[string]any{
+			"ItemIds": []any{"dry-run-item-1", "dry-run-item-2"},
+		},
+	}
+	moveDryRun := callDryRun(t, ctx, session, map[string]any{
+		"action":  "MoveItem",
+		"payload": movePayload,
+	})
+	if !moveDryRun.OK || moveDryRun.ConfirmationToken == "" || moveDryRun.Count != 2 || !moveDryRun.Reversible || moveDryRun.RequiresUnsafe {
+		t.Fatalf("expected reversible MoveItem dry-run token without unsafe: %#v", moveDryRun)
+	}
+
+	deletePayload := map[string]any{
+		"Body": map[string]any{
+			"DeleteType": "HardDelete",
+			"ItemIds":    []any{"dry-run-item-1"},
+		},
+	}
+	deleteWithoutUnsafe := callDryRun(t, ctx, session, map[string]any{
+		"action":  "DeleteItem",
+		"payload": deletePayload,
+	})
+	if deleteWithoutUnsafe.OK || deleteWithoutUnsafe.ConfirmationToken != "" || !deleteWithoutUnsafe.RequiresUnsafe {
+		t.Fatalf("expected destructive DeleteItem dry-run to require unsafe: %#v", deleteWithoutUnsafe)
+	}
+
+	deleteWithUnsafe := callDryRun(t, ctx, session, map[string]any{
+		"action":      "DeleteItem",
+		"payload":     deletePayload,
+		"unsafe_mode": true,
+	})
+	if !deleteWithUnsafe.OK || deleteWithUnsafe.ConfirmationToken == "" || deleteWithUnsafe.Count != 1 {
+		t.Fatalf("expected unsafe destructive DeleteItem dry-run token: %#v", deleteWithUnsafe)
+	}
+}
+
+type dryRunOutput struct {
+	OK                bool   `json:"ok"`
+	Count             int    `json:"count"`
+	Reversible        bool   `json:"reversible"`
+	RequiresUnsafe    bool   `json:"requires_unsafe"`
+	ConfirmationToken string `json:"confirmation_token"`
+}
+
+func callDryRun(t *testing.T, ctx context.Context, session *mcp.ClientSession, arguments map[string]any) dryRunOutput {
+	t.Helper()
+	result, err := session.CallTool(ctx, &mcp.CallToolParams{
+		Name:      "outlook.action_dry_run",
+		Arguments: arguments,
+	})
+	if err != nil {
+		t.Fatalf("call action_dry_run: %v", err)
+	}
+	if result.IsError {
+		t.Fatalf("expected action_dry_run tool success envelope, got %#v", result)
+	}
+	var output dryRunOutput
+	decodeStructuredContent(t, result, &output)
+	return output
+}
+
 func buildBinary(t *testing.T) string {
 	t.Helper()
 	binary := filepath.Join(t.TempDir(), "outlook-agent")

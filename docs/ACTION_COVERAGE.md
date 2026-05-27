@@ -49,6 +49,9 @@ level 5: workflow skill guidance
 - High-use actions graduate to typed schemas and high-level MCP tools.
 - Dry-run confirmation is a gate, not a bypass: confirmed actions still pass
   policy checks before transport execution.
+- Live MCP dry-run smoke verifies representative reversible and destructive OWA
+  raw actions after authentication without calling confirmation or executing
+  either action.
 - MCP callers should inspect `outlook.capabilities.details` before choosing
   `outlook.raw_action`; the details array exposes each action's transport,
   safety class, coverage level, and direct policy gates from the runtime
@@ -77,6 +80,8 @@ Implemented high-level OWA mappings:
 | `calendar.list` | `GetCalendarView` | implemented with mocked OWA test |
 | `calendar.availability` | `GetUserAvailabilityInternal` | implemented and live smoke-tested; MCP tool accepts optional mailbox email |
 | raw read-only people search | `FindPeople` | raw guarded execution live smoke-tested with opt-in env; request maps are normalized so `__type` is emitted first |
+| dry-run reversible gate | `MoveItem` | stdio MCP dry-run live smoke-tested after auth; token issued without unsafe and without execution |
+| dry-run destructive gate | `DeleteItem` | stdio MCP dry-run live smoke-tested after auth; unsafe required before token issuance and no confirmation executed |
 
 Important OWA compatibility note: high-level OWA JSON payloads use ordered JSON
 objects because this endpoint can reject request maps where `__type` is not the
