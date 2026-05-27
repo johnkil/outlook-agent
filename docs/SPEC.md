@@ -38,6 +38,12 @@ outlook.action_confirm
 outlook.raw_action
 ```
 
+Key tool inputs:
+
+- `outlook.calendar_availability`: `start`, `end`, and optional `email`.
+  When `email` is omitted, OWA profiles use `settings.mailbox_email` if
+  configured.
+
 ## Safety Classes
 
 ```text

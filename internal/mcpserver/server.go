@@ -86,6 +86,7 @@ type ActionResultOutput struct {
 type CalendarWindowInput struct {
 	Start string `json:"start" jsonschema:"inclusive start timestamp"`
 	End   string `json:"end" jsonschema:"exclusive end timestamp"`
+	Email string `json:"email,omitempty" jsonschema:"optional mailbox email for availability queries"`
 }
 
 type CalendarListOutput struct {
@@ -295,7 +296,11 @@ func calendarListHandler(client transport.Transport) func(context.Context, *mcp.
 
 func calendarAvailabilityHandler(client transport.Transport) func(context.Context, *mcp.CallToolRequest, CalendarWindowInput) (*mcp.CallToolResult, CalendarAvailabilityOutput, error) {
 	return func(ctx context.Context, _ *mcp.CallToolRequest, input CalendarWindowInput) (*mcp.CallToolResult, CalendarAvailabilityOutput, error) {
-		response := client.Execute(ctx, transport.ActionRequest{Name: "calendar.availability", Payload: map[string]any{"start": input.Start, "end": input.End}})
+		payload := map[string]any{"start": input.Start, "end": input.End}
+		if strings.TrimSpace(input.Email) != "" {
+			payload["email"] = input.Email
+		}
+		response := client.Execute(ctx, transport.ActionRequest{Name: "calendar.availability", Payload: payload})
 		windows, _ := response.Data["windows"].([]any)
 		return nil, CalendarAvailabilityOutput{Windows: windows}, nil
 	}

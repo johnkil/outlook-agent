@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/johnkil/outlook-agent/internal/mcpserver"
+	"github.com/johnkil/outlook-agent/internal/transport"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
@@ -105,4 +106,81 @@ func TestMCPClientCanListAndCallInitialTools(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestMCPToolCalendarAvailabilityForwardsEmail(t *testing.T) {
+	ctx := context.Background()
+	capturing := &capturingTransport{}
+	serverTransport, clientTransport := mcp.NewInMemoryTransports()
+
+	serverSession, err := mcpserver.NewWithTransport(capturing).Connect(ctx, serverTransport, nil)
+	if err != nil {
+		t.Fatalf("connect server: %v", err)
+	}
+	defer serverSession.Close()
+	defer serverSession.Wait()
+
+	client := mcp.NewClient(&mcp.Implementation{Name: "test-client", Version: "0.0.1"}, nil)
+	clientSession, err := client.Connect(ctx, clientTransport, nil)
+	if err != nil {
+		t.Fatalf("connect client: %v", err)
+	}
+	defer clientSession.Close()
+
+	result, err := clientSession.CallTool(ctx, &mcp.CallToolParams{
+		Name: "outlook.calendar_availability",
+		Arguments: map[string]any{
+			"start": "2026-05-27T09:00:00+02:00",
+			"end":   "2026-05-27T18:00:00+02:00",
+			"email": "colleague@example.com",
+		},
+	})
+	if err != nil {
+		t.Fatalf("call calendar availability: %v", err)
+	}
+	if result.IsError {
+		t.Fatalf("expected calendar availability success, got error result: %#v", result)
+	}
+	if capturing.lastRequest.Name != "calendar.availability" {
+		t.Fatalf("expected calendar.availability request, got %#v", capturing.lastRequest)
+	}
+	if capturing.lastRequest.Payload["email"] != "colleague@example.com" {
+		t.Fatalf("expected email forwarded to transport, got %#v", capturing.lastRequest.Payload)
+	}
+}
+
+type capturingTransport struct {
+	lastRequest transport.ActionRequest
+}
+
+func (capturing *capturingTransport) Name() string {
+	return "capture"
+}
+
+func (capturing *capturingTransport) Authenticate(context.Context, string) transport.AuthResult {
+	return transport.AuthResult{OK: true}
+}
+
+func (capturing *capturingTransport) Capabilities(context.Context) transport.CapabilitySet {
+	return transport.CapabilitySet{}
+}
+
+func (capturing *capturingTransport) Execute(_ context.Context, request transport.ActionRequest) transport.ActionResponse {
+	capturing.lastRequest = request
+	return transport.ActionResponse{
+		OK: true,
+		Data: map[string]any{
+			"windows": []any{
+				map[string]any{
+					"start":          "2026-05-27T10:00:00+02:00",
+					"end":            "2026-05-27T11:00:00+02:00",
+					"free_busy_type": "Busy",
+				},
+			},
+		},
+	}
+}
+
+func (capturing *capturingTransport) DryRun(context.Context, transport.ActionRequest) transport.DryRunSummary {
+	return transport.DryRunSummary{}
 }
