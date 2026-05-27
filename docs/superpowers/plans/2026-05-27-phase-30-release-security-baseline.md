@@ -99,7 +99,7 @@ git diff --check
 
 Expected: all commands pass, and no tenant-specific strings or generated browser artifacts are present.
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add .github docs internal README.md scripts
