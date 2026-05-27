@@ -37,13 +37,21 @@ All hard enforcement belongs in the Go runtime:
 
 ## Current Tool Surface
 
-The initial MCP server registers these tools:
+The MCP server registers the initial public tool surface from `docs/SPEC.md`:
 
 - `outlook.auth_check`
 - `outlook.capabilities`
 - `outlook.mail_search`
+- `outlook.mail_fetch_metadata`
+- `outlook.mail_fetch_body`
+- `outlook.mail_create_draft`
+- `outlook.mail_move_to_deleted_items`
+- `outlook.calendar_list`
+- `outlook.calendar_availability`
 - `outlook.action_dry_run`
+- `outlook.action_confirm`
+- `outlook.raw_action`
 
-This is the first MCP slice. More mail, calendar, raw-action, and confirmation
-tools will be added as the runtime matures.
-
+The current runtime uses the fake transport by default. Private enterprise
+transports should plug into the same tool contract instead of changing the
+OpenCode-facing surface.

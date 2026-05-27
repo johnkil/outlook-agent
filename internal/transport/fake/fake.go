@@ -56,6 +56,45 @@ func (client *Transport) Execute(_ context.Context, request transport.ActionRequ
 				},
 			},
 		}
+	case "mail.fetch_metadata":
+		return transport.ActionResponse{
+			OK: true,
+			Data: map[string]any{
+				"message": map[string]any{
+					"id":          valueOrDefault(request.Payload, "id", "msg-1"),
+					"subject":     "Quarterly planning",
+					"sender":      "alex@example.com",
+					"received_at": "2026-05-27T09:00:00+02:00",
+				},
+			},
+		}
+	case "mail.fetch_body":
+		return transport.ActionResponse{
+			OK: true,
+			Data: map[string]any{
+				"id":        valueOrDefault(request.Payload, "id", "msg-1"),
+				"body_text": "This is fake explicit message body text for tests.",
+			},
+		}
+	case "mail.create_draft":
+		return transport.ActionResponse{
+			OK: true,
+			Data: map[string]any{
+				"draft": map[string]any{
+					"id":      "draft-1",
+					"subject": valueOrDefault(request.Payload, "subject", "Draft"),
+					"status":  "saved",
+				},
+			},
+		}
+	case "mail.move_to_deleted_items":
+		return transport.ActionResponse{
+			OK: true,
+			Data: map[string]any{
+				"moved_count": countIDs(request.Payload),
+				"reversible":  true,
+			},
+		}
 	case "calendar.list":
 		return transport.ActionResponse{
 			OK: true,
@@ -65,12 +104,32 @@ func (client *Transport) Execute(_ context.Context, request transport.ActionRequ
 				},
 			},
 		}
+	case "calendar.availability":
+		return transport.ActionResponse{
+			OK: true,
+			Data: map[string]any{
+				"windows": []any{
+					map[string]any{"start": "2026-05-27T13:00:00+02:00", "end": "2026-05-27T14:00:00+02:00"},
+				},
+			},
+		}
 	default:
 		return transport.ActionResponse{
 			OK:    false,
 			Error: "fake transport action is not implemented",
 		}
 	}
+}
+
+func valueOrDefault(payload map[string]any, key string, fallback any) any {
+	if payload == nil {
+		return fallback
+	}
+	value, ok := payload[key]
+	if !ok || value == "" {
+		return fallback
+	}
+	return value
 }
 
 func (client *Transport) DryRun(_ context.Context, request transport.ActionRequest) transport.DryRunSummary {

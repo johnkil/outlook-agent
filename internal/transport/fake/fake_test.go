@@ -51,6 +51,41 @@ func TestFakeTransportExecutesMailSearch(t *testing.T) {
 	}
 }
 
+func TestFakeTransportExecutesInitialHighLevelActions(t *testing.T) {
+	client := fake.New()
+
+	tests := []struct {
+		name string
+		key  string
+	}{
+		{name: "mail.fetch_metadata", key: "message"},
+		{name: "mail.fetch_body", key: "body_text"},
+		{name: "mail.create_draft", key: "draft"},
+		{name: "mail.move_to_deleted_items", key: "moved_count"},
+		{name: "calendar.list", key: "events"},
+		{name: "calendar.availability", key: "windows"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			response := client.Execute(context.Background(), transport.ActionRequest{
+				Name: tt.name,
+				Payload: map[string]any{
+					"id":      "msg-1",
+					"ids":     []any{"msg-1"},
+					"subject": "Draft",
+				},
+			})
+			if !response.OK {
+				t.Fatalf("expected %s to succeed: %#v", tt.name, response)
+			}
+			if _, ok := response.Data[tt.key]; !ok {
+				t.Fatalf("expected response key %q in %#v", tt.key, response.Data)
+			}
+		})
+	}
+}
+
 func TestFakeTransportRejectsUnknownAction(t *testing.T) {
 	client := fake.New()
 

@@ -25,35 +25,40 @@ Status: implemented initial slice.
 
 ## Phase 2: MCP Contract
 
-- Status: started.
+- Status: implemented initial slice.
 
 - Local stdio MCP server.
-- Tool registration for the initial public tool set: started with auth,
-  capabilities, mail search, and action dry-run.
+- Tool registration for the initial public tool set: implemented.
 - JSON schema generation or stable hand-written schemas: started through typed
   MCP handlers.
 - MCP inspector smoke tests.
-- SDK in-memory MCP smoke tests: started.
+- SDK in-memory MCP smoke tests: implemented for tools/list and tool calls.
 - OpenCode local MCP configuration example: added.
 
 ## Phase 3: Mail and Calendar High-Level Tools
 
-- Mail search.
-- Mail metadata fetch.
-- Explicit body fetch.
-- Draft creation.
-- Move to deleted items with dry-run for broad requests.
-- Calendar list.
-- Calendar availability.
-- Capability reporting.
+- Status: implemented initial fake-transport slice.
+
+- Mail search: implemented.
+- Mail metadata fetch: implemented.
+- Explicit body fetch: implemented.
+- Draft creation: implemented.
+- Move to deleted items with dry-run for broad requests: implemented through
+  confirmation-token gated flow.
+- Calendar list: implemented.
+- Calendar availability: implemented.
+- Capability reporting: implemented.
 
 ## Phase 4: Full Action Coverage
 
+- Status: started through raw guarded action.
+
 - Transport action discovery.
 - Safety classification for every discovered action.
-- Raw guarded action execution.
+- Raw guarded action execution: implemented initial policy path.
 - Typed schemas for high-use actions.
-- Dry-run summaries for mutating or broad actions.
+- Dry-run summaries for mutating or broad actions: implemented initial token
+  path.
 - Promotion path from raw actions to high-level MCP tools.
 
 ## Phase 5: Transports

@@ -20,7 +20,15 @@ func TestCatalogContainsInitialTools(t *testing.T) {
 		"outlook.auth_check",
 		"outlook.capabilities",
 		"outlook.mail_search",
+		"outlook.mail_fetch_metadata",
+		"outlook.mail_fetch_body",
+		"outlook.mail_create_draft",
+		"outlook.mail_move_to_deleted_items",
+		"outlook.calendar_list",
+		"outlook.calendar_availability",
 		"outlook.action_dry_run",
+		"outlook.action_confirm",
+		"outlook.raw_action",
 	} {
 		if !slices.Contains(names, expected) {
 			t.Fatalf("expected tool %q in catalog %#v", expected, names)
@@ -74,5 +82,27 @@ func TestMCPClientCanListAndCallInitialTools(t *testing.T) {
 	}
 	if result.IsError {
 		t.Fatalf("expected auth_check success, got error result: %#v", result)
+	}
+
+	for _, call := range []struct {
+		name      string
+		arguments map[string]any
+	}{
+		{name: "outlook.mail_fetch_metadata", arguments: map[string]any{"id": "msg-1"}},
+		{name: "outlook.mail_fetch_body", arguments: map[string]any{"id": "msg-1"}},
+		{name: "outlook.mail_create_draft", arguments: map[string]any{"subject": "Draft", "body": "Hello"}},
+		{name: "outlook.calendar_list", arguments: map[string]any{"start": "2026-05-27T00:00:00+02:00", "end": "2026-05-28T00:00:00+02:00"}},
+		{name: "outlook.calendar_availability", arguments: map[string]any{"start": "2026-05-27T09:00:00+02:00", "end": "2026-05-27T18:00:00+02:00"}},
+		{name: "outlook.raw_action", arguments: map[string]any{"action": "mail.fetch_metadata", "payload": map[string]any{"id": "msg-1"}}},
+	} {
+		t.Run(call.name, func(t *testing.T) {
+			result, err := clientSession.CallTool(ctx, &mcp.CallToolParams{Name: call.name, Arguments: call.arguments})
+			if err != nil {
+				t.Fatalf("call %s: %v", call.name, err)
+			}
+			if result.IsError {
+				t.Fatalf("expected %s success, got error result: %#v", call.name, result)
+			}
+		})
 	}
 }
