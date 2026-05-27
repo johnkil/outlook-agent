@@ -53,10 +53,11 @@ func buildOWATransport(profile config.Profile, options Options) (transport.Trans
 		secrets = secret.NewKeychainStore()
 	}
 	config := owa.Config{
-		BaseURL:    stringSetting(profile.Settings, "base_url"),
-		Username:   stringSetting(profile.Settings, "username"),
-		SecretRef:  secret.Ref(profile.SecretRef),
-		TimeZoneID: stringSetting(profile.Settings, "timezone_id"),
+		BaseURL:      stringSetting(profile.Settings, "base_url"),
+		Username:     stringSetting(profile.Settings, "username"),
+		SecretRef:    secret.Ref(profile.SecretRef),
+		TimeZoneID:   stringSetting(profile.Settings, "timezone_id"),
+		MailboxEmail: stringSetting(profile.Settings, "mailbox_email"),
 	}
 	if err := config.Validate(); err != nil {
 		return nil, err

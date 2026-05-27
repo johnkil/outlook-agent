@@ -72,8 +72,8 @@ Status: implemented initial slice.
   mocked auth/service tests.
 - Runtime config wiring: implemented for fake and generic OWA profiles.
 - OWA high-level mappings: implemented for mail search, metadata/body fetch,
-  draft save, move to Deleted Items, and calendar list; mail search has a live
-  opt-in smoke test.
+  draft save, move to Deleted Items, calendar list, and calendar availability;
+  mail search and availability have live opt-in smoke tests.
 - Private enterprise adapter outside the public core.
 
 ## Phase 6: Production Readiness

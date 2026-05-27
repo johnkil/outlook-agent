@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/url"
+	"strings"
 )
 
 func BuildServiceRequest(config Config, action string, canary string, body any) (*http.Request, error) {
@@ -39,6 +40,6 @@ func BuildURLPostDataRequest(config Config, action string, canary string, body a
 	}
 	request.Body = http.NoBody
 	request.ContentLength = 0
-	request.Header.Set("X-OWA-UrlPostData", url.QueryEscape(string(payload)))
+	request.Header.Set("X-OWA-UrlPostData", strings.ReplaceAll(url.QueryEscape(string(payload)), "+", "%20"))
 	return request, nil
 }

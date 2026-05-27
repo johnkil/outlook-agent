@@ -52,12 +52,16 @@ Example `.local/outlook-agent.json`:
       "settings": {
         "base_url": "https://mail.example.com",
         "username": "DOMAIN\\user",
-        "timezone_id": "UTC"
+        "timezone_id": "UTC",
+        "mailbox_email": "user@example.com"
       }
     }
   }
 }
 ```
+
+`settings.mailbox_email` is used as the default mailbox for
+`outlook.calendar_availability` when a tool call does not include `email`.
 
 ## Skills
 

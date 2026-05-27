@@ -41,6 +41,44 @@ func TestLiveMailSearchSmoke(t *testing.T) {
 	}
 }
 
+func TestLiveCalendarAvailabilitySmoke(t *testing.T) {
+	configPath := os.Getenv("OUTLOOK_AGENT_LIVE_CONFIG")
+	mailboxEmail := os.Getenv("OUTLOOK_AGENT_LIVE_MAILBOX_EMAIL")
+	if configPath == "" || mailboxEmail == "" {
+		t.Skip("OUTLOOK_AGENT_LIVE_CONFIG and OUTLOOK_AGENT_LIVE_MAILBOX_EMAIL are not set")
+	}
+	profile := os.Getenv("OUTLOOK_AGENT_LIVE_PROFILE")
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	client, _, err := app.BuildTransport(app.Options{ConfigPath: configPath, Profile: profile})
+	if err != nil {
+		t.Fatalf("build live transport: %v", err)
+	}
+	auth := client.Authenticate(ctx, profile)
+	if !auth.OK {
+		t.Fatalf("live auth failed: %s", auth.Error)
+	}
+
+	start := time.Now().Format("2006-01-02T00:00:00")
+	end := time.Now().Add(24 * time.Hour).Format("2006-01-02T00:00:00")
+	response := client.Execute(ctx, transport.ActionRequest{
+		Name: "calendar.availability",
+		Payload: map[string]any{
+			"start": start,
+			"end":   end,
+			"email": mailboxEmail,
+		},
+	})
+	if !response.OK {
+		t.Fatalf("live calendar.availability failed: %s summary=%#v", response.Error, responseSummary(response.Data))
+	}
+	if _, ok := response.Data["windows"].([]any); !ok {
+		t.Fatalf("expected windows list in response, got %#v", responseSummary(response.Data))
+	}
+}
+
 func responseSummary(data map[string]any) map[string]any {
 	summary := map[string]any{}
 	for key := range data {

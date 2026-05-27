@@ -60,7 +60,7 @@ func TestBuildURLPostDataRequestSetsEncodedHeader(t *testing.T) {
 		Username:  "user",
 		SecretRef: secret.Ref("keychain:svc/account"),
 	}
-	body := map[string]any{"Body": map[string]any{"RangeStart": "2026-05-27T00:00:00.001"}}
+	body := map[string]any{"Body": map[string]any{"RangeStart": "2026-05-27T00:00:00.001", "TimeZone": "Russian Standard Time"}}
 
 	request, err := owa.BuildURLPostDataRequest(config, "GetCalendarView", "canary-secret", body)
 	if err != nil {
@@ -80,6 +80,9 @@ func TestBuildURLPostDataRequestSetsEncodedHeader(t *testing.T) {
 	}
 	if !strings.Contains(decoded, "RangeStart") {
 		t.Fatalf("expected encoded JSON payload, got %s", decoded)
+	}
+	if strings.Contains(encoded, "+") {
+		t.Fatalf("expected URL-post-data spaces encoded as %%20, got %s", encoded)
 	}
 	if request.ContentLength != 0 {
 		t.Fatalf("expected empty request body, got content length %d", request.ContentLength)

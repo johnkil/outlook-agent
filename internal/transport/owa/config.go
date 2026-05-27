@@ -9,10 +9,11 @@ import (
 )
 
 type Config struct {
-	BaseURL    string
-	Username   string
-	SecretRef  secret.Ref
-	TimeZoneID string
+	BaseURL      string
+	Username     string
+	SecretRef    secret.Ref
+	TimeZoneID   string
+	MailboxEmail string
 }
 
 func (config Config) Validate() error {

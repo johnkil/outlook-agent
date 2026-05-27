@@ -57,6 +57,7 @@ func (client *Transport) Capabilities(context.Context) transport.CapabilitySet {
 		{Name: "mail.create_draft", Transport: "owa", Class: policy.DraftOnly, Level: action.LevelHighLevelMCPTool},
 		{Name: "mail.move_to_deleted_items", Transport: "owa", Class: policy.ReversibleBulk, Level: action.LevelHighLevelMCPTool},
 		{Name: "calendar.list", Transport: "owa", Class: policy.ReadMetadata, Level: action.LevelHighLevelMCPTool},
+		{Name: "calendar.availability", Transport: "owa", Class: policy.ReadMetadata, Level: action.LevelHighLevelMCPTool},
 		{Name: "FindPeople", Transport: "owa", Class: policy.ReadMetadata, Level: action.LevelRawGuardedExecution},
 		{Name: "FindItem", Transport: "owa", Class: policy.ReadMetadata, Level: action.LevelRawGuardedExecution},
 		{Name: "GetItem", Transport: "owa", Class: policy.ReadBodyExplicit, Level: action.LevelRawGuardedExecution},

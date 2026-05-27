@@ -179,6 +179,108 @@ func TestHighLevelCalendarListCallsGetCalendarViewWithURLPostData(t *testing.T) 
 	}
 }
 
+func TestHighLevelCalendarAvailabilityCallsGetUserAvailabilityInternal(t *testing.T) {
+	var calls []recordedServiceCall
+	server := newOWAServiceServer(t, &calls, map[string]any{
+		"Body": map[string]any{
+			"ResponseMessages": map[string]any{
+				"Items": []any{
+					map[string]any{
+						"FreeBusyView": map[string]any{
+							"FreeBusyViewType": "DetailedMerged",
+							"CalendarView": map[string]any{
+								"Items": []any{
+									map[string]any{
+										"FreeBusyType": "Busy",
+										"StartTime":    "2026-05-27T10:00:00",
+										"EndTime":      "2026-05-27T11:00:00",
+										"Subject":      "Hidden busy event",
+									},
+								},
+							},
+							"MergedFreeBusy": "002200",
+						},
+					},
+				},
+			},
+		},
+	})
+	defer server.Close()
+	client := owa.NewTransport(owa.Config{
+		BaseURL:      server.URL,
+		Username:     "DOMAIN\\user",
+		SecretRef:    secret.Ref("memory:owa"),
+		MailboxEmail: "user@example.com",
+	}, secret.NewMemoryStore(map[string]string{"memory:owa": "password"}), server.Client())
+
+	response := client.Execute(context.Background(), transport.ActionRequest{
+		Name: "calendar.availability",
+		Payload: map[string]any{
+			"start": "2026-05-27T00:00:00",
+			"end":   "2026-05-28T00:00:00",
+		},
+	})
+
+	if !response.OK {
+		t.Fatalf("expected calendar.availability ok: %#v", response)
+	}
+	if len(calls) != 1 {
+		t.Fatalf("expected one service call, got %#v", calls)
+	}
+	if calls[0].Action != "GetUserAvailabilityInternal" {
+		t.Fatalf("expected GetUserAvailabilityInternal, got %q", calls[0].Action)
+	}
+	if calls[0].URLPostData == "" {
+		t.Fatal("expected availability to use X-OWA-UrlPostData")
+	}
+	request := calls[0].Body["request"].(map[string]any)
+	body := request["Body"].(map[string]any)
+	mailboxData := body["MailboxDataArray"].([]any)[0].(map[string]any)
+	email := mailboxData["Email"].(map[string]any)
+	if email["Address"] != "user@example.com" {
+		t.Fatalf("expected configured mailbox email, got %#v", email)
+	}
+	options := body["FreeBusyViewOptions"].(map[string]any)
+	if options["RequestedView"] != "DetailedMerged" {
+		t.Fatalf("expected DetailedMerged view, got %#v", options)
+	}
+	timeWindow := options["TimeWindow"].(map[string]any)
+	if timeWindow["StartTime"] != "2026-05-27T00:00:00" || timeWindow["EndTime"] != "2026-05-28T00:00:00" {
+		t.Fatalf("unexpected time window: %#v", timeWindow)
+	}
+
+	windows := response.Data["windows"].([]any)
+	window := windows[0].(map[string]any)
+	if window["start"] != "2026-05-27T10:00:00" || window["end"] != "2026-05-27T11:00:00" || window["free_busy_type"] != "Busy" {
+		t.Fatalf("unexpected availability window: %#v", window)
+	}
+	if _, ok := window["subject"]; ok {
+		t.Fatalf("availability windows must not expose subjects by default: %#v", window)
+	}
+}
+
+func TestHighLevelCalendarAvailabilityRequiresMailboxEmail(t *testing.T) {
+	var calls []recordedServiceCall
+	server := newOWAServiceServer(t, &calls, map[string]any{"Body": map[string]any{"ResponseMessages": map[string]any{"Items": []any{}}}})
+	defer server.Close()
+	client := newTestTransport(server)
+
+	response := client.Execute(context.Background(), transport.ActionRequest{
+		Name:    "calendar.availability",
+		Payload: map[string]any{"start": "2026-05-27T00:00:00", "end": "2026-05-28T00:00:00"},
+	})
+
+	if response.OK {
+		t.Fatalf("expected calendar.availability without mailbox email to fail, got %#v", response)
+	}
+	if !strings.Contains(response.Error, "mailbox_email") {
+		t.Fatalf("expected mailbox_email error, got %q", response.Error)
+	}
+	if len(calls) != 0 {
+		t.Fatalf("expected missing mailbox email to fail before service call, got %#v", calls)
+	}
+}
+
 func TestCapabilitiesIncludeOWAHighLevelReadActions(t *testing.T) {
 	client := owa.NewTransport(owa.Config{
 		BaseURL:   "https://example.test",
@@ -199,6 +301,7 @@ func TestCapabilitiesIncludeOWAHighLevelReadActions(t *testing.T) {
 		"mail.create_draft",
 		"mail.move_to_deleted_items",
 		"calendar.list",
+		"calendar.availability",
 	} {
 		if !slices.Contains(names, expected) {
 			t.Fatalf("expected capability %q in %#v", expected, names)

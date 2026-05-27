@@ -58,6 +58,7 @@ Implemented high-level OWA mappings:
 | `mail.create_draft` | `CreateItem` | implemented as `SaveOnly` draft with mocked OWA test |
 | `mail.move_to_deleted_items` | `DeleteItem` | implemented as `MoveToDeletedItems` with mocked OWA test |
 | `calendar.list` | `GetCalendarView` | implemented with mocked OWA test |
+| `calendar.availability` | `GetUserAvailabilityInternal` | implemented and live smoke-tested |
 
 Important OWA compatibility note: high-level OWA JSON payloads use ordered JSON
 objects because this endpoint can reject request maps where `__type` is not the

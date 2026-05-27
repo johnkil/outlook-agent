@@ -2,9 +2,11 @@ package app_test
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -12,6 +14,7 @@ import (
 
 	"github.com/johnkil/outlook-agent/internal/app"
 	"github.com/johnkil/outlook-agent/internal/secret"
+	"github.com/johnkil/outlook-agent/internal/transport"
 )
 
 func TestBuildTransportDefaultsToFakeWithoutConfig(t *testing.T) {
@@ -73,6 +76,71 @@ func TestBuildTransportCreatesOWAProfile(t *testing.T) {
 	}
 	if auth.Principal != "DOMAIN\\user" {
 		t.Fatalf("expected principal DOMAIN\\user, got %q", auth.Principal)
+	}
+}
+
+func TestBuildTransportMapsOWAMailboxEmail(t *testing.T) {
+	var availabilityRequest map[string]any
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		switch request.URL.Path {
+		case "/owa/auth.owa":
+			http.SetCookie(response, &http.Cookie{Name: "X-OWA-CANARY", Value: "canary-secret"})
+			response.WriteHeader(http.StatusOK)
+		case "/owa/service.svc":
+			if request.URL.Query().Get("action") != "GetUserAvailabilityInternal" {
+				t.Fatalf("unexpected action: %s", request.URL.RawQuery)
+			}
+			decoded, err := url.QueryUnescape(request.Header.Get("X-OWA-UrlPostData"))
+			if err != nil {
+				t.Fatalf("decode url post data: %v", err)
+			}
+			if err := json.Unmarshal([]byte(decoded), &availabilityRequest); err != nil {
+				t.Fatalf("unmarshal availability request: %v", err)
+			}
+			response.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(response).Encode(map[string]any{"Body": map[string]any{"ResponseMessages": map[string]any{"Items": []any{}}}})
+		default:
+			t.Fatalf("unexpected path: %s", request.URL.Path)
+		}
+	}))
+	defer server.Close()
+
+	path := writeConfig(t, fmt.Sprintf(`{
+		"default_profile": "work",
+		"profiles": {
+			"work": {
+				"transport": "owa",
+				"secret_ref": "memory:owa-password",
+				"settings": {
+					"base_url": %q,
+					"username": "DOMAIN\\user",
+					"mailbox_email": "user@example.com"
+				}
+			}
+		}
+	}`, server.URL))
+
+	client, _, err := app.BuildTransport(app.Options{
+		ConfigPath: path,
+		Secrets:    secret.NewMemoryStore(map[string]string{"memory:owa-password": "password-secret"}),
+	})
+	if err != nil {
+		t.Fatalf("build transport: %v", err)
+	}
+	response := client.Execute(context.Background(), transport.ActionRequest{
+		Name:    "calendar.availability",
+		Payload: map[string]any{"start": "2026-05-27T00:00:00", "end": "2026-05-28T00:00:00"},
+	})
+	if !response.OK {
+		t.Fatalf("availability response failed: %#v", response)
+	}
+
+	requestPayload := availabilityRequest["request"].(map[string]any)
+	body := requestPayload["Body"].(map[string]any)
+	mailbox := body["MailboxDataArray"].([]any)[0].(map[string]any)
+	email := mailbox["Email"].(map[string]any)
+	if email["Address"] != "user@example.com" {
+		t.Fatalf("expected mailbox email from config, got %#v", email)
 	}
 }
 

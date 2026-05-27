@@ -29,7 +29,8 @@ OWA-like profile, keep config in an ignored local file such as
       "settings": {
         "base_url": "https://mail.example.com",
         "username": "DOMAIN\\user",
-        "timezone_id": "UTC"
+        "timezone_id": "UTC",
+        "mailbox_email": "user@example.com"
       }
     }
   }
@@ -45,6 +46,9 @@ outlook-agent --config .local/outlook-agent.json mcp
 
 The config references a secret-store key only; it must not contain passwords,
 tokens, cookies, or canary values.
+
+`settings.mailbox_email` is the default mailbox used by
+`calendar.availability` when the request does not pass an explicit `email`.
 
 ## Product Shape
 

@@ -21,6 +21,19 @@ func (client *Transport) executeHighLevel(ctx context.Context, request transport
 			return response, true
 		}
 		return transport.ActionResponse{OK: true, Data: map[string]any{"events": normalizeCalendarItems(extractItems(response.Data))}}, true
+	case "calendar.availability":
+		email := strings.TrimSpace(stringValue(request.Payload, "email"))
+		if email == "" {
+			email = strings.TrimSpace(client.config.MailboxEmail)
+		}
+		if email == "" {
+			return transport.ActionResponse{OK: false, Error: "calendar.availability requires email payload or owa settings.mailbox_email"}, true
+		}
+		response := client.executeService(ctx, "GetUserAvailabilityInternal", client.buildAvailabilityRequest(stringValue(request.Payload, "start"), stringValue(request.Payload, "end"), email), true)
+		if !response.OK {
+			return response, true
+		}
+		return transport.ActionResponse{OK: true, Data: map[string]any{"windows": normalizeAvailabilityWindows(response.Data)}}, true
 	case "mail.fetch_metadata":
 		response := client.executeService(ctx, "GetItem", client.buildGetItemRequest(stringValue(request.Payload, "id"), false), false)
 		if !response.OK {
@@ -105,6 +118,37 @@ func (client *Transport) buildCalendarViewRequest(start string, end string) any 
 			)),
 			field("RangeStart", start),
 			field("RangeEnd", end),
+		)),
+	)
+}
+
+func (client *Transport) buildAvailabilityRequest(start string, end string, email string) any {
+	return object(
+		field("request", object(
+			field("__type", "GetUserAvailabilityInternalJsonRequest:#Exchange"),
+			field("Header", client.requestHeaderPayload("Exchange2013")),
+			field("Body", object(
+				field("__type", "GetUserAvailabilityRequest:#Exchange"),
+				field("MailboxDataArray", []any{
+					object(
+						field("__type", "MailboxData:#Exchange"),
+						field("Email", object(
+							field("__type", "EmailAddress:#Exchange"),
+							field("Address", email),
+						)),
+					),
+				}),
+				field("FreeBusyViewOptions", object(
+					field("__type", "FreeBusyViewOptions:#Exchange"),
+					field("MergedFreeBusyIntervalInMinutes", 30),
+					field("RequestedView", "DetailedMerged"),
+					field("TimeWindow", object(
+						field("__type", "Duration:#Exchange"),
+						field("StartTime", start),
+						field("EndTime", end),
+					)),
+				)),
+			)),
 		)),
 	)
 }
@@ -307,6 +351,32 @@ func normalizeCalendarItems(items []any) []any {
 			"end":        stringValue(itemMap, "End"),
 			"location":   stringValue(itemMap, "Location"),
 		})
+	}
+	return output
+}
+
+func normalizeAvailabilityWindows(payload map[string]any) []any {
+	body, _ := payload["Body"].(map[string]any)
+	responseMessages, _ := body["ResponseMessages"].(map[string]any)
+	var output []any
+	for _, message := range anySlice(responseMessages["Items"]) {
+		messageMap, _ := message.(map[string]any)
+		freeBusyView, _ := messageMap["FreeBusyView"].(map[string]any)
+		calendarView, _ := freeBusyView["CalendarView"].(map[string]any)
+		for _, item := range anySlice(calendarView["Items"]) {
+			itemMap, ok := item.(map[string]any)
+			if !ok {
+				continue
+			}
+			output = append(output, map[string]any{
+				"start":          stringValue(itemMap, "StartTime"),
+				"end":            stringValue(itemMap, "EndTime"),
+				"free_busy_type": stringValue(itemMap, "FreeBusyType"),
+			})
+		}
+	}
+	if output == nil {
+		return []any{}
 	}
 	return output
 }
