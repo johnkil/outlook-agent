@@ -70,7 +70,7 @@ Status values:
   - EWS adapter;
   - versioned MCP compatibility policy.
 - Live validation:
-  - `FindFolder` live payload-shape follow-up after three metadata-only
+  - `FindFolder` live payload-shape follow-up after four metadata-only
     candidates returned the same internal OWA error;
 
 ## Verification Commands
