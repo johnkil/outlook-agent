@@ -24,9 +24,9 @@ Status values:
 | High-level mail/calendar workflows | Ready initial set | Search, metadata fetch, explicit fixture body fetch, draft save, move to Deleted Items, calendar list, and availability are implemented and live smoke-tested. |
 | Live verification | Partial | Authenticated discovery has sanitized evidence for the useful OWA app shell and 25 live-discovered actions; high-level mail search, metadata fetch, explicit fixture body fetch, draft creation, reversible draft cleanup, calendar list, availability, stdio MCP availability, read-only raw `FindPeople`, read-only raw metadata actions (`GetServerTimeZones`, `GetRoomLists`, `GetFolder`, `ResolveNames`), representative MCP dry-run gates, live raw `DeleteItem` reversible confirmation against a draft fixture, and live stdio MCP dry-run coverage for all 26 mutating raw OWA catalog examples. Full live execution of every raw action is intentionally not attempted because many actions are destructive, send-like, or settings-changing. |
 | Public/private split | Ready | Generic examples use placeholder hosts/accounts; `opencode.jsonc` uses the fake transport; security docs and grep gates prevent committed tenant-specific values. Private enterprise values belong in ignored local config and secret stores. |
-| Security and redaction | Partial for production operations | Runtime policy classes, explicit target rules, dry-run tokens, confirmation binding, unsafe requirements, dry-run count summaries for attachment/folder/rule/config payload shapes, sanitized dry-run payload examples for all 26 mutating raw OWA actions, and redaction have unit or MCP tests; CI now adds a public-safety check and dependency vulnerability scan baseline. |
+| Security and redaction | Partial for production operations | Runtime policy classes, explicit target rules, dry-run tokens, confirmation binding, unsafe requirements, dry-run count summaries for attachment/folder/rule/config payload shapes, sanitized dry-run payload examples for all 26 mutating raw OWA actions, and redaction have unit or MCP tests; CI now adds a public-safety check and dependency vulnerability scan baseline; `docs/OPERATIONS.md` documents incident response, credential revocation, organization secret scanning, and enterprise config boundaries. |
 | Workflow skills | Ready initial set | `skills/` contains mail and calendar workflow skills for triage, reply drafting, task extraction, subscription cleanup, daily brief, meeting prep, and freeing time. |
-| Release readiness | Partial | `docs/RELEASE.md`, `scripts/release-build.sh`, `.github/workflows/ci.yml`, and `.github/workflows/release.yml` define cross-platform archives, checksums, optional signing, CI, and tag-driven publishing; signing key operations and installer distribution are still open. |
+| Release readiness | Partial | `docs/RELEASE.md`, `docs/OPERATIONS.md`, `scripts/release-build.sh`, `.github/workflows/ci.yml`, and `.github/workflows/release.yml` define cross-platform archives, checksums, optional signing, signing-key publication/rotation, upgrade validation, rollback, CI, and tag-driven publishing; publishing an enterprise installer or package-manager wrapper is still an operator-channel task. |
 | Graph/EWS adapters | Gap | Architecture reserves Graph and EWS transports, but production adapters are not implemented in this repository yet. |
 
 ## Current Evidence
@@ -58,13 +58,11 @@ Status values:
 ## Remaining Gaps
 
 - Build and release:
-  - signing key publication and rotation policy;
-  - installer or package-manager distribution;
-  - upgrade and rollback runbooks.
+  - installer or package-manager distribution in the target enterprise channel.
 - Security operations:
-  - organization-managed secret scanning policy;
-  - operator incident and credential revocation runbooks;
-  - enterprise config examples that live outside the public repository.
+  - organization-managed secret scanning must be enabled by repository or
+    organization owners;
+  - real enterprise config examples must live outside the public repository.
 - Protocol breadth:
   - Graph adapter;
   - EWS adapter.
