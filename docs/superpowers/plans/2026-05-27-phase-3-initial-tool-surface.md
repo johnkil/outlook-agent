@@ -62,4 +62,4 @@
 - [x] Update `docs/OPENCODE.md`.
 - [x] Run full tests.
 - [x] Run public-safety grep for company-specific strings.
-- [ ] Commit and push.
+- [x] Commit and push.
