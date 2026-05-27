@@ -5,9 +5,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"os"
 
 	"github.com/johnkil/outlook-agent/internal/policy"
 	"github.com/johnkil/outlook-agent/internal/transport"
+	"github.com/johnkil/outlook-agent/internal/transport/owa"
 )
 
 type Options struct {
@@ -51,6 +53,10 @@ func RunWithRuntime(args []string, stdout io.Writer, stderr io.Writer, runtime R
 				"command":        "policy explain",
 				"safety_classes": policy.SafetyClassNames(),
 			})
+		}
+	case "owa":
+		if len(commandArgs) >= 2 && commandArgs[1] == "discover-actions" {
+			return runOWADiscoverActions(commandArgs[2:], stdout, stderr)
 		}
 	case "auth":
 		if len(commandArgs) == 2 && commandArgs[1] == "check" {
@@ -104,6 +110,41 @@ func runAuthCheck(stdout io.Writer, options Options, runtime Runtime) int {
 		"error":     result.Error,
 	})
 	return code
+}
+
+func runOWADiscoverActions(args []string, stdout io.Writer, stderr io.Writer) int {
+	path, err := parseDiscoverActionsArgs(args)
+	if err != nil {
+		fmt.Fprintln(stderr, err)
+		return 1
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		fmt.Fprintf(stderr, "read discovery file: %v\n", err)
+		return 1
+	}
+	report := owa.CompareDiscoveredServiceActions(owa.DiscoverServiceActions(string(data)))
+	return writeJSON(stdout, report)
+}
+
+func parseDiscoverActionsArgs(args []string) (string, error) {
+	var path string
+	for index := 0; index < len(args); index++ {
+		switch args[index] {
+		case "--file":
+			index++
+			if index >= len(args) {
+				return "", fmt.Errorf("--file requires a value")
+			}
+			path = args[index]
+		default:
+			return "", fmt.Errorf("unknown discover-actions argument: %s", args[index])
+		}
+	}
+	if path == "" {
+		return "", fmt.Errorf("owa discover-actions requires --file")
+	}
+	return path, nil
 }
 
 func parseOptions(args []string) (Options, []string, error) {

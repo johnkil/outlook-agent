@@ -5,6 +5,8 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/johnkil/outlook-agent/internal/transport"
@@ -66,6 +68,47 @@ func TestPolicyExplainListsSafetyClasses(t *testing.T) {
 	}
 }
 
+func TestOWADiscoverActionsFromFileReportsRegistryDelta(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "owa.js")
+	if err := os.WriteFile(path, []byte(`
+		fetch("/owa/service.svc?action=FindItem");
+		const requestType = "GetAttachmentJsonRequest:#Exchange";
+		const headers = {"Action": "TotallyNewAction"};
+	`), 0o600); err != nil {
+		t.Fatalf("write discovery input: %v", err)
+	}
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+
+	code := Run([]string{"owa", "discover-actions", "--file", path}, &stdout, &stderr)
+
+	if code != 0 {
+		t.Fatalf("expected exit code 0, got %d, stderr=%s", code, stderr.String())
+	}
+	var payload struct {
+		Discovered        []string          `json:"discovered"`
+		Classified        []string          `json:"classified"`
+		Unknown           []string          `json:"unknown"`
+		MissingClassified []string          `json:"missing_classified"`
+		Classes           map[string]string `json:"classes"`
+	}
+	if err := json.Unmarshal(stdout.Bytes(), &payload); err != nil {
+		t.Fatalf("discovery output is not JSON: %v; output=%s", err, stdout.String())
+	}
+	if !stringSliceContains(payload.Classified, "FindItem") || !stringSliceContains(payload.Classified, "GetAttachment") {
+		t.Fatalf("expected classified actions in output: %#v", payload)
+	}
+	if len(payload.Unknown) != 1 || payload.Unknown[0] != "TotallyNewAction" {
+		t.Fatalf("expected one unknown action, got %#v", payload.Unknown)
+	}
+	if payload.Classes["GetAttachment"] != "read_attachment_explicit" {
+		t.Fatalf("expected attachment class in output, got %#v", payload.Classes)
+	}
+	if !stringSliceContains(payload.MissingClassified, "ArchiveItem") {
+		t.Fatalf("expected missing classified actions in output: %#v", payload.MissingClassified)
+	}
+}
+
 func TestUnknownCommandReturnsValidationError(t *testing.T) {
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer
@@ -81,6 +124,15 @@ func TestUnknownCommandReturnsValidationError(t *testing.T) {
 	if stderr.Len() == 0 {
 		t.Fatal("expected stderr to explain unknown command")
 	}
+}
+
+func stringSliceContains(values []string, expected string) bool {
+	for _, value := range values {
+		if value == expected {
+			return true
+		}
+	}
+	return false
 }
 
 func TestMCPCommandDispatchesRunner(t *testing.T) {

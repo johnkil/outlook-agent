@@ -15,6 +15,27 @@ credential values.
 - Unknown OWA service actions still resolve to `unknown` and require unsafe
   mode until they are explicitly classified.
 
+## Discovery Workflow
+
+Use the local discovery command against temporary OWA JavaScript, HTML, or
+documentation files:
+
+```bash
+outlook-agent owa discover-actions --file /private/tmp/owa-static.js
+```
+
+The output includes:
+
+- `discovered`: sorted unique service-action names found in the file;
+- `classified`: discovered names already present in this registry;
+- `unknown`: discovered names not yet classified;
+- `missing_classified`: registry names not seen in that particular input file;
+- `classes`: safety classes for discovered names.
+
+Do not commit downloaded OWA assets or tenant-specific documentation. Commit
+only new generic action names, safety classifications, tests, and sanitized
+notes.
+
 ## Classified Raw OWA Actions
 
 | Safety class | Actions |
