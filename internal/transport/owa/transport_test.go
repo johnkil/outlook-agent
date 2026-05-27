@@ -222,6 +222,88 @@ func TestTransportDryRunDoesNotCallNetwork(t *testing.T) {
 	}
 }
 
+func TestTransportDryRunCountsAttachmentFolderAndRulePayloadShapes(t *testing.T) {
+	client := owa.NewTransport(owa.Config{
+		BaseURL:   "https://example.test",
+		Username:  "DOMAIN\\user",
+		SecretRef: secret.Ref("memory:owa"),
+	}, secret.NewMemoryStore(map[string]string{"memory:owa": "password"}), nil)
+
+	tests := []struct {
+		name    string
+		action  string
+		payload map[string]any
+		want    int
+	}{
+		{
+			name:   "attachments list",
+			action: "CreateAttachment",
+			payload: map[string]any{"Body": map[string]any{
+				"Attachments": []any{
+					map[string]any{"Name": "a.txt"},
+					map[string]any{"Name": "b.txt"},
+				},
+			}},
+			want: 2,
+		},
+		{
+			name:   "folders list",
+			action: "CreateFolder",
+			payload: map[string]any{"Body": map[string]any{
+				"Folders": []any{
+					map[string]any{"DisplayName": "A"},
+					map[string]any{"DisplayName": "B"},
+				},
+			}},
+			want: 2,
+		},
+		{
+			name:   "singular folder id",
+			action: "UpdateFolder",
+			payload: map[string]any{"Body": map[string]any{
+				"FolderId": map[string]any{"Id": "folder-1"},
+			}},
+			want: 1,
+		},
+		{
+			name:   "singular attachment id",
+			action: "DeleteAttachment",
+			payload: map[string]any{"Body": map[string]any{
+				"AttachmentId": map[string]any{"Id": "attachment-1"},
+			}},
+			want: 1,
+		},
+		{
+			name:   "sweep rule sender",
+			action: "CreateSweepRuleForSender",
+			payload: map[string]any{"Body": map[string]any{
+				"SenderEmailAddress": "sender@example.test",
+			}},
+			want: 1,
+		},
+		{
+			name:   "user configuration",
+			action: "UpdateUserConfiguration",
+			payload: map[string]any{"Body": map[string]any{
+				"UserConfiguration": map[string]any{"UserConfigurationName": "OWA.UserOptions"},
+			}},
+			want: 1,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			summary := client.DryRun(context.Background(), transport.ActionRequest{
+				Name:    tt.action,
+				Payload: tt.payload,
+			})
+			if summary.Count != tt.want {
+				t.Fatalf("expected count %d, got %d for %#v", tt.want, summary.Count, tt.payload)
+			}
+		})
+	}
+}
+
 func TestTransportExecuteReportsHTTPStatusError(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
 		switch request.URL.Path {

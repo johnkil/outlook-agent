@@ -266,6 +266,127 @@ func TestLiveBinaryMCPStdioSendLikeAndSettingsDryRunSmoke(t *testing.T) {
 	}
 }
 
+func TestLiveBinaryMCPStdioAttachmentFolderRuleDryRunSmoke(t *testing.T) {
+	configPath := os.Getenv("OUTLOOK_AGENT_LIVE_CONFIG")
+	if configPath == "" {
+		t.Skip("OUTLOOK_AGENT_LIVE_CONFIG is not set")
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
+	defer cancel()
+
+	args := []string{"--config", configPath}
+	if profile := os.Getenv("OUTLOOK_AGENT_LIVE_PROFILE"); profile != "" {
+		args = append(args, "--profile", profile)
+	}
+	args = append(args, "mcp")
+
+	command := exec.CommandContext(ctx, buildBinary(t), args...)
+	client := mcp.NewClient(&mcp.Implementation{Name: "stdio-live-mutating-summary-smoke-test", Version: "0.0.1"}, nil)
+	session, err := client.Connect(ctx, &mcp.CommandTransport{Command: command, TerminateDuration: time.Second}, nil)
+	if err != nil {
+		t.Fatalf("connect to live stdio MCP server: %v", err)
+	}
+	defer session.Close()
+
+	auth, err := session.CallTool(ctx, &mcp.CallToolParams{Name: "outlook.auth_check"})
+	if err != nil {
+		t.Fatalf("call auth_check: %v", err)
+	}
+	if auth.IsError {
+		t.Fatalf("expected auth_check success, got %#v", auth)
+	}
+	var authOutput struct {
+		OK bool `json:"ok"`
+	}
+	decodeStructuredContent(t, auth, &authOutput)
+	if !authOutput.OK {
+		t.Fatalf("expected live auth_check ok output, got %#v", authOutput)
+	}
+
+	tests := []struct {
+		name           string
+		action         string
+		payload        map[string]any
+		unsafeMode     bool
+		wantOK         bool
+		wantCount      int
+		wantUnsafeGate bool
+	}{
+		{
+			name:   "attachment create",
+			action: "CreateAttachment",
+			payload: map[string]any{"Body": map[string]any{
+				"Attachments": []any{
+					map[string]any{"Name": "a.txt"},
+					map[string]any{"Name": "b.txt"},
+				},
+			}},
+			wantOK:    true,
+			wantCount: 2,
+		},
+		{
+			name:   "folder update",
+			action: "UpdateFolder",
+			payload: map[string]any{"Body": map[string]any{
+				"FolderId": map[string]any{"Id": "dry-run-folder"},
+			}},
+			wantOK:    true,
+			wantCount: 1,
+		},
+		{
+			name:   "sweep rule sender",
+			action: "CreateSweepRuleForSender",
+			payload: map[string]any{"Body": map[string]any{
+				"SenderEmailAddress": "sender@example.test",
+			}},
+			wantOK:    true,
+			wantCount: 1,
+		},
+		{
+			name:   "destructive attachment requires unsafe",
+			action: "DeleteAttachment",
+			payload: map[string]any{"Body": map[string]any{
+				"AttachmentId": map[string]any{"Id": "dry-run-attachment"},
+			}},
+			wantCount:      1,
+			wantUnsafeGate: true,
+		},
+		{
+			name:   "destructive attachment unsafe token",
+			action: "DeleteAttachment",
+			payload: map[string]any{"Body": map[string]any{
+				"AttachmentId": map[string]any{"Id": "dry-run-attachment"},
+			}},
+			unsafeMode: true,
+			wantOK:     true,
+			wantCount:  1,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			arguments := map[string]any{
+				"action":  tt.action,
+				"payload": tt.payload,
+			}
+			if tt.unsafeMode {
+				arguments["unsafe_mode"] = true
+			}
+			dryRun := callDryRun(t, ctx, session, arguments)
+			if dryRun.OK != tt.wantOK || dryRun.Count != tt.wantCount || dryRun.RequiresUnsafe != tt.wantUnsafeGate {
+				t.Fatalf("unexpected dry-run output: %#v", dryRun)
+			}
+			if tt.wantOK && dryRun.ConfirmationToken == "" {
+				t.Fatalf("expected confirmation token: %#v", dryRun)
+			}
+			if !tt.wantOK && dryRun.ConfirmationToken != "" {
+				t.Fatalf("expected no confirmation token: %#v", dryRun)
+			}
+		})
+	}
+}
+
 func TestBinaryMCPStdioRejectsMissingExplicitConfig(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()

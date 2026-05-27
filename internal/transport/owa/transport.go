@@ -121,7 +121,13 @@ func countRequestItems(payload map[string]any) int {
 		return count
 	}
 	body, _ := payload["Body"].(map[string]any)
-	for _, key := range []string{"ItemIds", "Items", "FolderIds", "AttachmentIds", "Attachments"} {
+	for _, key := range []string{
+		"ItemIds", "Items", "ItemId", "Item",
+		"FolderIds", "Folders", "FolderId", "Folder",
+		"AttachmentIds", "Attachments", "AttachmentId", "Attachment",
+		"Rules", "Rule", "SweepRule", "SenderEmailAddress",
+		"UserConfigurations", "UserConfiguration",
+	} {
 		if count := countValue(body[key]); count > 0 {
 			return count
 		}

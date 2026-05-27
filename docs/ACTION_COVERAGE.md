@@ -84,6 +84,7 @@ Implemented high-level OWA mappings:
 | dry-run destructive gate | `DeleteItem` | stdio MCP dry-run live smoke-tested after auth; unsafe required before token issuance and no confirmation executed |
 | dry-run send-like gate | `CreateItem` | stdio MCP dry-run live smoke-tested after auth; token issued without unsafe and without execution |
 | dry-run settings/rules gate | `UpdateUserConfiguration` | stdio MCP dry-run live smoke-tested after auth; token issued without unsafe and without execution |
+| dry-run mutating summaries | attachment/folder/rule/config payload shapes | unit-tested for plural and singular OWA body keys; stdio MCP dry-run live smoke-tested for representative variants; no confirmation executed |
 
 Important OWA compatibility note: high-level OWA JSON payloads use ordered JSON
 objects because this endpoint can reject request maps where `__type` is not the
