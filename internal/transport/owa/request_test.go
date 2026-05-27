@@ -54,6 +54,44 @@ func TestBuildServiceRequestSetsHeadersAndBody(t *testing.T) {
 	}
 }
 
+func TestBuildServiceRequestOrdersTypeFieldsFirstInRawPayload(t *testing.T) {
+	config := owa.Config{
+		BaseURL:   "https://example.test",
+		Username:  "user",
+		SecretRef: secret.Ref("keychain:svc/account"),
+	}
+	body := map[string]any{
+		"Header": map[string]any{
+			"RequestServerVersion": "Exchange2013",
+			"__type":               "JsonRequestHeaders:#Exchange",
+		},
+		"Body": map[string]any{
+			"QueryString": "Alex",
+			"__type":      "FindPeopleRequest:#Exchange",
+		},
+		"__type": "FindPeopleJsonRequest:#Exchange",
+	}
+
+	request, err := owa.BuildServiceRequest(config, "FindPeople", "canary-secret", body)
+	if err != nil {
+		t.Fatalf("build request: %v", err)
+	}
+	payload, err := io.ReadAll(request.Body)
+	if err != nil {
+		t.Fatalf("read body: %v", err)
+	}
+	text := string(payload)
+	if !strings.HasPrefix(text, `{"__type":"FindPeopleJsonRequest:#Exchange"`) {
+		t.Fatalf("expected top-level __type first, got %s", text)
+	}
+	if !strings.Contains(text, `"Header":{"__type":"JsonRequestHeaders:#Exchange"`) {
+		t.Fatalf("expected nested Header __type first, got %s", text)
+	}
+	if !strings.Contains(text, `"Body":{"__type":"FindPeopleRequest:#Exchange"`) {
+		t.Fatalf("expected nested Body __type first, got %s", text)
+	}
+}
+
 func TestBuildURLPostDataRequestSetsEncodedHeader(t *testing.T) {
 	config := owa.Config{
 		BaseURL:   "https://example.test",

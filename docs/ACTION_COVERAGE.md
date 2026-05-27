@@ -76,7 +76,9 @@ Implemented high-level OWA mappings:
 | `mail.move_to_deleted_items` | `DeleteItem` | implemented as `MoveToDeletedItems` with mocked OWA test |
 | `calendar.list` | `GetCalendarView` | implemented with mocked OWA test |
 | `calendar.availability` | `GetUserAvailabilityInternal` | implemented and live smoke-tested; MCP tool accepts optional mailbox email |
+| raw read-only people search | `FindPeople` | raw guarded execution live smoke-tested with opt-in env; request maps are normalized so `__type` is emitted first |
 
 Important OWA compatibility note: high-level OWA JSON payloads use ordered JSON
 objects because this endpoint can reject request maps where `__type` is not the
-first field.
+first field. Raw OWA payload maps are normalized recursively before encoding so
+agent-supplied `__type` fields are emitted first at each object level.

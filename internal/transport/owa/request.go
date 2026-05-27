@@ -13,7 +13,7 @@ func BuildServiceRequest(config Config, action string, canary string, body any) 
 	if err != nil {
 		return nil, err
 	}
-	payload, err := json.Marshal(body)
+	payload, err := json.Marshal(orderTypeFieldsFirst(body))
 	if err != nil {
 		return nil, err
 	}

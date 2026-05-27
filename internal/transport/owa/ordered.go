@@ -3,6 +3,7 @@ package owa
 import (
 	"bytes"
 	"encoding/json"
+	"sort"
 )
 
 type orderedObject []orderedField
@@ -41,4 +42,33 @@ func (value orderedObject) MarshalJSON() ([]byte, error) {
 	}
 	buffer.WriteByte('}')
 	return buffer.Bytes(), nil
+}
+
+func orderTypeFieldsFirst(value any) any {
+	switch typed := value.(type) {
+	case map[string]any:
+		fields := make([]orderedField, 0, len(typed))
+		if typeValue, ok := typed["__type"]; ok {
+			fields = append(fields, field("__type", orderTypeFieldsFirst(typeValue)))
+		}
+		keys := make([]string, 0, len(typed))
+		for key := range typed {
+			if key != "__type" {
+				keys = append(keys, key)
+			}
+		}
+		sort.Strings(keys)
+		for _, key := range keys {
+			fields = append(fields, field(key, orderTypeFieldsFirst(typed[key])))
+		}
+		return object(fields...)
+	case []any:
+		values := make([]any, len(typed))
+		for index, item := range typed {
+			values[index] = orderTypeFieldsFirst(item)
+		}
+		return values
+	default:
+		return value
+	}
 }

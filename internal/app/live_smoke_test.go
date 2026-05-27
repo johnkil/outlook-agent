@@ -79,6 +79,67 @@ func TestLiveCalendarAvailabilitySmoke(t *testing.T) {
 	}
 }
 
+func TestLiveOWARawFindPeopleSmoke(t *testing.T) {
+	configPath := os.Getenv("OUTLOOK_AGENT_LIVE_CONFIG")
+	if configPath == "" {
+		t.Skip("OUTLOOK_AGENT_LIVE_CONFIG is not set")
+	}
+	profile := os.Getenv("OUTLOOK_AGENT_LIVE_PROFILE")
+	query := os.Getenv("OUTLOOK_AGENT_LIVE_PEOPLE_QUERY")
+	if query == "" {
+		query = "test"
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	client, _, err := app.BuildTransport(app.Options{ConfigPath: configPath, Profile: profile})
+	if err != nil {
+		t.Fatalf("build live transport: %v", err)
+	}
+	auth := client.Authenticate(ctx, profile)
+	if !auth.OK {
+		t.Fatalf("live auth failed: %s", auth.Error)
+	}
+
+	response := client.Execute(ctx, transport.ActionRequest{
+		Name:    "FindPeople",
+		Payload: findPeoplePayload(query),
+	})
+	if !response.OK {
+		t.Fatalf("live FindPeople failed: %s summary=%#v", response.Error, responseSummary(response.Data))
+	}
+	if len(response.Data) == 0 {
+		t.Fatal("expected non-empty FindPeople response data")
+	}
+}
+
+func findPeoplePayload(query string) map[string]any {
+	return map[string]any{
+		"__type": "FindPeopleJsonRequest:#Exchange",
+		"Header": map[string]any{
+			"__type":               "JsonRequestHeaders:#Exchange",
+			"RequestServerVersion": "Exchange2013",
+		},
+		"Body": map[string]any{
+			"__type": "FindPeopleRequest:#Exchange",
+			"IndexedPageItemView": map[string]any{
+				"__type":             "IndexedPageView:#Exchange",
+				"BasePoint":          "Beginning",
+				"Offset":             0,
+				"MaxEntriesReturned": 20,
+			},
+			"QueryString": query,
+			"PersonaShape": map[string]any{
+				"__type":    "PersonaResponseShape:#Exchange",
+				"BaseShape": "Default",
+			},
+			"ShouldResolveOneOffEmailAddress": true,
+			"SearchPeopleSuggestionIndex":     false,
+		},
+	}
+}
+
 func responseSummary(data map[string]any) map[string]any {
 	summary := map[string]any{}
 	for key := range data {
