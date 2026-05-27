@@ -222,6 +222,51 @@ func TestTransportReportsDiscoveryDiagnostics(t *testing.T) {
 	}
 }
 
+func TestTransportDiscoveryDiagnosticsReportsFinalPathTitleMarkerAndScriptBlocks(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		switch request.URL.Path {
+		case "/owa/auth.owa":
+			http.SetCookie(response, &http.Cookie{Name: "X-OWA-CANARY", Value: "canary-secret"})
+			response.WriteHeader(http.StatusOK)
+		case "/owa/start":
+			http.Redirect(response, request, "/owa/final?layout=1", http.StatusFound)
+		case "/owa/final":
+			response.Header().Set("Content-Type", "text/html")
+			_, _ = response.Write([]byte(`<html><head><title>Outlook</title></head><body><script>boot()</script></body></html>`))
+		default:
+			t.Fatalf("unexpected path: %s", request.URL.String())
+		}
+	}))
+	defer server.Close()
+	client := owa.NewTransport(owa.Config{
+		BaseURL:   server.URL,
+		Username:  "DOMAIN\\user",
+		SecretRef: secret.Ref("memory:owa"),
+	}, secret.NewMemoryStore(map[string]string{"memory:owa": "password"}), server.Client())
+
+	diagnostics, err := client.DiscoverServiceActionsFromURLDiagnostics(context.Background(), "/owa/start", owa.DiscoveryOptions{})
+
+	if err != nil {
+		t.Fatalf("discover diagnostics: %v", err)
+	}
+	if len(diagnostics.Sources) != 1 {
+		t.Fatalf("expected one source diagnostic, got %#v", diagnostics.Sources)
+	}
+	source := diagnostics.Sources[0]
+	if source.FinalPath != "/owa/final?layout=1" {
+		t.Fatalf("expected sanitized final path, got %#v", source)
+	}
+	if !source.FinalPathChanged {
+		t.Fatalf("expected final path changed marker, got %#v", source)
+	}
+	if !source.TitlePresent || source.TitleKind != "outlook" {
+		t.Fatalf("expected sanitized Outlook title marker, got %#v", source)
+	}
+	if source.ScriptBlocks != 1 {
+		t.Fatalf("expected one inline script block, got %#v", source)
+	}
+}
+
 func TestTransportFollowsNavigationHints(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
 		switch request.URL.Path {

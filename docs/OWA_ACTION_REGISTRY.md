@@ -43,8 +43,9 @@ and also keeps those assets in memory only.
 
 Use `--diagnostics` when a live source returns no actions. It adds per-source
 counts for HTTP status, content type, bytes, direct action matches, linked
-script references, and logon-page markers without printing or storing raw HTML
-or JavaScript.
+script references, sanitized final response path, coarse title markers, inline
+script-block counts, and logon-page markers without printing or storing raw
+HTML or JavaScript.
 
 Use `--follow-navigation-hints` for small HTML shells that contain meta-refresh
 or JavaScript `location` navigation. Only same-origin navigation targets are
@@ -58,7 +59,10 @@ The output includes:
 - `missing_classified`: registry names not seen in that particular input file;
 - `classes`: safety classes for discovered names.
 - `sources`: only when `--diagnostics` is used; sanitized source-level counts.
-  Source diagnostics include `navigation_hints` counts.
+  Source diagnostics include `final_path`, `final_path_changed`,
+  `title_present`, `title_kind`, `script_blocks`, and `navigation_hints`
+  fields. `final_path` is path plus query only; hosts, fragments, raw titles,
+  cookies, canary values, and response bodies are never emitted.
 
 Do not commit downloaded OWA assets or tenant-specific documentation. Commit
 only new generic action names, safety classifications, tests, and sanitized
