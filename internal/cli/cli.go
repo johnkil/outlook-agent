@@ -150,6 +150,7 @@ func runOWADiscoverActions(args []string, options Options, runtime Runtime, stdo
 			options := owa.DiscoveryOptions{
 				IncludeLinkedScripts:  sources.IncludeLinkedScripts,
 				FollowNavigationHints: sources.FollowNavigationHints,
+				ContinueOnHTTPError:   sources.Diagnostics,
 			}
 			var actions []string
 			var err error

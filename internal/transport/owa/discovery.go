@@ -2,6 +2,7 @@ package owa
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"html"
 	"io"
@@ -43,6 +44,7 @@ const maxDiscoverySources = 30
 type DiscoveryOptions struct {
 	IncludeLinkedScripts  bool
 	FollowNavigationHints bool
+	ContinueOnHTTPError   bool
 }
 
 type DiscoveryDiagnostics struct {
@@ -65,6 +67,7 @@ type DiscoverySourceDiagnostics struct {
 	ScriptBlocks          int    `json:"script_blocks,omitempty"`
 	LooksLikeLogonPage    bool   `json:"looks_like_logon_page,omitempty"`
 	LooksLikeOWAErrorPage bool   `json:"looks_like_owa_error_page,omitempty"`
+	FetchError            string `json:"fetch_error,omitempty"`
 }
 
 type DiscoveryReport struct {
@@ -183,6 +186,18 @@ func (client *Transport) discoverSource(ctx context.Context, session Session, so
 
 	text, requested, resolved, bytesRead, status, contentType, err := client.fetchDiscoveryTextRelativeTo(ctx, session, source, reference)
 	if err != nil {
+		var statusError discoveryHTTPStatusError
+		if options.ContinueOnHTTPError && errors.As(err, &statusError) {
+			diagnostics.Sources = append(diagnostics.Sources, DiscoverySourceDiagnostics{
+				Source:      source,
+				Status:      statusError.Status,
+				ContentType: statusError.ContentType,
+				FinalPath:   sanitizedURLPathQuery(statusError.FinalURL),
+				Bytes:       0,
+				FetchError:  "http_status",
+			})
+			return nil
+		}
 		return err
 	}
 	discovered := DiscoverServiceActions(text)
@@ -228,6 +243,17 @@ func (client *Transport) discoverSource(ctx context.Context, session Session, so
 	return nil
 }
 
+type discoveryHTTPStatusError struct {
+	Status       int
+	ContentType  string
+	RequestedURL string
+	FinalURL     string
+}
+
+func (err discoveryHTTPStatusError) Error() string {
+	return fmt.Sprintf("owa discovery returned HTTP %d", err.Status)
+}
+
 func (client *Transport) fetchDiscoveryText(ctx context.Context, session Session, source string) (string, string, string, int, int, string, error) {
 	return client.fetchDiscoveryTextRelativeTo(ctx, session, source, "")
 }
@@ -253,7 +279,13 @@ func (client *Transport) fetchDiscoveryTextRelativeTo(ctx context.Context, sessi
 		finalURL = response.Request.URL.String()
 	}
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
-		return "", resolved, finalURL, 0, response.StatusCode, response.Header.Get("Content-Type"), fmt.Errorf("owa discovery returned HTTP %d", response.StatusCode)
+		contentType := response.Header.Get("Content-Type")
+		return "", resolved, finalURL, 0, response.StatusCode, contentType, discoveryHTTPStatusError{
+			Status:       response.StatusCode,
+			ContentType:  contentType,
+			RequestedURL: resolved,
+			FinalURL:     finalURL,
+		}
 	}
 	data, err := io.ReadAll(io.LimitReader(response.Body, maxDiscoveryBytes+1))
 	if err != nil {

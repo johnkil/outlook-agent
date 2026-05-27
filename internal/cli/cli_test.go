@@ -207,6 +207,56 @@ func TestOWADiscoverActionsDiagnosticsFromAuthenticatedURL(t *testing.T) {
 	}
 }
 
+func TestOWADiscoverActionsDiagnosticsContinuesAfterHTTPStatusError(t *testing.T) {
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	client := &discoveringTransport{
+		diagnosticsBySource: map[string]owa.DiscoveryDiagnostics{
+			"/owa/missing.js": {
+				Actions: []string{},
+				Sources: []owa.DiscoverySourceDiagnostics{
+					{Source: "/owa/missing.js", Status: 404, FinalPath: "/owa/missing.js", FetchError: "http_status"},
+				},
+			},
+			"/owa/scripts/app.js": {
+				Actions: []string{"FindItem"},
+				Sources: []owa.DiscoverySourceDiagnostics{
+					{Source: "/owa/scripts/app.js", Status: 200, FinalPath: "/owa/scripts/app.js", Actions: 1},
+				},
+			},
+		},
+	}
+
+	code := RunWithRuntime([]string{"owa", "discover-actions", "--url", "/owa/missing.js", "--url", "/owa/scripts/app.js", "--diagnostics"}, &stdout, &stderr, Runtime{
+		BuildTransport: func(_ context.Context, options Options) (transport.Transport, string, error) {
+			return client, "work", nil
+		},
+	})
+
+	if code != 0 {
+		t.Fatalf("expected exit code 0, got %d, stderr=%s", code, stderr.String())
+	}
+	if !client.continueOnHTTPError {
+		t.Fatal("expected diagnostics mode to continue after HTTP status errors")
+	}
+	var payload struct {
+		Classified []string                         `json:"classified"`
+		Sources    []owa.DiscoverySourceDiagnostics `json:"sources"`
+	}
+	if err := json.Unmarshal(stdout.Bytes(), &payload); err != nil {
+		t.Fatalf("diagnostic discovery output is not JSON: %v; output=%s", err, stdout.String())
+	}
+	if !stringSliceContains(payload.Classified, "FindItem") {
+		t.Fatalf("expected classified FindItem in output: %#v", payload)
+	}
+	if len(payload.Sources) != 2 {
+		t.Fatalf("expected both source diagnostics, got %#v", payload.Sources)
+	}
+	if payload.Sources[0].FetchError != "http_status" || payload.Sources[1].Actions != 1 {
+		t.Fatalf("unexpected source diagnostics: %#v", payload.Sources)
+	}
+}
+
 func TestOWADiscoverActionsFromAuthenticatedURLFollowsNavigationHints(t *testing.T) {
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer
@@ -250,7 +300,9 @@ type discoveringTransport struct {
 	source                string
 	includeLinkedScripts  bool
 	followNavigationHints bool
+	continueOnHTTPError   bool
 	diagnostics           bool
+	diagnosticsBySource   map[string]owa.DiscoveryDiagnostics
 }
 
 func (client *discoveringTransport) Name() string {
@@ -277,6 +329,7 @@ func (client *discoveringTransport) DiscoverServiceActionsFromURLWithOptions(_ c
 	client.source = source
 	client.includeLinkedScripts = options.IncludeLinkedScripts
 	client.followNavigationHints = options.FollowNavigationHints
+	client.continueOnHTTPError = options.ContinueOnHTTPError
 	return client.actions, nil
 }
 
@@ -284,7 +337,11 @@ func (client *discoveringTransport) DiscoverServiceActionsFromURLDiagnostics(_ c
 	client.source = source
 	client.includeLinkedScripts = options.IncludeLinkedScripts
 	client.followNavigationHints = options.FollowNavigationHints
+	client.continueOnHTTPError = options.ContinueOnHTTPError
 	client.diagnostics = true
+	if diagnostics, ok := client.diagnosticsBySource[source]; ok {
+		return diagnostics, nil
+	}
 	return owa.DiscoveryDiagnostics{Actions: client.actions, Sources: client.sources}, nil
 }
 

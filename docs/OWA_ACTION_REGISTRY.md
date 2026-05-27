@@ -46,6 +46,9 @@ counts for HTTP status, content type, bytes, direct action matches, linked
 script references, sanitized final response path, coarse title markers, inline
 script-block counts, logon-page markers, and generic OWA error-page markers
 without printing or storing raw HTML or JavaScript.
+Diagnostics mode is tolerant of non-2xx HTTP responses so candidate URL probes
+can continue after 404/500 results. Such sources include
+`fetch_error: "http_status"` plus sanitized status and final path.
 
 Use `--follow-navigation-hints` for small HTML shells that contain meta-refresh
 or JavaScript `location` navigation. Only same-origin navigation targets are
@@ -77,9 +80,9 @@ The output includes:
 - `sources`: only when `--diagnostics` is used; sanitized source-level counts.
   Source diagnostics include `final_path`, `final_path_changed`,
   `title_present`, `title_kind`, `script_blocks`, `navigation_hints`,
-  `looks_like_logon_page`, and `looks_like_owa_error_page` fields.
-  `final_path` is path plus query only; hosts, fragments, raw titles, cookies,
-  canary values, and response bodies are never emitted.
+  `looks_like_logon_page`, `looks_like_owa_error_page`, and `fetch_error`
+  fields. `final_path` is path plus query only; hosts, fragments, raw titles,
+  cookies, canary values, and response bodies are never emitted.
 
 Do not commit downloaded OWA assets or tenant-specific documentation. Commit
 only new generic action names, safety classifications, tests, and sanitized

@@ -393,6 +393,45 @@ func TestTransportDiscoveryDiagnosticsDetectsOWAErrorPage(t *testing.T) {
 	}
 }
 
+func TestTransportDiscoveryDiagnosticsCanReportHTTPStatusErrors(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		switch request.URL.Path {
+		case "/owa/auth.owa":
+			http.SetCookie(response, &http.Cookie{Name: "X-OWA-CANARY", Value: "canary-secret"})
+			response.WriteHeader(http.StatusOK)
+		case "/owa/missing.js":
+			response.Header().Set("Content-Type", "text/html")
+			response.WriteHeader(http.StatusNotFound)
+		default:
+			t.Fatalf("unexpected path: %s", request.URL.String())
+		}
+	}))
+	defer server.Close()
+	client := owa.NewTransport(owa.Config{
+		BaseURL:   server.URL,
+		Username:  "DOMAIN\\user",
+		SecretRef: secret.Ref("memory:owa"),
+	}, secret.NewMemoryStore(map[string]string{"memory:owa": "password"}), server.Client())
+
+	diagnostics, err := client.DiscoverServiceActionsFromURLDiagnostics(context.Background(), "/owa/missing.js", owa.DiscoveryOptions{
+		ContinueOnHTTPError: true,
+	})
+
+	if err != nil {
+		t.Fatalf("discover diagnostics should continue after HTTP status error: %v", err)
+	}
+	if len(diagnostics.Actions) != 0 {
+		t.Fatalf("expected no discovered actions, got %#v", diagnostics.Actions)
+	}
+	if len(diagnostics.Sources) != 1 {
+		t.Fatalf("expected one source diagnostic, got %#v", diagnostics.Sources)
+	}
+	source := diagnostics.Sources[0]
+	if source.Status != http.StatusNotFound || source.FinalPath != "/owa/missing.js" || source.FetchError != "http_status" {
+		t.Fatalf("expected sanitized HTTP status diagnostic, got %#v", source)
+	}
+}
+
 func TestTransportDiscoversActionsFromAuthenticatedURL(t *testing.T) {
 	var sawSessionCookie bool
 	var sawCanaryHeader bool
