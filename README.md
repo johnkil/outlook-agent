@@ -11,9 +11,9 @@ OpenCode, Codex, and other MCP-capable agents:
   secrets.
 - `outlook-agent policy explain` shows which actions are safe, guarded, or
   blocked.
-- `outlook-agent owa discover-actions --file <path>` extracts OWA service
-  action names from temporary static/docs files and compares them with the
-  classified registry.
+- `outlook-agent owa discover-actions --file <path>` or `--url <path-or-url>`
+  extracts OWA service action names from temporary static/docs sources and
+  compares them with the classified registry.
 - `outlook-agent mcp` starts a local MCP server over stdio.
 
 ## Local Config
@@ -44,6 +44,7 @@ Use it with:
 
 ```bash
 outlook-agent --config .local/outlook-agent.json auth check --profile work
+outlook-agent --config .local/outlook-agent.json owa discover-actions --url /owa/ --include-linked-scripts
 outlook-agent --config .local/outlook-agent.json mcp
 ```
 

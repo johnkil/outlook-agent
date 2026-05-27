@@ -11,6 +11,7 @@ import (
 
 	"github.com/johnkil/outlook-agent/internal/transport"
 	"github.com/johnkil/outlook-agent/internal/transport/fake"
+	"github.com/johnkil/outlook-agent/internal/transport/owa"
 )
 
 func TestDoctorPrintsMachineReadableStatus(t *testing.T) {
@@ -109,6 +110,65 @@ func TestOWADiscoverActionsFromFileReportsRegistryDelta(t *testing.T) {
 	}
 }
 
+func TestOWADiscoverActionsFromAuthenticatedURL(t *testing.T) {
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	var gotOptions Options
+	client := &discoveringTransport{actions: []string{"FindItem", "TotallyNewAction"}}
+
+	code := RunWithRuntime([]string{"--config", "/tmp/outlook-agent.json", "owa", "discover-actions", "--url", "/owa/scripts/app.js"}, &stdout, &stderr, Runtime{
+		BuildTransport: func(_ context.Context, options Options) (transport.Transport, string, error) {
+			gotOptions = options
+			return client, "work", nil
+		},
+	})
+
+	if code != 0 {
+		t.Fatalf("expected exit code 0, got %d, stderr=%s", code, stderr.String())
+	}
+	if gotOptions.ConfigPath != "/tmp/outlook-agent.json" {
+		t.Fatalf("expected config path to be forwarded, got %#v", gotOptions)
+	}
+	if client.source != "/owa/scripts/app.js" {
+		t.Fatalf("expected URL source to be passed to transport, got %q", client.source)
+	}
+	if client.includeLinkedScripts {
+		t.Fatal("linked script discovery should be disabled by default")
+	}
+	var payload struct {
+		Classified []string `json:"classified"`
+		Unknown    []string `json:"unknown"`
+	}
+	if err := json.Unmarshal(stdout.Bytes(), &payload); err != nil {
+		t.Fatalf("discovery output is not JSON: %v; output=%s", err, stdout.String())
+	}
+	if !stringSliceContains(payload.Classified, "FindItem") {
+		t.Fatalf("expected classified FindItem in output: %#v", payload)
+	}
+	if len(payload.Unknown) != 1 || payload.Unknown[0] != "TotallyNewAction" {
+		t.Fatalf("expected unknown action in output: %#v", payload)
+	}
+}
+
+func TestOWADiscoverActionsFromAuthenticatedURLIncludesLinkedScripts(t *testing.T) {
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	client := &discoveringTransport{actions: []string{"FindItem"}}
+
+	code := RunWithRuntime([]string{"owa", "discover-actions", "--url", "/owa/", "--include-linked-scripts"}, &stdout, &stderr, Runtime{
+		BuildTransport: func(_ context.Context, options Options) (transport.Transport, string, error) {
+			return client, "work", nil
+		},
+	})
+
+	if code != 0 {
+		t.Fatalf("expected exit code 0, got %d, stderr=%s", code, stderr.String())
+	}
+	if !client.includeLinkedScripts {
+		t.Fatal("expected linked script discovery option to be forwarded")
+	}
+}
+
 func TestUnknownCommandReturnsValidationError(t *testing.T) {
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer
@@ -124,6 +184,39 @@ func TestUnknownCommandReturnsValidationError(t *testing.T) {
 	if stderr.Len() == 0 {
 		t.Fatal("expected stderr to explain unknown command")
 	}
+}
+
+type discoveringTransport struct {
+	transport.Transport
+	actions              []string
+	source               string
+	includeLinkedScripts bool
+}
+
+func (client *discoveringTransport) Name() string {
+	return "owa"
+}
+
+func (client *discoveringTransport) Authenticate(context.Context, string) transport.AuthResult {
+	return transport.AuthResult{OK: true}
+}
+
+func (client *discoveringTransport) Capabilities(context.Context) transport.CapabilitySet {
+	return transport.CapabilitySet{}
+}
+
+func (client *discoveringTransport) Execute(context.Context, transport.ActionRequest) transport.ActionResponse {
+	return transport.ActionResponse{}
+}
+
+func (client *discoveringTransport) DryRun(context.Context, transport.ActionRequest) transport.DryRunSummary {
+	return transport.DryRunSummary{}
+}
+
+func (client *discoveringTransport) DiscoverServiceActionsFromURLWithOptions(_ context.Context, source string, options owa.DiscoveryOptions) ([]string, error) {
+	client.source = source
+	client.includeLinkedScripts = options.IncludeLinkedScripts
+	return client.actions, nil
 }
 
 func stringSliceContains(values []string, expected string) bool {

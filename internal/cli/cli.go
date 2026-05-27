@@ -22,6 +22,10 @@ type Runtime struct {
 	RunMCP         func(context.Context, Options) error
 }
 
+type owaActionDiscoverer interface {
+	DiscoverServiceActionsFromURLWithOptions(ctx context.Context, source string, options owa.DiscoveryOptions) ([]string, error)
+}
+
 // Run executes the CLI command and returns the process exit code.
 func Run(args []string, stdout io.Writer, stderr io.Writer) int {
 	return RunWithRuntime(args, stdout, stderr, Runtime{})
@@ -56,7 +60,7 @@ func RunWithRuntime(args []string, stdout io.Writer, stderr io.Writer, runtime R
 		}
 	case "owa":
 		if len(commandArgs) >= 2 && commandArgs[1] == "discover-actions" {
-			return runOWADiscoverActions(commandArgs[2:], stdout, stderr)
+			return runOWADiscoverActions(commandArgs[2:], options, runtime, stdout, stderr)
 		}
 	case "auth":
 		if len(commandArgs) == 2 && commandArgs[1] == "check" {
@@ -112,39 +116,80 @@ func runAuthCheck(stdout io.Writer, options Options, runtime Runtime) int {
 	return code
 }
 
-func runOWADiscoverActions(args []string, stdout io.Writer, stderr io.Writer) int {
-	path, err := parseDiscoverActionsArgs(args)
+func runOWADiscoverActions(args []string, options Options, runtime Runtime, stdout io.Writer, stderr io.Writer) int {
+	sources, err := parseDiscoverActionsArgs(args)
 	if err != nil {
 		fmt.Fprintln(stderr, err)
 		return 1
 	}
-	data, err := os.ReadFile(path)
-	if err != nil {
-		fmt.Fprintf(stderr, "read discovery file: %v\n", err)
-		return 1
+	discovered := make([]string, 0)
+	for _, path := range sources.Files {
+		data, err := os.ReadFile(path)
+		if err != nil {
+			fmt.Fprintf(stderr, "read discovery file: %v\n", err)
+			return 1
+		}
+		discovered = append(discovered, owa.DiscoverServiceActions(string(data))...)
 	}
-	report := owa.CompareDiscoveredServiceActions(owa.DiscoverServiceActions(string(data)))
-	return writeJSON(stdout, report)
+	if len(sources.URLs) > 0 {
+		if runtime.BuildTransport == nil {
+			fmt.Fprintln(stderr, "transport profile is not configured")
+			return 4
+		}
+		client, _, err := runtime.BuildTransport(context.Background(), options)
+		if err != nil {
+			fmt.Fprintf(stderr, "build transport: %v\n", err)
+			return 4
+		}
+		discoverer, ok := client.(owaActionDiscoverer)
+		if !ok {
+			fmt.Fprintln(stderr, "configured transport does not support OWA action discovery")
+			return 4
+		}
+		for _, source := range sources.URLs {
+			actions, err := discoverer.DiscoverServiceActionsFromURLWithOptions(context.Background(), source, owa.DiscoveryOptions{IncludeLinkedScripts: sources.IncludeLinkedScripts})
+			if err != nil {
+				fmt.Fprintf(stderr, "discover OWA actions: %v\n", err)
+				return 4
+			}
+			discovered = append(discovered, actions...)
+		}
+	}
+	return writeJSON(stdout, owa.CompareDiscoveredServiceActions(discovered))
 }
 
-func parseDiscoverActionsArgs(args []string) (string, error) {
-	var path string
+type discoverActionSources struct {
+	Files                []string
+	URLs                 []string
+	IncludeLinkedScripts bool
+}
+
+func parseDiscoverActionsArgs(args []string) (discoverActionSources, error) {
+	var sources discoverActionSources
 	for index := 0; index < len(args); index++ {
 		switch args[index] {
 		case "--file":
 			index++
 			if index >= len(args) {
-				return "", fmt.Errorf("--file requires a value")
+				return discoverActionSources{}, fmt.Errorf("--file requires a value")
 			}
-			path = args[index]
+			sources.Files = append(sources.Files, args[index])
+		case "--url":
+			index++
+			if index >= len(args) {
+				return discoverActionSources{}, fmt.Errorf("--url requires a value")
+			}
+			sources.URLs = append(sources.URLs, args[index])
+		case "--include-linked-scripts":
+			sources.IncludeLinkedScripts = true
 		default:
-			return "", fmt.Errorf("unknown discover-actions argument: %s", args[index])
+			return discoverActionSources{}, fmt.Errorf("unknown discover-actions argument: %s", args[index])
 		}
 	}
-	if path == "" {
-		return "", fmt.Errorf("owa discover-actions requires --file")
+	if len(sources.Files) == 0 && len(sources.URLs) == 0 {
+		return discoverActionSources{}, fmt.Errorf("owa discover-actions requires --file or --url")
 	}
-	return path, nil
+	return sources, nil
 }
 
 func parseOptions(args []string) (Options, []string, error) {

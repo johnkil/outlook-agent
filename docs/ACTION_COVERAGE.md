@@ -39,6 +39,8 @@ level 5: workflow skill guidance
 
 - Discover transport-specific actions from docs, live metadata, or adapter
   manifests.
+- For OWA, authenticated discovery may scan same-origin pages or static assets
+  in memory and emit only sanitized registry deltas.
 - Add every discovered action to the registry with a safety class.
 - Unknown actions start as `unknown`.
 - Read-like unknown actions may be tested against the fake transport before

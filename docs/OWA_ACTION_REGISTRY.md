@@ -24,6 +24,21 @@ documentation files:
 outlook-agent owa discover-actions --file /private/tmp/owa-static.js
 ```
 
+When a configured OWA profile is available, discovery can fetch a same-origin
+OWA page or static asset through the authenticated session:
+
+```bash
+outlook-agent --config .local/outlook-agent.json owa discover-actions --url /owa/
+outlook-agent --config .local/outlook-agent.json owa discover-actions --url /owa/ --include-linked-scripts
+outlook-agent --config .local/outlook-agent.json owa discover-actions --url /owa/scripts/app.js
+```
+
+Authenticated discovery keeps downloaded content in memory only and rejects
+cross-origin URLs so session cookies and canary headers are not sent to another
+host. `--include-linked-scripts` scans same-origin `<script src="...">` assets
+linked from the fetched page, resolves relative script paths against that page,
+and also keeps those assets in memory only.
+
 The output includes:
 
 - `discovered`: sorted unique service-action names found in the file;

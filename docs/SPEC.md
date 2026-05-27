@@ -9,6 +9,7 @@ outlook-agent doctor [--json]
 outlook-agent --config <path> auth check [--profile <name>]
 outlook-agent policy explain [--action <name>]
 outlook-agent owa discover-actions --file <path>
+outlook-agent --config <path> owa discover-actions --url <path-or-url> [--include-linked-scripts]
 outlook-agent --config <path> mcp
 ```
 

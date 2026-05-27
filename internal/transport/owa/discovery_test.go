@@ -1,10 +1,14 @@
 package owa_test
 
 import (
+	"context"
+	"net/http"
+	"net/http/httptest"
 	"slices"
 	"testing"
 
 	"github.com/johnkil/outlook-agent/internal/policy"
+	"github.com/johnkil/outlook-agent/internal/secret"
 	"github.com/johnkil/outlook-agent/internal/transport/owa"
 )
 
@@ -30,6 +34,22 @@ func TestDiscoverServiceActionsFromTextExtractsOWAPatterns(t *testing.T) {
 	}
 	if !slices.Equal(actions, expected) {
 		t.Fatalf("expected discovered actions %#v, got %#v", expected, actions)
+	}
+}
+
+func TestDiscoverLinkedScriptSourcesExtractsUniqueScriptSrcs(t *testing.T) {
+	html := `
+		<script src="/owa/scripts/boot.js"></script>
+		<script defer src='/owa/scripts/app.js?v=1'></script>
+		<script>console.log("inline")</script>
+		<script src="/owa/scripts/boot.js"></script>
+	`
+
+	sources := owa.DiscoverLinkedScriptSources(html)
+
+	expected := []string{"/owa/scripts/app.js?v=1", "/owa/scripts/boot.js"}
+	if !slices.Equal(sources, expected) {
+		t.Fatalf("expected script sources %#v, got %#v", expected, sources)
 	}
 }
 
@@ -59,5 +79,122 @@ func TestCompareDiscoveredServiceActionsReportsUnknownAndMissing(t *testing.T) {
 	}
 	if report.Classes["TotallyNewAction"] != policy.Unknown {
 		t.Fatalf("expected unknown class for new action, got %#v", report.Classes)
+	}
+}
+
+func TestCompareDiscoveredServiceActionsReturnsEmptySlicesForNoFindings(t *testing.T) {
+	report := owa.CompareDiscoveredServiceActions(nil)
+
+	if report.Discovered == nil || report.Classified == nil || report.Unknown == nil {
+		t.Fatalf("expected empty slices instead of nil slices: %#v", report)
+	}
+	if len(report.Discovered) != 0 || len(report.Classified) != 0 || len(report.Unknown) != 0 {
+		t.Fatalf("expected no findings, got %#v", report)
+	}
+}
+
+func TestTransportDiscoversActionsFromLinkedScripts(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		switch request.URL.Path {
+		case "/owa/auth.owa":
+			http.SetCookie(response, &http.Cookie{Name: "X-OWA-CANARY", Value: "canary-secret"})
+			response.WriteHeader(http.StatusOK)
+		case "/owa/":
+			response.Header().Set("Content-Type", "text/html")
+			_, _ = response.Write([]byte(`
+				<html>
+					<script src="/owa/scripts/boot.js"></script>
+					<script src="scripts/app.js?v=1"></script>
+				</html>
+			`))
+		case "/owa/scripts/boot.js":
+			response.Header().Set("Content-Type", "application/javascript")
+			_, _ = response.Write([]byte(`fetch("/owa/service.svc?action=FindItem");`))
+		case "/owa/scripts/app.js":
+			if request.URL.Query().Get("v") != "1" {
+				t.Fatalf("expected script query to be preserved, got %s", request.URL.RawQuery)
+			}
+			response.Header().Set("Content-Type", "application/javascript")
+			_, _ = response.Write([]byte(`const requestType = "GetAttachmentJsonRequest:#Exchange";`))
+		default:
+			t.Fatalf("unexpected path: %s", request.URL.String())
+		}
+	}))
+	defer server.Close()
+	client := owa.NewTransport(owa.Config{
+		BaseURL:   server.URL,
+		Username:  "DOMAIN\\user",
+		SecretRef: secret.Ref("memory:owa"),
+	}, secret.NewMemoryStore(map[string]string{"memory:owa": "password"}), server.Client())
+
+	actions, err := client.DiscoverServiceActionsFromURLWithOptions(context.Background(), "/owa/", owa.DiscoveryOptions{IncludeLinkedScripts: true})
+
+	if err != nil {
+		t.Fatalf("discover linked script actions: %v", err)
+	}
+	expected := []string{"FindItem", "GetAttachment"}
+	if !slices.Equal(actions, expected) {
+		t.Fatalf("expected linked script actions %#v, got %#v", expected, actions)
+	}
+}
+
+func TestTransportDiscoversActionsFromAuthenticatedURL(t *testing.T) {
+	var sawSessionCookie bool
+	var sawCanaryHeader bool
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		switch request.URL.Path {
+		case "/owa/auth.owa":
+			http.SetCookie(response, &http.Cookie{Name: "X-OWA-CANARY", Value: "canary-secret"})
+			response.WriteHeader(http.StatusOK)
+		case "/owa/scripts/app.js":
+			if cookie, err := request.Cookie("X-OWA-CANARY"); err == nil && cookie.Value == "canary-secret" {
+				sawSessionCookie = true
+			}
+			sawCanaryHeader = request.Header.Get("X-OWA-CANARY") == "canary-secret"
+			response.Header().Set("Content-Type", "application/javascript")
+			_, _ = response.Write([]byte(`
+				fetch("/owa/service.svc?action=FindItem");
+				const requestType = "GetAttachmentJsonRequest:#Exchange";
+				const payload = {"Action":"TotallyNewAction"};
+			`))
+		default:
+			t.Fatalf("unexpected path: %s", request.URL.Path)
+		}
+	}))
+	defer server.Close()
+	client := owa.NewTransport(owa.Config{
+		BaseURL:   server.URL,
+		Username:  "DOMAIN\\user",
+		SecretRef: secret.Ref("memory:owa"),
+	}, secret.NewMemoryStore(map[string]string{"memory:owa": "password"}), server.Client())
+
+	actions, err := client.DiscoverServiceActionsFromURL(context.Background(), "/owa/scripts/app.js")
+
+	if err != nil {
+		t.Fatalf("discover authenticated actions: %v", err)
+	}
+	expected := []string{"FindItem", "GetAttachment", "TotallyNewAction"}
+	if !slices.Equal(actions, expected) {
+		t.Fatalf("expected discovered actions %#v, got %#v", expected, actions)
+	}
+	if !sawSessionCookie {
+		t.Fatal("expected authenticated discovery request to include session cookie")
+	}
+	if !sawCanaryHeader {
+		t.Fatal("expected authenticated discovery request to include canary header")
+	}
+}
+
+func TestTransportDiscoveryRejectsCrossOriginURL(t *testing.T) {
+	client := owa.NewTransport(owa.Config{
+		BaseURL:   "https://example.test",
+		Username:  "DOMAIN\\user",
+		SecretRef: secret.Ref("memory:owa"),
+	}, secret.NewMemoryStore(map[string]string{"memory:owa": "password"}), nil)
+
+	_, err := client.DiscoverServiceActionsFromURL(context.Background(), "https://other.example.test/owa/app.js")
+
+	if err == nil {
+		t.Fatal("expected cross-origin discovery URL to be rejected")
 	}
 }
