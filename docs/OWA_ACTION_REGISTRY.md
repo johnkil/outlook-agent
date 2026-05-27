@@ -51,6 +51,22 @@ Use `--follow-navigation-hints` for small HTML shells that contain meta-refresh
 or JavaScript `location` navigation. Only same-origin navigation targets are
 followed, and fetched content is still kept in memory only.
 
+When authenticated HTTP discovery still returns a tiny HTML page with no
+scripts, use a browser-network scout outside the production runtime. The scout
+should log in through a real browser, collect same-origin request paths, and
+keep only sanitized path/query candidates such as JavaScript bundles, bootstrap
+pages, or `service.svc?action=...` URLs. Do not save HAR files, screenshots,
+headers, cookies, request bodies, response bodies, raw HTML, or raw JavaScript.
+Feed only sanitized same-origin candidate paths back into:
+
+```bash
+outlook-agent --config .local/outlook-agent.json owa discover-actions --url <candidate-path> --include-linked-scripts --follow-navigation-hints --diagnostics
+```
+
+If the browser scout observes only auth, root, or error-page resources, do not
+add registry actions from that run. Treat it as evidence that the tested
+entrypoint did not reach the OWA application boot surface.
+
 The output includes:
 
 - `discovered`: sorted unique service-action names found in the file;
