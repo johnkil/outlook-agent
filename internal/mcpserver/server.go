@@ -157,7 +157,11 @@ func New() *mcp.Server {
 }
 
 func RunStdio(ctx context.Context) error {
-	return normalizeRunError(New().Run(ctx, &mcp.StdioTransport{}))
+	return RunStdioWithTransport(ctx, fake.New())
+}
+
+func RunStdioWithTransport(ctx context.Context, client transport.Transport) error {
+	return normalizeRunError(NewWithTransport(client).Run(ctx, &mcp.StdioTransport{}))
 }
 
 func normalizeRunError(err error) error {

@@ -13,6 +13,38 @@ OpenCode, Codex, and other MCP-capable agents:
   blocked.
 - `outlook-agent mcp` starts a local MCP server over stdio.
 
+## Local Config
+
+The runtime uses the fake transport when no profile is configured. For a local
+OWA-like profile, keep config in an ignored local file such as
+`.local/outlook-agent.json`:
+
+```json
+{
+  "default_profile": "work",
+  "profiles": {
+    "work": {
+      "transport": "owa",
+      "secret_ref": "keychain:mail.example.com/DOMAIN\\user",
+      "settings": {
+        "base_url": "https://mail.example.com",
+        "username": "DOMAIN\\user"
+      }
+    }
+  }
+}
+```
+
+Use it with:
+
+```bash
+outlook-agent --config .local/outlook-agent.json auth check --profile work
+outlook-agent --config .local/outlook-agent.json mcp
+```
+
+The config references a secret-store key only; it must not contain passwords,
+tokens, cookies, or canary values.
+
 ## Product Shape
 
 - Core runtime: Go.

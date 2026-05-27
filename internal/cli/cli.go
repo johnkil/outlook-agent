@@ -7,10 +7,17 @@ import (
 	"io"
 
 	"github.com/johnkil/outlook-agent/internal/policy"
+	"github.com/johnkil/outlook-agent/internal/transport"
 )
 
+type Options struct {
+	ConfigPath string
+	Profile    string
+}
+
 type Runtime struct {
-	RunMCP func(context.Context) error
+	BuildTransport func(context.Context, Options) (transport.Transport, error)
+	RunMCP         func(context.Context, Options) error
 }
 
 // Run executes the CLI command and returns the process exit code.
@@ -19,12 +26,17 @@ func Run(args []string, stdout io.Writer, stderr io.Writer) int {
 }
 
 func RunWithRuntime(args []string, stdout io.Writer, stderr io.Writer, runtime Runtime) int {
-	if len(args) == 0 {
+	options, commandArgs, err := parseOptions(args)
+	if err != nil {
+		fmt.Fprintln(stderr, err)
+		return 1
+	}
+	if len(commandArgs) == 0 {
 		fmt.Fprintln(stderr, "missing command")
 		return 1
 	}
 
-	switch args[0] {
+	switch commandArgs[0] {
 	case "doctor":
 		return writeJSON(stdout, map[string]any{
 			"ok":         true,
@@ -33,7 +45,7 @@ func RunWithRuntime(args []string, stdout io.Writer, stderr io.Writer, runtime R
 			"transports": []string{"fake", "graph", "ews", "owa"},
 		})
 	case "policy":
-		if len(args) == 2 && args[1] == "explain" {
+		if len(commandArgs) == 2 && commandArgs[1] == "explain" {
 			return writeJSON(stdout, map[string]any{
 				"ok":             true,
 				"command":        "policy explain",
@@ -41,27 +53,82 @@ func RunWithRuntime(args []string, stdout io.Writer, stderr io.Writer, runtime R
 			})
 		}
 	case "auth":
-		if len(args) == 2 && args[1] == "check" {
-			return writeJSON(stdout, map[string]any{
-				"ok":      false,
-				"command": "auth check",
-				"error":   "transport profile is not configured",
-			})
+		if len(commandArgs) == 2 && commandArgs[1] == "check" {
+			return runAuthCheck(stdout, options, runtime)
 		}
 	case "mcp":
 		if runtime.RunMCP == nil {
 			fmt.Fprintln(stderr, "mcp runner is not configured")
 			return 4
 		}
-		if err := runtime.RunMCP(context.Background()); err != nil {
+		if err := runtime.RunMCP(context.Background(), options); err != nil {
 			fmt.Fprintf(stderr, "mcp server failed: %v\n", err)
 			return 4
 		}
 		return 0
 	}
 
-	fmt.Fprintf(stderr, "unknown command: %s\n", args[0])
+	fmt.Fprintf(stderr, "unknown command: %s\n", commandArgs[0])
 	return 1
+}
+
+func runAuthCheck(stdout io.Writer, options Options, runtime Runtime) int {
+	if runtime.BuildTransport == nil {
+		return writeJSON(stdout, map[string]any{
+			"ok":      false,
+			"command": "auth check",
+			"error":   "transport profile is not configured",
+		})
+	}
+	client, err := runtime.BuildTransport(context.Background(), options)
+	if err != nil {
+		writeJSON(stdout, map[string]any{
+			"ok":      false,
+			"command": "auth check",
+			"error":   err.Error(),
+		})
+		return 3
+	}
+	profile := options.Profile
+	if profile == "" {
+		profile = "default"
+	}
+	result := client.Authenticate(context.Background(), profile)
+	code := 0
+	if !result.OK {
+		code = 3
+	}
+	writeJSON(stdout, map[string]any{
+		"ok":        result.OK,
+		"command":   "auth check",
+		"principal": result.Principal,
+		"error":     result.Error,
+	})
+	return code
+}
+
+func parseOptions(args []string) (Options, []string, error) {
+	var options Options
+	commandArgs := make([]string, 0, len(args))
+	for index := 0; index < len(args); index++ {
+		switch args[index] {
+		case "--config":
+			index++
+			if index >= len(args) {
+				return Options{}, nil, fmt.Errorf("--config requires a value")
+			}
+			options.ConfigPath = args[index]
+		case "--profile":
+			index++
+			if index >= len(args) {
+				return Options{}, nil, fmt.Errorf("--profile requires a value")
+			}
+			options.Profile = args[index]
+		default:
+			commandArgs = append(commandArgs, args[index])
+		}
+	}
+	return options, commandArgs, nil
 }
 
 func writeJSON(stdout io.Writer, payload any) int {

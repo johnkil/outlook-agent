@@ -6,9 +6,9 @@ All commands write JSON to stdout and diagnostics to stderr.
 
 ```text
 outlook-agent doctor [--json]
-outlook-agent auth check --transport <name> [--profile <name>]
+outlook-agent --config <path> auth check [--profile <name>]
 outlook-agent policy explain [--action <name>]
-outlook-agent mcp
+outlook-agent --config <path> mcp
 ```
 
 Exit codes:
@@ -127,4 +127,3 @@ Config values may reference secret-store keys but must not store secret values.
 - Fake transport contract tests for every public MCP tool.
 - CLI JSON contract tests.
 - Optional live tests gated behind explicit profile config.
-

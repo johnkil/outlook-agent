@@ -21,6 +21,43 @@ Add a local MCP server entry to your OpenCode configuration:
 During local development, use the checked-out binary path or `go run` wrapper
 instead of `outlook-agent` if the binary is not installed globally.
 
+To run against a local OWA-like profile, pass an ignored local config path:
+
+```json
+{
+  "mcp": {
+    "outlook-agent": {
+      "type": "local",
+      "command": [
+        "outlook-agent",
+        "--config",
+        ".local/outlook-agent.json",
+        "mcp"
+      ],
+      "enabled": true
+    }
+  }
+}
+```
+
+Example `.local/outlook-agent.json`:
+
+```json
+{
+  "default_profile": "work",
+  "profiles": {
+    "work": {
+      "transport": "owa",
+      "secret_ref": "keychain:mail.example.com/DOMAIN\\user",
+      "settings": {
+        "base_url": "https://mail.example.com",
+        "username": "DOMAIN\\user"
+      }
+    }
+  }
+}
+```
+
 ## Skills
 
 The `skills/` directory provides workflow guidance inspired by the OpenAI
@@ -52,6 +89,6 @@ The MCP server registers the initial public tool surface from `docs/SPEC.md`:
 - `outlook.action_confirm`
 - `outlook.raw_action`
 
-The current runtime uses the fake transport by default. Private enterprise
-transports should plug into the same tool contract instead of changing the
-OpenCode-facing surface.
+The runtime uses the fake transport by default when no profile is configured.
+Private enterprise profiles should plug into the same tool contract instead of
+changing the OpenCode-facing surface.

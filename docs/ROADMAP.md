@@ -63,13 +63,14 @@ Status: implemented initial slice.
 
 ## Phase 5: Transports
 
-- Status: started.
+- Status: implemented initial config-driven slice.
 
 - Fake transport for tests and examples.
 - Graph transport where delegated OAuth is available.
 - EWS transport where Exchange policy allows it.
 - OWA-like REST transport interface: implemented initial generic adapter with
   mocked auth/service tests.
+- Runtime config wiring: implemented for fake and generic OWA profiles.
 - Private enterprise adapter outside the public core.
 
 ## Phase 6: Production Readiness
