@@ -37,8 +37,16 @@ type AuthCheckOutput struct {
 
 type EmptyInput struct{}
 
+type CapabilityDetailOutput struct {
+	Name        string `json:"name"`
+	Transport   string `json:"transport"`
+	SafetyClass string `json:"safety_class"`
+	Level       int    `json:"level"`
+}
+
 type CapabilitiesOutput struct {
-	Actions []string `json:"actions"`
+	Actions []string                 `json:"actions"`
+	Details []CapabilityDetailOutput `json:"details"`
 }
 
 type MailSearchInput struct {
@@ -236,10 +244,17 @@ func capabilitiesHandler(client transport.Transport) func(context.Context, *mcp.
 	return func(ctx context.Context, _ *mcp.CallToolRequest, _ EmptyInput) (*mcp.CallToolResult, CapabilitiesOutput, error) {
 		capabilities := client.Capabilities(ctx)
 		actions := make([]string, 0, len(capabilities.Actions))
+		details := make([]CapabilityDetailOutput, 0, len(capabilities.Actions))
 		for _, action := range capabilities.Actions {
 			actions = append(actions, action.Name)
+			details = append(details, CapabilityDetailOutput{
+				Name:        action.Name,
+				Transport:   action.Transport,
+				SafetyClass: string(action.Class),
+				Level:       int(action.Level),
+			})
 		}
-		return nil, CapabilitiesOutput{Actions: actions}, nil
+		return nil, CapabilitiesOutput{Actions: actions, Details: details}, nil
 	}
 }
 

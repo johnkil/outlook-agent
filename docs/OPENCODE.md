@@ -97,3 +97,9 @@ The MCP server registers the initial public tool surface from `docs/SPEC.md`:
 The runtime uses the fake transport by default when no profile is configured.
 Private enterprise profiles should plug into the same tool contract instead of
 changing the OpenCode-facing surface.
+
+Agents should call `outlook.capabilities` before raw transport calls. The
+response keeps a backwards-compatible `actions` name list and adds `details`
+entries with `name`, `transport`, `safety_class`, and numeric coverage `level`
+so agents can choose the dry-run/confirmation path instead of guessing from
+documentation.

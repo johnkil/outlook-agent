@@ -157,6 +157,30 @@ func TestActionConfirmAllowsDestructiveTokenWithUnsafe(t *testing.T) {
 	}
 }
 
+func TestCapabilitiesHandlerReturnsPolicyMetadata(t *testing.T) {
+	client := newRecordingTransport(action.Definition{
+		Name:      "DeleteItem",
+		Transport: "owa",
+		Class:     policy.Destructive,
+		Level:     action.LevelRawGuardedExecution,
+	})
+
+	_, output, err := capabilitiesHandler(client)(context.Background(), nil, EmptyInput{})
+	if err != nil {
+		t.Fatalf("capabilities handler: %v", err)
+	}
+	if len(output.Actions) != 1 || output.Actions[0] != "DeleteItem" {
+		t.Fatalf("expected action names to remain available: %#v", output)
+	}
+	if len(output.Details) != 1 {
+		t.Fatalf("expected detailed action metadata: %#v", output)
+	}
+	detail := output.Details[0]
+	if detail.Name != "DeleteItem" || detail.Transport != "owa" || detail.SafetyClass != "destructive" || detail.Level != int(action.LevelRawGuardedExecution) {
+		t.Fatalf("unexpected capability detail: %#v", detail)
+	}
+}
+
 func TestRawActionRejectsGatedBulkAction(t *testing.T) {
 	runtime := NewRuntime(fake.New())
 

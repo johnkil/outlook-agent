@@ -49,6 +49,9 @@ level 5: workflow skill guidance
 - High-use actions graduate to typed schemas and high-level MCP tools.
 - Dry-run confirmation is a gate, not a bypass: confirmed actions still pass
   policy checks before transport execution.
+- MCP callers should inspect `outlook.capabilities.details` before choosing
+  `outlook.raw_action`; the details array exposes each action's transport,
+  safety class, and coverage level from the runtime registry.
 
 ## OWA Transport Status
 
