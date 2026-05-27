@@ -54,4 +54,4 @@
 - [x] Run live read-only availability smoke with temp config.
 - [x] Remove temp downloaded Confluence examples from `/private/tmp` if present.
 - [x] Update docs and local spike log.
-- [ ] Commit and push the branch.
+- [x] Commit and push the branch.
