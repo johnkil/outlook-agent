@@ -73,6 +73,15 @@ If the browser scout observes only auth, root, or error-page resources, do not
 add registry actions from that run. Treat it as evidence that the tested
 entrypoint did not reach the OWA application boot surface.
 
+When the root entrypoint reports an OWA error surface, run a small entrypoint
+matrix before guessing static asset URLs. In the current live environment,
+`/owa/?layout=mouse` is the first useful candidate app shell: it returns a
+large Outlook HTML shell with hundreds of linked script references, while root,
+basic, narrow, folder, path, and fragment variants either stay on the error
+surface or redirect to logon. Treat that shell as the starting point for
+asset-resolution discovery; do not add registry actions until action names are
+found in same-origin JavaScript or service URLs.
+
 The output includes:
 
 - `discovered`: sorted unique service-action names found in the file;
