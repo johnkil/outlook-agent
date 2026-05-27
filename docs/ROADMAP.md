@@ -67,14 +67,16 @@ Status: implemented initial slice.
 - Status: implemented initial config-driven slice.
 
 - Fake transport for tests and examples.
-- Graph transport where delegated OAuth is available.
+- Graph transport where delegated OAuth is available: initial bearer-token
+  `GetMailFolder` read-metadata probe/action implemented; OAuth acquisition,
+  refresh, admin consent, and broader action coverage remain.
 - EWS transport where Exchange policy allows it: initial SOAP `GetFolder`
   read-metadata probe/action implemented; broader action coverage and live
   environment/auth enablement remain.
 - OWA-like REST transport interface: implemented initial generic adapter with
   mocked auth/service tests.
-- Runtime config wiring: implemented for fake, generic OWA, and initial EWS
-  profiles.
+- Runtime config wiring: implemented for fake, generic OWA, initial EWS, and
+  initial Graph profiles.
 - OWA high-level mappings: implemented for mail search, metadata/body fetch,
   draft save, move to Deleted Items, calendar list, and calendar availability;
   mail search and availability have live opt-in smoke tests.

@@ -181,6 +181,62 @@ func TestBuildTransportCreatesEWSProfile(t *testing.T) {
 	}
 }
 
+func TestBuildTransportCreatesGraphProfile(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		if request.URL.Path != "/v1.0/me/mailFolders/inbox" {
+			t.Fatalf("unexpected path: %s", request.URL.Path)
+		}
+		if request.Header.Get("Authorization") != "Bearer token-secret" {
+			t.Fatalf("unexpected authorization header")
+		}
+		response.Header().Set("Content-Type", "application/json")
+		_, _ = response.Write([]byte(`{
+			"id": "inbox",
+			"displayName": "Inbox",
+			"totalItemCount": 1,
+			"unreadItemCount": 0,
+			"childFolderCount": 2
+		}`))
+	}))
+	defer server.Close()
+
+	path := writeConfig(t, fmt.Sprintf(`{
+		"default_profile": "work",
+		"profiles": {
+			"work": {
+				"transport": "graph",
+				"secret_ref": "memory:graph-token",
+				"settings": {
+					"base_url": %q
+				}
+			}
+		}
+	}`, server.URL+"/v1.0"))
+
+	client, source, err := app.BuildTransport(app.Options{
+		ConfigPath: path,
+		Secrets:    secret.NewMemoryStore(map[string]string{"memory:graph-token": "token-secret"}),
+	})
+	if err != nil {
+		t.Fatalf("build transport: %v", err)
+	}
+
+	if !source.Found || source.Path != path {
+		t.Fatalf("expected explicit config source, got %#v", source)
+	}
+	if client.Name() != "graph" {
+		t.Fatalf("expected graph transport, got %q", client.Name())
+	}
+
+	auth := client.Authenticate(context.Background(), "work")
+	if !auth.OK {
+		t.Fatalf("expected auth success, got %#v", auth)
+	}
+	if auth.Principal != "graph:me" {
+		t.Fatalf("expected principal graph:me, got %q", auth.Principal)
+	}
+}
+
 func TestBuildTransportMapsOWAMailboxEmail(t *testing.T) {
 	var availabilityRequest map[string]any
 	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {

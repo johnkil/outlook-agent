@@ -9,6 +9,7 @@ import (
 	"github.com/johnkil/outlook-agent/internal/transport"
 	"github.com/johnkil/outlook-agent/internal/transport/ews"
 	"github.com/johnkil/outlook-agent/internal/transport/fake"
+	"github.com/johnkil/outlook-agent/internal/transport/graph"
 	"github.com/johnkil/outlook-agent/internal/transport/owa"
 )
 
@@ -66,6 +67,12 @@ func BuildTransportResult(options Options) (TransportResult, error) {
 			return TransportResult{Source: source, Profile: profileName}, err
 		}
 		return TransportResult{Client: client, Source: source, Profile: profileName}, nil
+	case "graph":
+		client, err := buildGraphTransport(profile, options)
+		if err != nil {
+			return TransportResult{Source: source, Profile: profileName}, err
+		}
+		return TransportResult{Client: client, Source: source, Profile: profileName}, nil
 	default:
 		return TransportResult{Source: source, Profile: profileName}, fmt.Errorf("transport %q is not supported", profile.Transport)
 	}
@@ -103,6 +110,21 @@ func buildEWSTransport(profile config.Profile, options Options) (transport.Trans
 		return nil, err
 	}
 	return ews.NewTransport(config, secrets, options.HTTPClient), nil
+}
+
+func buildGraphTransport(profile config.Profile, options Options) (transport.Transport, error) {
+	secrets := options.Secrets
+	if secrets == nil {
+		secrets = secret.NewKeychainStore()
+	}
+	config := graph.Config{
+		BaseURL:   stringSetting(profile.Settings, "base_url"),
+		SecretRef: secret.Ref(profile.SecretRef),
+	}
+	if err := config.Validate(); err != nil {
+		return nil, err
+	}
+	return graph.NewTransport(config, secrets, options.HTTPClient), nil
 }
 
 func stringSetting(settings map[string]any, key string) string {

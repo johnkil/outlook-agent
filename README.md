@@ -78,6 +78,28 @@ Some Exchange deployments require NTLM, Negotiate, OAuth, or policy allow-list
 configuration; the built-in probe records failure categories without printing
 secrets.
 
+For a Microsoft Graph profile, store a delegated or application access token in
+the secret store and reference it from config:
+
+```json
+{
+  "default_profile": "work",
+  "profiles": {
+    "work": {
+      "transport": "graph",
+      "secret_ref": "keychain:graph.microsoft.com/access-token",
+      "settings": {
+        "base_url": "https://graph.microsoft.com/v1.0"
+      }
+    }
+  }
+}
+```
+
+The initial Graph adapter supports read-metadata `GetMailFolder` and uses
+`/me/mailFolders/inbox` as its auth probe. Token acquisition and admin consent
+stay outside the public repository.
+
 ## Product Shape
 
 - Core runtime: Go.

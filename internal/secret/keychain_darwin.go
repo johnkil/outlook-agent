@@ -4,6 +4,7 @@ package secret
 
 import (
 	"context"
+	"fmt"
 	"os/exec"
 	"strings"
 )
@@ -14,23 +15,27 @@ func NewKeychainStore() *KeychainStore {
 	return &KeychainStore{}
 }
 
+var securityFindGenericPassword = func(ctx context.Context, service string, account string) ([]byte, error) {
+	return exec.CommandContext(
+		ctx,
+		"/usr/bin/security",
+		"find-generic-password",
+		"-s",
+		service,
+		"-a",
+		account,
+		"-w",
+	).Output()
+}
+
 func (store *KeychainStore) Get(ctx context.Context, ref Ref) (Value, error) {
 	parsed, err := ParseKeychainRef(ref)
 	if err != nil {
 		return "", err
 	}
-	output, err := exec.CommandContext(
-		ctx,
-		"/usr/bin/security",
-		"find-generic-password",
-		"-s",
-		parsed.Service,
-		"-a",
-		parsed.Account,
-		"-w",
-	).Output()
+	output, err := securityFindGenericPassword(ctx, parsed.Service, parsed.Account)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("%w: %s", ErrNotFound, ref)
 	}
 	return Value(strings.TrimRight(string(output), "\r\n")), nil
 }
