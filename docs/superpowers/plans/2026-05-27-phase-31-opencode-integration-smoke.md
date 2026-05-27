@@ -68,7 +68,7 @@ opencode mcp list --pure
 
 Expected: binary stdio smoke passes; OpenCode CLI is present. If `opencode mcp list --pure` fails because of local OpenCode state, record that separately from the project MCP implementation result.
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add opencode.jsonc docs internal
