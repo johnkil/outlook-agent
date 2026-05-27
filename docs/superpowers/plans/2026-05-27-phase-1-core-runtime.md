@@ -187,4 +187,4 @@ Expected: PASS.
 GOCACHE="$PWD/.cache/go-build" go test ./...
 ```
 
-- [ ] Confirm git status is clean after commit and push.
+- [x] Confirm git status is clean after commit and push.
