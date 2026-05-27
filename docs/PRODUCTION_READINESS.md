@@ -27,7 +27,7 @@ Status values:
 | Security and redaction | Partial for production operations | Runtime policy classes, explicit target rules, dry-run tokens, confirmation binding, unsafe requirements, dry-run count summaries for attachment/folder/rule/config payload shapes, sanitized dry-run payload examples for all 26 mutating raw OWA actions, and redaction have unit or MCP tests; CI now adds a public-safety check and dependency vulnerability scan baseline; `docs/OPERATIONS.md` documents incident response, credential revocation, organization secret scanning, and enterprise config boundaries. |
 | Workflow skills | Ready initial set | `skills/` contains mail and calendar workflow skills for triage, reply drafting, task extraction, subscription cleanup, daily brief, meeting prep, and freeing time. |
 | Release readiness | Partial | `docs/RELEASE.md`, `docs/OPERATIONS.md`, `scripts/release-build.sh`, `.github/workflows/ci.yml`, and `.github/workflows/release.yml` define cross-platform archives, checksums, optional signing, signing-key publication/rotation, upgrade validation, rollback, CI, and tag-driven publishing; publishing an enterprise installer or package-manager wrapper is still an operator-channel task. |
-| Graph/EWS adapters | Gap | Architecture reserves Graph and EWS transports, but production adapters are not implemented in this repository yet. |
+| Graph/EWS adapters | Partial | EWS has an initial SOAP adapter with config wiring and a read-metadata `GetFolder` auth probe/action covered by unit tests; the tested live endpoint returned an empty/EOF response before SOAP auth completed, so environment enablement or alternate auth remains unresolved. Graph is still not implemented. |
 
 ## Current Evidence
 
@@ -35,6 +35,9 @@ Status values:
   - `docs/SPEC.md`
   - `internal/cli/cli_test.go`
   - `internal/config/config_test.go`
+  - `internal/app/runtime_test.go`
+- EWS adapter:
+  - `internal/transport/ews/transport_test.go`
   - `internal/app/runtime_test.go`
 - MCP contract and agent flow:
   - `internal/mcpserver/server_test.go`
@@ -65,7 +68,9 @@ Status values:
   - real enterprise config examples must live outside the public repository.
 - Protocol breadth:
   - Graph adapter;
-  - EWS adapter.
+  - broader EWS action coverage beyond the initial `GetFolder` read-metadata
+    probe/action;
+  - EWS live environment/auth enablement for the tested endpoint.
 - Live validation:
   - `FindFolder` live payload/endpoint compatibility follow-up after six
     metadata-only candidates returned the same internal OWA error;

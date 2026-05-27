@@ -7,6 +7,7 @@ import (
 	"github.com/johnkil/outlook-agent/internal/config"
 	"github.com/johnkil/outlook-agent/internal/secret"
 	"github.com/johnkil/outlook-agent/internal/transport"
+	"github.com/johnkil/outlook-agent/internal/transport/ews"
 	"github.com/johnkil/outlook-agent/internal/transport/fake"
 	"github.com/johnkil/outlook-agent/internal/transport/owa"
 )
@@ -59,6 +60,12 @@ func BuildTransportResult(options Options) (TransportResult, error) {
 			return TransportResult{Source: source, Profile: profileName}, err
 		}
 		return TransportResult{Client: client, Source: source, Profile: profileName}, nil
+	case "ews":
+		client, err := buildEWSTransport(profile, options)
+		if err != nil {
+			return TransportResult{Source: source, Profile: profileName}, err
+		}
+		return TransportResult{Client: client, Source: source, Profile: profileName}, nil
 	default:
 		return TransportResult{Source: source, Profile: profileName}, fmt.Errorf("transport %q is not supported", profile.Transport)
 	}
@@ -80,6 +87,22 @@ func buildOWATransport(profile config.Profile, options Options) (transport.Trans
 		return nil, err
 	}
 	return owa.NewTransport(config, secrets, options.HTTPClient), nil
+}
+
+func buildEWSTransport(profile config.Profile, options Options) (transport.Transport, error) {
+	secrets := options.Secrets
+	if secrets == nil {
+		secrets = secret.NewKeychainStore()
+	}
+	config := ews.Config{
+		EndpointURL: stringSetting(profile.Settings, "endpoint_url"),
+		Username:    stringSetting(profile.Settings, "username"),
+		SecretRef:   secret.Ref(profile.SecretRef),
+	}
+	if err := config.Validate(); err != nil {
+		return nil, err
+	}
+	return ews.NewTransport(config, secrets, options.HTTPClient), nil
 }
 
 func stringSetting(settings map[string]any, key string) string {

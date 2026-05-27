@@ -15,6 +15,7 @@ outlook-agent --config <path> auth check [--profile <name>]
 outlook-agent policy explain [--action <name>]
 outlook-agent owa discover-actions --file <path>
 outlook-agent --config <path> owa discover-actions --url <path-or-url> [--include-linked-scripts] [--follow-navigation-hints] [--diagnostics] [--max-sources <positive-int>]
+outlook-agent --config <path> owa discover-action-context --action <OWAAction> --url <path-or-url> [--include-linked-scripts] [--follow-navigation-hints] [--max-sources <positive-int>]
 outlook-agent --config <path> mcp
 ```
 
@@ -113,6 +114,18 @@ DryRun(ctx, ActionRequest) DryRunSummary
 ```
 
 Transport implementations must not print or return secrets.
+
+Configured transports:
+
+- `fake`: local deterministic development data.
+- `owa`: OWA-like JSON service transport with high-level mail/calendar tools,
+  raw guarded action execution, in-memory authenticated discovery, and action
+  context diagnostics.
+- `ews`: initial Exchange Web Services SOAP transport. Profiles use
+  `settings.endpoint_url`, `settings.username`, and `secret_ref`. The first
+  supported action is read-metadata `GetFolder`, also used by `auth check`.
+  Deployments that require NTLM, Negotiate, OAuth, or server-side EWS
+  allow-listing need additional adapter/auth work.
 
 ## Redaction
 

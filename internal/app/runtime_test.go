@@ -114,6 +114,73 @@ func TestBuildTransportCreatesOWAProfile(t *testing.T) {
 	}
 }
 
+func TestBuildTransportCreatesEWSProfile(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		if request.URL.Path != "/EWS/Exchange.asmx" {
+			t.Fatalf("unexpected path: %s", request.URL.Path)
+		}
+		response.Header().Set("Content-Type", "text/xml")
+		_, _ = response.Write([]byte(`<?xml version="1.0" encoding="utf-8"?>
+<soap:Envelope xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/"
+  xmlns:m="http://schemas.microsoft.com/exchange/services/2006/messages"
+  xmlns:t="http://schemas.microsoft.com/exchange/services/2006/types">
+  <soap:Body>
+    <m:GetFolderResponse>
+      <m:ResponseMessages>
+        <m:GetFolderResponseMessage ResponseClass="Success">
+          <m:ResponseCode>NoError</m:ResponseCode>
+          <m:Folders>
+            <t:Folder>
+              <t:DisplayName>Inbox</t:DisplayName>
+              <t:TotalCount>1</t:TotalCount>
+            </t:Folder>
+          </m:Folders>
+        </m:GetFolderResponseMessage>
+      </m:ResponseMessages>
+    </m:GetFolderResponse>
+  </soap:Body>
+</soap:Envelope>`))
+	}))
+	defer server.Close()
+
+	path := writeConfig(t, fmt.Sprintf(`{
+		"default_profile": "work",
+		"profiles": {
+			"work": {
+				"transport": "ews",
+				"secret_ref": "memory:ews-password",
+				"settings": {
+					"endpoint_url": %q,
+					"username": "DOMAIN\\user"
+				}
+			}
+		}
+	}`, server.URL+"/EWS/Exchange.asmx"))
+
+	client, source, err := app.BuildTransport(app.Options{
+		ConfigPath: path,
+		Secrets:    secret.NewMemoryStore(map[string]string{"memory:ews-password": "password-secret"}),
+	})
+	if err != nil {
+		t.Fatalf("build transport: %v", err)
+	}
+
+	if !source.Found || source.Path != path {
+		t.Fatalf("expected explicit config source, got %#v", source)
+	}
+	if client.Name() != "ews" {
+		t.Fatalf("expected ews transport, got %q", client.Name())
+	}
+
+	auth := client.Authenticate(context.Background(), "work")
+	if !auth.OK {
+		t.Fatalf("expected auth success, got %#v", auth)
+	}
+	if auth.Principal != "DOMAIN\\user" {
+		t.Fatalf("expected principal DOMAIN\\user, got %q", auth.Principal)
+	}
+}
+
 func TestBuildTransportMapsOWAMailboxEmail(t *testing.T) {
 	var availabilityRequest map[string]any
 	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {

@@ -55,6 +55,29 @@ tokens, cookies, or canary values.
 `settings.mailbox_email` is the default mailbox used by
 `calendar.availability` when the request does not pass an explicit `email`.
 
+For an EWS profile, use an explicit SOAP endpoint and a secret-store reference:
+
+```json
+{
+  "default_profile": "work",
+  "profiles": {
+    "work": {
+      "transport": "ews",
+      "secret_ref": "keychain:mail.example.com/DOMAIN\\user",
+      "settings": {
+        "endpoint_url": "https://mail.example.com/EWS/Exchange.asmx",
+        "username": "DOMAIN\\user"
+      }
+    }
+  }
+}
+```
+
+The initial EWS adapter supports a read-metadata `GetFolder` probe/action.
+Some Exchange deployments require NTLM, Negotiate, OAuth, or policy allow-list
+configuration; the built-in probe records failure categories without printing
+secrets.
+
 ## Product Shape
 
 - Core runtime: Go.
