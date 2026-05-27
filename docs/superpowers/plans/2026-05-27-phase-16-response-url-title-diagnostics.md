@@ -66,5 +66,5 @@
 - [x] Remove `/private/tmp/outlook-agent-build-check`.
 - [x] Run `git diff --check`.
 - [x] Run public-safety grep with the local company-specific pattern set.
-- [ ] Commit and push the feature commit.
-- [ ] Mark this plan complete, commit the plan-status update, and push it.
+- [x] Commit and push the feature commit.
+- [x] Mark this plan complete, commit the plan-status update, and push it.
