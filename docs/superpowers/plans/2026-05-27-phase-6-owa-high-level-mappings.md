@@ -54,4 +54,4 @@
 - [x] Run public-safety grep with the local company-specific pattern set.
 - [x] Run a live read-only smoke against OWA with a temp config: auth plus one read-only high-level action if a safe CLI/MCP harness is available in this slice.
 - [x] Update `docs/ACTION_COVERAGE.md`, `docs/ROADMAP.md`, and the local spike log.
-- [ ] Commit and push the branch.
+- [x] Commit and push the branch.
