@@ -127,10 +127,11 @@ Configured transports:
   Deployments that require NTLM, Negotiate, OAuth, or server-side EWS
   allow-listing need additional adapter/auth work.
 - `graph`: initial Microsoft Graph REST transport. Profiles use optional
-  `settings.base_url` and `secret_ref` for a bearer access token. The first
-  supported action is read-metadata `GetMailFolder`, and `auth check` probes
-  `/me/mailFolders/inbox`. OAuth token acquisition, admin consent, and token
-  refresh are outside the public runtime in this phase.
+  `settings.base_url` and `secret_ref` for a bearer access token. Supported
+  read-metadata actions are `GetMailFolder`, `mail.search`, and
+  `mail.fetch_metadata`; `auth check` probes `/me/mailFolders/inbox`. OAuth
+  token acquisition, admin consent, and token refresh are outside the public
+  runtime in this phase.
 
 ## Redaction
 

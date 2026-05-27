@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/johnkil/outlook-agent/internal/action"
 	"github.com/johnkil/outlook-agent/internal/policy"
 	"github.com/johnkil/outlook-agent/internal/secret"
 	"github.com/johnkil/outlook-agent/internal/transport"
@@ -65,19 +66,28 @@ func TestTransportAuthenticatesWithInboxMailFolder(t *testing.T) {
 	}
 }
 
-func TestTransportCapabilitiesIncludeGetMailFolder(t *testing.T) {
+func TestTransportGraphCapabilitiesIncludeMailMetadata(t *testing.T) {
 	client := graph.NewTransport(graph.Config{
 		BaseURL:   "https://graph.example.test/v1.0",
 		SecretRef: secret.Ref("memory:graph"),
 	}, secret.NewMemoryStore(map[string]string{"memory:graph": "token-secret"}), nil)
 
 	capabilities := client.Capabilities(context.Background())
-	if len(capabilities.Actions) != 1 {
-		t.Fatalf("expected one Graph action, got %#v", capabilities.Actions)
-	}
-	action := capabilities.Actions[0]
-	if action.Name != "GetMailFolder" || action.Transport != "graph" || action.Class != policy.ReadMetadata {
-		t.Fatalf("unexpected Graph capability: %#v", action)
+	for _, tt := range []struct {
+		name  string
+		level action.CoverageLevel
+	}{
+		{name: "GetMailFolder", level: action.LevelRawGuardedExecution},
+		{name: "mail.search", level: action.LevelHighLevelMCPTool},
+		{name: "mail.fetch_metadata", level: action.LevelHighLevelMCPTool},
+	} {
+		definition, ok := findGraphCapability(capabilities.Actions, tt.name)
+		if !ok {
+			t.Fatalf("expected Graph capability %q in %#v", tt.name, capabilities.Actions)
+		}
+		if definition.Transport != "graph" || definition.Class != policy.ReadMetadata || definition.Level != tt.level {
+			t.Fatalf("unexpected Graph capability for %q: %#v", tt.name, definition)
+		}
 	}
 }
 
@@ -107,6 +117,114 @@ func TestTransportExecutesGetMailFolder(t *testing.T) {
 	}
 }
 
+func TestTransportExecutesMailSearchMetadata(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		if request.Method != http.MethodGet || request.URL.Path != "/v1.0/me/mailFolders/inbox/messages" {
+			t.Fatalf("unexpected request: %s %s", request.Method, request.URL.String())
+		}
+		if request.Header.Get("Authorization") != "Bearer token-secret" {
+			t.Fatal("expected bearer token header")
+		}
+		if request.URL.Query().Get("$top") != "2" {
+			t.Fatalf("expected $top=2, got %q", request.URL.Query().Get("$top"))
+		}
+		assertGraphMessageSelect(t, request.URL.Query().Get("$select"))
+		response.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(response).Encode(map[string]any{
+			"value": []any{
+				graphMessageResponse("message-1", "Planning", "Alice", "alice@example.com"),
+			},
+		})
+	}))
+	defer server.Close()
+
+	client := graph.NewTransport(graph.Config{
+		BaseURL:   server.URL + "/v1.0",
+		SecretRef: secret.Ref("memory:graph"),
+	}, secret.NewMemoryStore(map[string]string{"memory:graph": "token-secret"}), server.Client())
+
+	result := client.Execute(context.Background(), transport.ActionRequest{
+		Name:    "mail.search",
+		Payload: map[string]any{"max": 2},
+	})
+
+	if !result.OK {
+		t.Fatalf("expected mail.search ok, got %#v", result)
+	}
+	messages := result.Data["messages"].([]any)
+	if len(messages) != 1 {
+		t.Fatalf("expected one message, got %#v", messages)
+	}
+	message := messages[0].(map[string]any)
+	if message["id"] != "message-1" || message["subject"] != "Planning" || message["sender"] != "Alice <alice@example.com>" {
+		t.Fatalf("unexpected message metadata: %#v", message)
+	}
+	if message["received_at"] != "2026-05-28T09:30:00Z" || message["importance"] != "normal" || message["is_read"] != false || message["has_attachments"] != true {
+		t.Fatalf("unexpected message fields: %#v", message)
+	}
+}
+
+func TestTransportExecutesMailSearchFiltersByQuery(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		response.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(response).Encode(map[string]any{
+			"value": []any{
+				graphMessageResponse("message-1", "Planning", "Alice", "alice@example.com"),
+				graphMessageResponse("message-2", "Budget", "Bob", "bob@example.com"),
+			},
+		})
+	}))
+	defer server.Close()
+
+	client := graph.NewTransport(graph.Config{
+		BaseURL:   server.URL + "/v1.0",
+		SecretRef: secret.Ref("memory:graph"),
+	}, secret.NewMemoryStore(map[string]string{"memory:graph": "token-secret"}), server.Client())
+
+	result := client.Execute(context.Background(), transport.ActionRequest{
+		Name:    "mail.search",
+		Payload: map[string]any{"query": "alice"},
+	})
+
+	if !result.OK {
+		t.Fatalf("expected mail.search ok, got %#v", result)
+	}
+	messages := result.Data["messages"].([]any)
+	if len(messages) != 1 || messages[0].(map[string]any)["id"] != "message-1" {
+		t.Fatalf("expected query to keep only Alice message, got %#v", messages)
+	}
+}
+
+func TestTransportExecutesMailFetchMetadata(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		if request.Method != http.MethodGet || request.URL.Path != "/v1.0/me/messages/message-1" {
+			t.Fatalf("unexpected request: %s %s", request.Method, request.URL.String())
+		}
+		assertGraphMessageSelect(t, request.URL.Query().Get("$select"))
+		response.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(response).Encode(graphMessageResponse("message-1", "Planning", "Alice", "alice@example.com"))
+	}))
+	defer server.Close()
+
+	client := graph.NewTransport(graph.Config{
+		BaseURL:   server.URL + "/v1.0",
+		SecretRef: secret.Ref("memory:graph"),
+	}, secret.NewMemoryStore(map[string]string{"memory:graph": "token-secret"}), server.Client())
+
+	result := client.Execute(context.Background(), transport.ActionRequest{
+		Name:    "mail.fetch_metadata",
+		Payload: map[string]any{"id": "message-1"},
+	})
+
+	if !result.OK {
+		t.Fatalf("expected mail.fetch_metadata ok, got %#v", result)
+	}
+	message := result.Data["message"].(map[string]any)
+	if message["id"] != "message-1" || message["subject"] != "Planning" || message["sender"] != "Alice <alice@example.com>" {
+		t.Fatalf("unexpected message metadata: %#v", message)
+	}
+}
+
 func TestTransportReportsHTTPErrorWithoutToken(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
 		response.Header().Set("Content-Type", "application/json")
@@ -132,6 +250,15 @@ func TestTransportReportsHTTPErrorWithoutToken(t *testing.T) {
 	}
 }
 
+func findGraphCapability(actions []action.Definition, name string) (action.Definition, bool) {
+	for _, candidate := range actions {
+		if candidate.Name == name {
+			return candidate, true
+		}
+	}
+	return action.Definition{}, false
+}
+
 func graphFolderResponse() map[string]any {
 	return map[string]any{
 		"id":               "inbox",
@@ -139,5 +266,31 @@ func graphFolderResponse() map[string]any {
 		"totalItemCount":   42,
 		"unreadItemCount":  7,
 		"childFolderCount": 3,
+	}
+}
+
+func graphMessageResponse(id string, subject string, name string, address string) map[string]any {
+	return map[string]any{
+		"id":               id,
+		"subject":          subject,
+		"receivedDateTime": "2026-05-28T09:30:00Z",
+		"importance":       "normal",
+		"isRead":           false,
+		"hasAttachments":   true,
+		"from": map[string]any{
+			"emailAddress": map[string]any{
+				"name":    name,
+				"address": address,
+			},
+		},
+	}
+}
+
+func assertGraphMessageSelect(t *testing.T, selectValue string) {
+	t.Helper()
+	for _, field := range []string{"id", "subject", "from", "receivedDateTime", "importance", "isRead", "hasAttachments"} {
+		if !strings.Contains(selectValue, field) {
+			t.Fatalf("expected $select to contain %q, got %q", field, selectValue)
+		}
 	}
 }

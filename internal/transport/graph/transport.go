@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 
 	"github.com/johnkil/outlook-agent/internal/action"
@@ -41,6 +42,8 @@ func (client *Transport) Authenticate(ctx context.Context, _ string) transport.A
 func (client *Transport) Capabilities(context.Context) transport.CapabilitySet {
 	return transport.CapabilitySet{Actions: []action.Definition{
 		{Name: "GetMailFolder", Transport: "graph", Class: policy.ReadMetadata, Level: action.LevelRawGuardedExecution},
+		{Name: "mail.search", Transport: "graph", Class: policy.ReadMetadata, Level: action.LevelHighLevelMCPTool},
+		{Name: "mail.fetch_metadata", Transport: "graph", Class: policy.ReadMetadata, Level: action.LevelHighLevelMCPTool},
 	}}
 }
 
@@ -59,6 +62,22 @@ func (client *Transport) Execute(ctx context.Context, request transport.ActionRe
 			"unread_count":       folder.UnreadItemCount,
 			"child_folder_count": folder.ChildFolderCount,
 		}}}
+	case "mail.search":
+		messages, err := client.listMessages(ctx, stringValue(request.Payload, "folder_id", "inbox"), intValue(request.Payload, "max", 150), stringValue(request.Payload, "query", ""))
+		if err != nil {
+			return transport.ActionResponse{OK: false, Error: err.Error()}
+		}
+		return transport.ActionResponse{OK: true, Data: map[string]any{"messages": messages}}
+	case "mail.fetch_metadata":
+		messageID := strings.TrimSpace(stringValue(request.Payload, "id", ""))
+		if messageID == "" {
+			return transport.ActionResponse{OK: false, Error: "mail.fetch_metadata requires id"}
+		}
+		message, err := client.getMessage(ctx, messageID)
+		if err != nil {
+			return transport.ActionResponse{OK: false, Error: err.Error()}
+		}
+		return transport.ActionResponse{OK: true, Data: map[string]any{"message": normalizeGraphMessage(message)}}
 	default:
 		return transport.ActionResponse{OK: false, Error: "graph transport action is not implemented"}
 	}
@@ -76,30 +95,103 @@ type mailFolder struct {
 	ChildFolderCount any    `json:"childFolderCount"`
 }
 
+type messageList struct {
+	Value []message `json:"value"`
+}
+
+type message struct {
+	ID             string    `json:"id"`
+	Subject        string    `json:"subject"`
+	From           recipient `json:"from"`
+	ReceivedAt     string    `json:"receivedDateTime"`
+	Importance     string    `json:"importance"`
+	IsRead         bool      `json:"isRead"`
+	HasAttachments bool      `json:"hasAttachments"`
+}
+
+type recipient struct {
+	EmailAddress emailAddress `json:"emailAddress"`
+}
+
+type emailAddress struct {
+	Name    string `json:"name"`
+	Address string `json:"address"`
+}
+
 type graphErrorResponse struct {
 	Error struct {
 		Code string `json:"code"`
 	} `json:"error"`
 }
 
+const messageMetadataSelect = "id,subject,from,receivedDateTime,importance,isRead,hasAttachments"
+
 func (client *Transport) getMailFolder(ctx context.Context, folderID string) (mailFolder, error) {
-	if err := client.config.Validate(); err != nil {
-		return mailFolder{}, err
-	}
-	if client.secrets == nil {
-		return mailFolder{}, fmt.Errorf("secret store is not configured")
-	}
-	token, err := client.secrets.Get(ctx, client.config.SecretRef)
-	if err != nil {
-		return mailFolder{}, err
-	}
 	requestURL, err := client.mailFolderURL(folderID)
 	if err != nil {
 		return mailFolder{}, err
 	}
+	var folder mailFolder
+	if err := client.getJSON(ctx, requestURL, &folder); err != nil {
+		return mailFolder{}, err
+	}
+	if folder.ID == "" && folder.DisplayName == "" {
+		return mailFolder{}, fmt.Errorf("missing Graph mailFolder response")
+	}
+	return folder, nil
+}
+
+func (client *Transport) listMessages(ctx context.Context, folderID string, maxItems int, query string) ([]any, error) {
+	requestURL, err := client.messagesURL(folderID, maxItems)
+	if err != nil {
+		return nil, err
+	}
+	var response messageList
+	if err := client.getJSON(ctx, requestURL, &response); err != nil {
+		return nil, err
+	}
+	messages := make([]any, 0, len(response.Value))
+	for _, item := range response.Value {
+		normalized := normalizeGraphMessage(item)
+		if matchesQuery(normalized, query) {
+			messages = append(messages, normalized)
+		}
+	}
+	if messages == nil {
+		return []any{}, nil
+	}
+	return messages, nil
+}
+
+func (client *Transport) getMessage(ctx context.Context, id string) (message, error) {
+	requestURL, err := client.messageURL(id)
+	if err != nil {
+		return message{}, err
+	}
+	var item message
+	if err := client.getJSON(ctx, requestURL, &item); err != nil {
+		return message{}, err
+	}
+	if item.ID == "" {
+		return message{}, fmt.Errorf("missing Graph message response")
+	}
+	return item, nil
+}
+
+func (client *Transport) getJSON(ctx context.Context, requestURL string, output any) error {
+	if err := client.config.Validate(); err != nil {
+		return err
+	}
+	if client.secrets == nil {
+		return fmt.Errorf("secret store is not configured")
+	}
+	token, err := client.secrets.Get(ctx, client.config.SecretRef)
+	if err != nil {
+		return err
+	}
 	request, err := http.NewRequestWithContext(ctx, http.MethodGet, requestURL, nil)
 	if err != nil {
-		return mailFolder{}, err
+		return err
 	}
 	request.Header.Set("Authorization", "Bearer "+string(token))
 	request.Header.Set("Accept", "application/json")
@@ -107,7 +199,7 @@ func (client *Transport) getMailFolder(ctx context.Context, folderID string) (ma
 
 	response, err := client.client.Do(request)
 	if err != nil {
-		return mailFolder{}, err
+		return err
 	}
 	defer response.Body.Close()
 
@@ -115,18 +207,14 @@ func (client *Transport) getMailFolder(ctx context.Context, folderID string) (ma
 		var errorPayload graphErrorResponse
 		_ = json.NewDecoder(response.Body).Decode(&errorPayload)
 		if errorPayload.Error.Code != "" {
-			return mailFolder{}, fmt.Errorf("graph returned HTTP %d: %s", response.StatusCode, errorPayload.Error.Code)
+			return fmt.Errorf("graph returned HTTP %d: %s", response.StatusCode, errorPayload.Error.Code)
 		}
-		return mailFolder{}, fmt.Errorf("graph returned HTTP %d", response.StatusCode)
+		return fmt.Errorf("graph returned HTTP %d", response.StatusCode)
 	}
-	var folder mailFolder
-	if err := json.NewDecoder(response.Body).Decode(&folder); err != nil {
-		return mailFolder{}, err
+	if err := json.NewDecoder(response.Body).Decode(output); err != nil {
+		return err
 	}
-	if folder.ID == "" && folder.DisplayName == "" {
-		return mailFolder{}, fmt.Errorf("missing Graph mailFolder response")
-	}
-	return folder, nil
+	return nil
 }
 
 func (client *Transport) mailFolderURL(folderID string) (string, error) {
@@ -140,6 +228,66 @@ func (client *Transport) mailFolderURL(folderID string) (string, error) {
 	return base + "/me/mailFolders/" + url.PathEscape(folderID), nil
 }
 
+func (client *Transport) messagesURL(folderID string, maxItems int) (string, error) {
+	base, err := client.config.normalizedBaseURL()
+	if err != nil {
+		return "", err
+	}
+	if strings.TrimSpace(folderID) == "" {
+		folderID = "inbox"
+	}
+	if maxItems <= 0 {
+		maxItems = 150
+	}
+	values := url.Values{}
+	values.Set("$top", strconv.Itoa(maxItems))
+	values.Set("$select", messageMetadataSelect)
+	return base + "/me/mailFolders/" + url.PathEscape(folderID) + "/messages?" + values.Encode(), nil
+}
+
+func (client *Transport) messageURL(id string) (string, error) {
+	base, err := client.config.normalizedBaseURL()
+	if err != nil {
+		return "", err
+	}
+	values := url.Values{}
+	values.Set("$select", messageMetadataSelect)
+	return base + "/me/messages/" + url.PathEscape(id) + "?" + values.Encode(), nil
+}
+
+func normalizeGraphMessage(item message) map[string]any {
+	return map[string]any{
+		"id":              item.ID,
+		"subject":         item.Subject,
+		"sender":          formatAddress(item.From.EmailAddress),
+		"received_at":     item.ReceivedAt,
+		"importance":      item.Importance,
+		"is_read":         item.IsRead,
+		"has_attachments": item.HasAttachments,
+	}
+}
+
+func formatAddress(address emailAddress) string {
+	name := strings.TrimSpace(address.Name)
+	value := strings.TrimSpace(address.Address)
+	if name == "" {
+		return value
+	}
+	if value == "" {
+		return name
+	}
+	return name + " <" + value + ">"
+}
+
+func matchesQuery(message map[string]any, query string) bool {
+	needle := strings.ToLower(strings.TrimSpace(query))
+	if needle == "" {
+		return true
+	}
+	haystack := strings.ToLower(stringValue(message, "subject", "") + " " + stringValue(message, "sender", ""))
+	return strings.Contains(haystack, needle)
+}
+
 func stringValue(values map[string]any, key string, fallback string) string {
 	if values == nil {
 		return fallback
@@ -149,4 +297,22 @@ func stringValue(values map[string]any, key string, fallback string) string {
 		return fallback
 	}
 	return value
+}
+
+func intValue(values map[string]any, key string, fallback int) int {
+	if values == nil {
+		return fallback
+	}
+	value, ok := values[key]
+	if !ok {
+		return fallback
+	}
+	switch typed := value.(type) {
+	case int:
+		return typed
+	case float64:
+		return int(typed)
+	default:
+		return fallback
+	}
 }

@@ -96,9 +96,11 @@ the secret store and reference it from config:
 }
 ```
 
-The initial Graph adapter supports read-metadata `GetMailFolder` and uses
-`/me/mailFolders/inbox` as its auth probe. Token acquisition and admin consent
-stay outside the public repository.
+The initial Graph adapter supports read-metadata `GetMailFolder`, `mail.search`,
+and `mail.fetch_metadata`. It uses `/me/mailFolders/inbox` as its auth probe and
+keeps message access metadata-only through `/me/mailFolders/{folder}/messages`
+and `/me/messages/{id}`. Token acquisition and admin consent stay outside the
+public repository.
 
 ## Product Shape
 
