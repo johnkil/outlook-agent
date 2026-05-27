@@ -78,4 +78,4 @@
 
 - [x] Run full tests.
 - [x] Run public-safety grep for company-specific strings.
-- [ ] Commit and push `feat/owa-adapter`.
+- [x] Commit and push `feat/owa-adapter`.
