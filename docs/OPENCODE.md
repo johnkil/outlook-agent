@@ -4,7 +4,42 @@ Outlook Agent is intended to be connected to OpenCode as a local MCP server.
 
 ## Local MCP Config
 
-Add a local MCP server entry to your OpenCode configuration:
+This repository includes a development `opencode.jsonc` that registers the
+local Go MCP server with the safe fake transport:
+
+```bash
+go run ./cmd/outlook-agent mcp
+```
+
+```jsonc
+{
+  "$schema": "https://opencode.ai/config.json",
+  "mcp": {
+    "outlook-agent": {
+      "type": "local",
+      "command": ["go", "run", "./cmd/outlook-agent", "mcp"],
+      "enabled": true
+    }
+  }
+}
+```
+
+From the repository root, verify that OpenCode can see the configured server
+with `opencode mcp list`:
+
+```bash
+opencode mcp list
+```
+
+Then refer to the server by name in prompts. For example, ask OpenCode to
+`use outlook-agent`:
+
+```text
+Use outlook-agent to list Outlook capabilities.
+```
+
+For an installed binary, add a local MCP server entry to your OpenCode
+configuration:
 
 ```json
 {
@@ -98,6 +133,13 @@ The runtime uses the fake transport by default when no profile is configured.
 Private enterprise profiles should plug into the same tool contract instead of
 changing the OpenCode-facing surface.
 
+Use the checked-in fake-transport config for local OpenCode smoke checks before
+pointing the server at a private profile:
+
+```bash
+GOPATH=$PWD/.cache/go GOCACHE=$PWD/.cache/go-build GOMODCACHE=$PWD/.cache/go-mod go test ./cmd/outlook-agent -run TestBinaryMCPStdioUsesConfiguredDefaultProfile -count=1
+```
+
 Agents should call `outlook.capabilities` before raw transport calls. The
 response keeps a backwards-compatible `actions` name list and adds `details`
 entries with `name`, `transport`, `safety_class`, and numeric coverage `level`
@@ -114,3 +156,11 @@ flow is:
 2. If direct execution is not allowed, call `outlook.action_dry_run`.
 3. Show or reason over the dry-run summary.
 4. Execute only the exact payload with `outlook.action_confirm`.
+
+Prompt shape for destructive or broad work:
+
+```text
+Use outlook-agent. First call outlook.capabilities, then dry-run any gated
+action with outlook.action_dry_run. Execute only after the exact dry-run summary
+is acceptable, using outlook.action_confirm.
+```
