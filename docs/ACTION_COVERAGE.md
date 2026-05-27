@@ -57,6 +57,8 @@ level 5: workflow skill guidance
   and `action_confirm`. It can use `requires_explicit_target` and
   `requires_explicit_intent` to decide whether it must bind the request to a
   specific item or explicit user mutation request before trying to execute.
+  `execution_route` summarizes those fields into a single route enum. The
+  current audit verifies every registered OWA raw action has a route.
 
 ## OWA Transport Status
 

@@ -48,6 +48,7 @@ type CapabilityDetailOutput struct {
 	RequiresUnsafe         bool   `json:"requires_unsafe,omitempty"`
 	RequiresExplicitTarget bool   `json:"requires_explicit_target,omitempty"`
 	RequiresExplicitIntent bool   `json:"requires_explicit_intent,omitempty"`
+	ExecutionRoute         string `json:"execution_route"`
 }
 
 type CapabilitiesOutput struct {
@@ -265,6 +266,7 @@ func capabilitiesHandler(client transport.Transport) func(context.Context, *mcp.
 				RequiresUnsafe:         decision.RequiresUnsafe,
 				RequiresExplicitTarget: requiresExplicitTarget(action.Class),
 				RequiresExplicitIntent: requiresExplicitIntent(action.Class),
+				ExecutionRoute:         executionRoute(action.Class),
 			})
 		}
 		return nil, CapabilitiesOutput{Actions: actions, Details: details}, nil
@@ -277,6 +279,25 @@ func requiresExplicitTarget(class policy.SafetyClass) bool {
 
 func requiresExplicitIntent(class policy.SafetyClass) bool {
 	return class == policy.ReversibleSingleItem
+}
+
+func executionRoute(class policy.SafetyClass) string {
+	switch class {
+	case policy.ReadMetadata, policy.DraftOnly:
+		return "direct"
+	case policy.ReadBodyExplicit, policy.ReadAttachmentExplicit:
+		return "direct_explicit_target"
+	case policy.ReversibleSingleItem:
+		return "direct_explicit_intent"
+	case policy.ReversibleBulk, policy.SendLike, policy.SettingsOrRules:
+		return "dry_run_confirm"
+	case policy.Destructive:
+		return "unsafe_dry_run_confirm"
+	case policy.Unknown:
+		return "unsafe_direct"
+	default:
+		return "unsafe_direct"
+	}
 }
 
 func mailSearchHandler(client transport.Transport) func(context.Context, *mcp.CallToolRequest, MailSearchInput) (*mcp.CallToolResult, MailSearchOutput, error) {

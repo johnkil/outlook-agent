@@ -7,8 +7,10 @@ import (
 
 	"github.com/johnkil/outlook-agent/internal/action"
 	"github.com/johnkil/outlook-agent/internal/policy"
+	"github.com/johnkil/outlook-agent/internal/secret"
 	"github.com/johnkil/outlook-agent/internal/transport"
 	"github.com/johnkil/outlook-agent/internal/transport/fake"
+	"github.com/johnkil/outlook-agent/internal/transport/owa"
 )
 
 func TestDryRunHandlerReturnsConfirmationToken(t *testing.T) {
@@ -197,6 +199,53 @@ func TestCapabilitiesHandlerReturnsExplicitRequirementMetadata(t *testing.T) {
 	detail := output.Details[0]
 	if !detail.RequiresExplicitTarget || detail.RequiresExplicitIntent {
 		t.Fatalf("expected body-read capability to require explicit target only: %#v", detail)
+	}
+}
+
+func TestOWARawCapabilitiesExposeExecutionRoutes(t *testing.T) {
+	client := owa.NewTransport(owa.Config{
+		BaseURL:   "https://example.test",
+		Username:  "DOMAIN\\user",
+		SecretRef: secret.Ref("memory:owa"),
+	}, secret.NewMemoryStore(map[string]string{"memory:owa": "password"}), nil)
+
+	_, output, err := capabilitiesHandler(client)(context.Background(), nil, EmptyInput{})
+	if err != nil {
+		t.Fatalf("capabilities handler: %v", err)
+	}
+
+	rawCount := 0
+	for _, detail := range output.Details {
+		if detail.Transport != "owa" || detail.Level != int(action.LevelRawGuardedExecution) {
+			continue
+		}
+		rawCount++
+		if detail.ExecutionRoute == "" {
+			t.Fatalf("expected execution route for raw OWA action: %#v", detail)
+		}
+		switch detail.SafetyClass {
+		case string(policy.ReadMetadata), string(policy.DraftOnly):
+			if detail.ExecutionRoute != "direct" {
+				t.Fatalf("expected direct route for %s: %#v", detail.SafetyClass, detail)
+			}
+		case string(policy.ReadBodyExplicit), string(policy.ReadAttachmentExplicit):
+			if detail.ExecutionRoute != "direct_explicit_target" {
+				t.Fatalf("expected explicit-target route for %s: %#v", detail.SafetyClass, detail)
+			}
+		case string(policy.ReversibleBulk), string(policy.SendLike), string(policy.SettingsOrRules):
+			if detail.ExecutionRoute != "dry_run_confirm" {
+				t.Fatalf("expected dry-run-confirm route for %s: %#v", detail.SafetyClass, detail)
+			}
+		case string(policy.Destructive):
+			if detail.ExecutionRoute != "unsafe_dry_run_confirm" {
+				t.Fatalf("expected unsafe dry-run-confirm route for %s: %#v", detail.SafetyClass, detail)
+			}
+		default:
+			t.Fatalf("unexpected OWA raw safety class route: %#v", detail)
+		}
+	}
+	if rawCount != 55 {
+		t.Fatalf("expected 55 OWA raw capabilities, got %d", rawCount)
 	}
 }
 

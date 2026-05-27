@@ -47,7 +47,10 @@ Key tool inputs:
   `name`, `transport`, `safety_class`, numeric coverage `level`,
   `allowed_direct`, `requires_dry_run`, `requires_confirmation`, and
   `requires_unsafe`. Explicit read or mutation requirements are exposed through
-  `requires_explicit_target` and `requires_explicit_intent`.
+  `requires_explicit_target` and `requires_explicit_intent`. The
+  `execution_route` field is one of `direct`, `direct_explicit_target`,
+  `direct_explicit_intent`, `dry_run_confirm`, `unsafe_dry_run_confirm`, or
+  `unsafe_direct`.
 - `outlook.calendar_availability`: `start`, `end`, and optional `email`.
   When `email` is omitted, OWA profiles use `settings.mailbox_email` if
   configured.
