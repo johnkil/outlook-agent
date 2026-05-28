@@ -136,8 +136,9 @@ go test ./internal/app -run TestLiveEWSReadMetadataSmoke -count=1 -v
 ```
 
 The private config and profile stay outside this repository. The harness checks
-EWS authentication through the configured auth probe and executes metadata-only
-`GetFolder` against Inbox. It deliberately excludes raw EWSRequest, body reads,
+EWS authentication through the configured auth probe, executes metadata-only
+`GetFolder` against Inbox, and executes metadata-only `mail.search` through
+EWS `FindItem`. It deliberately excludes raw EWSRequest, body reads,
 attachment reads, send-like actions, and all write actions.
 
 ## Rollback Procedure

@@ -73,10 +73,10 @@ OUTLOOK_AGENT_LIVE_EWS_PROFILE=<ews-profile> \
 go test ./internal/app -run TestLiveEWSReadMetadataSmoke -count=1 -v
 ```
 
-The harness verifies `auth check` through the EWS `GetFolder` auth probe and
-then executes metadata-only `GetFolder` for Inbox. Raw EWSRequest, body,
-attachment, send-like, and write actions are excluded from this read-metadata
-harness.
+The harness verifies `auth check` through the EWS `GetFolder` auth probe,
+executes metadata-only `GetFolder` for Inbox, and executes metadata-only
+`mail.search` through EWS `FindItem`. Raw EWSRequest, body, attachment,
+send-like, and write actions are excluded from this read-metadata harness.
 
 ## Secret Store And Config
 

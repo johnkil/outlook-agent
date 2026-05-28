@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strconv"
 	"strings"
 
 	"github.com/johnkil/outlook-agent/internal/action"
@@ -40,6 +41,7 @@ func (client *Transport) Authenticate(ctx context.Context, _ string) transport.A
 func (client *Transport) Capabilities(context.Context) transport.CapabilitySet {
 	return transport.CapabilitySet{Actions: []action.Definition{
 		{Name: "GetFolder", Transport: "ews", Class: policy.ReadMetadata, Level: action.LevelRawGuardedExecution},
+		{Name: "mail.search", Transport: "ews", Class: policy.ReadMetadata, Level: action.LevelHighLevelMCPTool},
 		{Name: "EWSRequest", Transport: "ews", Class: policy.Destructive, Level: action.LevelRawGuardedExecution},
 	}}
 }
@@ -59,6 +61,12 @@ func (client *Transport) Execute(ctx context.Context, request transport.ActionRe
 			"unread_count":       metadata.UnreadCount,
 			"response_code":      metadata.ResponseCode,
 		}}}
+	case "mail.search":
+		messages, err := client.findItems(ctx, stringValue(request.Payload, "folder_id", "inbox"), intValue(request.Payload, "max", 150), stringValue(request.Payload, "query", ""))
+		if err != nil {
+			return transport.ActionResponse{OK: false, Error: err.Error()}
+		}
+		return transport.ActionResponse{OK: true, Data: map[string]any{"messages": messages}}
 	case "EWSRequest":
 		data, err := client.executeRawEWSRequest(ctx, request.Payload)
 		if err != nil {
@@ -131,6 +139,50 @@ func (client *Transport) executeRawEWSRequest(ctx context.Context, payload map[s
 	return data, nil
 }
 
+func (client *Transport) findItems(ctx context.Context, folderID string, maxItems int, query string) ([]any, error) {
+	if err := client.config.Validate(); err != nil {
+		return nil, err
+	}
+	if client.secrets == nil {
+		return nil, fmt.Errorf("secret store is not configured")
+	}
+	password, err := client.secrets.Get(ctx, client.config.SecretRef)
+	if err != nil {
+		return nil, err
+	}
+	request, err := BuildFindItemRequest(client.config, password, folderID, maxItems)
+	if err != nil {
+		return nil, err
+	}
+	request = request.WithContext(ctx)
+	response, err := client.client.Do(request)
+	if err != nil {
+		return nil, err
+	}
+	defer response.Body.Close()
+	items, parseErr := parseFindItemResponse(response.Body)
+	if response.StatusCode < 200 || response.StatusCode >= 300 {
+		if parseErr != nil {
+			return nil, fmt.Errorf("ews returned HTTP %d", response.StatusCode)
+		}
+		return nil, fmt.Errorf("ews returned HTTP %d", response.StatusCode)
+	}
+	if parseErr != nil {
+		return nil, parseErr
+	}
+	messages := make([]any, 0, len(items))
+	for _, item := range items {
+		normalized := normalizeFindItemMessage(item)
+		if matchesQuery(normalized, query) {
+			messages = append(messages, normalized)
+		}
+	}
+	if messages == nil {
+		return []any{}, nil
+	}
+	return messages, nil
+}
+
 func (client *Transport) getFolder(ctx context.Context, folderID string) (folderMetadata, error) {
 	if err := client.config.Validate(); err != nil {
 		return folderMetadata{}, err
@@ -165,6 +217,38 @@ func (client *Transport) getFolder(ctx context.Context, folderID string) (folder
 	return metadata, nil
 }
 
+func normalizeFindItemMessage(item findItemMessage) map[string]any {
+	return map[string]any{
+		"id":              item.ID,
+		"subject":         item.Subject,
+		"sender":          formatAddress(item.FromName, item.FromEmail),
+		"received_at":     item.ReceivedAt,
+		"is_read":         item.IsRead,
+		"has_attachments": item.HasAttachments,
+	}
+}
+
+func formatAddress(name string, address string) string {
+	name = strings.TrimSpace(name)
+	address = strings.TrimSpace(address)
+	if name == "" {
+		return address
+	}
+	if address == "" {
+		return name
+	}
+	return name + " <" + address + ">"
+}
+
+func matchesQuery(message map[string]any, query string) bool {
+	needle := strings.ToLower(strings.TrimSpace(query))
+	if needle == "" {
+		return true
+	}
+	haystack := strings.ToLower(stringValue(message, "subject", "") + " " + stringValue(message, "sender", ""))
+	return strings.Contains(haystack, needle)
+}
+
 func stringValue(values map[string]any, key string, fallback string) string {
 	if values == nil {
 		return fallback
@@ -174,6 +258,28 @@ func stringValue(values map[string]any, key string, fallback string) string {
 		return fallback
 	}
 	return value
+}
+
+func intValue(values map[string]any, key string, fallback int) int {
+	if values == nil {
+		return fallback
+	}
+	value, ok := values[key]
+	if !ok {
+		return fallback
+	}
+	switch typed := value.(type) {
+	case int:
+		return typed
+	case float64:
+		return int(typed)
+	case string:
+		parsed, err := strconv.Atoi(typed)
+		if err == nil {
+			return parsed
+		}
+	}
+	return fallback
 }
 
 func selectedEWSResponseHeaders(headers http.Header) map[string]any {

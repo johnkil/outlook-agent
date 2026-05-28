@@ -86,7 +86,7 @@ func TestTransportAuthenticatesWithGetFolderSOAP(t *testing.T) {
 	}
 }
 
-func TestTransportCapabilitiesIncludeGetFolderAndRawRequest(t *testing.T) {
+func TestTransportCapabilitiesIncludeGetFolderRawRequestAndMailSearch(t *testing.T) {
 	client := ews.NewTransport(ews.Config{
 		EndpointURL: "https://example.test/EWS/Exchange.asmx",
 		Username:    "DOMAIN\\user",
@@ -94,8 +94,8 @@ func TestTransportCapabilitiesIncludeGetFolderAndRawRequest(t *testing.T) {
 	}, secret.NewMemoryStore(map[string]string{"memory:ews": "password-secret"}), nil)
 
 	capabilities := client.Capabilities(context.Background())
-	if len(capabilities.Actions) != 2 {
-		t.Fatalf("expected two EWS actions, got %#v", capabilities.Actions)
+	if len(capabilities.Actions) != 3 {
+		t.Fatalf("expected three EWS actions, got %#v", capabilities.Actions)
 	}
 	actions := map[string]action.Definition{}
 	for _, item := range capabilities.Actions {
@@ -108,6 +108,10 @@ func TestTransportCapabilitiesIncludeGetFolderAndRawRequest(t *testing.T) {
 	raw := actions["EWSRequest"]
 	if raw.Name != "EWSRequest" || raw.Transport != "ews" || raw.Class != policy.Destructive || raw.Level != action.LevelRawGuardedExecution {
 		t.Fatalf("unexpected EWSRequest capability: %#v", raw)
+	}
+	search := actions["mail.search"]
+	if search.Name != "mail.search" || search.Transport != "ews" || search.Class != policy.ReadMetadata || search.Level != action.LevelHighLevelMCPTool {
+		t.Fatalf("unexpected mail.search capability: %#v", search)
 	}
 }
 
@@ -135,6 +139,102 @@ func TestTransportExecutesGetFolder(t *testing.T) {
 	folder := result.Data["folder"].(map[string]any)
 	if folder["display_name"] != "Inbox" || folder["total_count"] != "42" {
 		t.Fatalf("unexpected folder data: %#v", folder)
+	}
+}
+
+func TestTransportExecutesMailSearchWithFindItem(t *testing.T) {
+	var sawFindItem bool
+	var sawAuth bool
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		if request.Method != http.MethodPost {
+			t.Fatalf("expected POST, got %s", request.Method)
+		}
+		if request.Header.Get("SOAPAction") != "http://schemas.microsoft.com/exchange/services/2006/messages/FindItem" {
+			t.Fatalf("unexpected SOAPAction: %s", request.Header.Get("SOAPAction"))
+		}
+		auth := strings.TrimPrefix(request.Header.Get("Authorization"), "Basic ")
+		decoded, err := base64.StdEncoding.DecodeString(auth)
+		if err != nil {
+			t.Fatalf("decode auth: %v", err)
+		}
+		sawAuth = string(decoded) == "DOMAIN\\user:password-secret"
+		body, err := io.ReadAll(request.Body)
+		if err != nil {
+			t.Fatalf("read body: %v", err)
+		}
+		text := string(body)
+		sawFindItem = strings.Contains(text, `<m:FindItem Traversal="Shallow">`) &&
+			strings.Contains(text, `<t:BaseShape>IdOnly</t:BaseShape>`) &&
+			strings.Contains(text, `<m:IndexedPageItemView MaxEntriesReturned="5" Offset="0" BasePoint="Beginning"/>`) &&
+			strings.Contains(text, `<t:FieldURI FieldURI="item:Subject"/>`) &&
+			strings.Contains(text, `<t:FieldURI FieldURI="message:From"/>`) &&
+			strings.Contains(text, `<t:FieldURI FieldURI="item:DateTimeReceived"/>`) &&
+			strings.Contains(text, `<t:FieldURI FieldURI="message:IsRead"/>`) &&
+			strings.Contains(text, `<t:FieldURI FieldURI="item:HasAttachments"/>`) &&
+			strings.Contains(text, `<t:DistinguishedFolderId Id="inbox"/>`)
+		response.Header().Set("Content-Type", "text/xml")
+		_, _ = response.Write([]byte(successfulFindItemResponse()))
+	}))
+	defer server.Close()
+
+	client := ews.NewTransport(ews.Config{
+		EndpointURL: server.URL + "/EWS/Exchange.asmx",
+		Username:    "DOMAIN\\user",
+		SecretRef:   secret.Ref("memory:ews"),
+	}, secret.NewMemoryStore(map[string]string{"memory:ews": "password-secret"}), server.Client())
+
+	result := client.Execute(context.Background(), transport.ActionRequest{
+		Name:    "mail.search",
+		Payload: map[string]any{"folder_id": "inbox", "max": 5},
+	})
+
+	if !result.OK {
+		t.Fatalf("expected mail.search ok, got %#v", result)
+	}
+	if !sawAuth || !sawFindItem {
+		t.Fatalf("expected auth and FindItem SOAP request, auth=%v findItem=%v", sawAuth, sawFindItem)
+	}
+	messages := result.Data["messages"].([]any)
+	if len(messages) != 2 {
+		t.Fatalf("expected two messages, got %#v", messages)
+	}
+	first := messages[0].(map[string]any)
+	if first["id"] != "message-1" || first["subject"] != "Quarterly planning" || first["sender"] != "Alex Example <alex@example.com>" {
+		t.Fatalf("unexpected first message: %#v", first)
+	}
+	if first["received_at"] != "2026-05-28T07:15:00Z" || first["is_read"] != false || first["has_attachments"] != true {
+		t.Fatalf("unexpected first message metadata: %#v", first)
+	}
+}
+
+func TestTransportMailSearchFiltersByQuery(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		response.Header().Set("Content-Type", "text/xml")
+		_, _ = response.Write([]byte(successfulFindItemResponse()))
+	}))
+	defer server.Close()
+
+	client := ews.NewTransport(ews.Config{
+		EndpointURL: server.URL,
+		Username:    "DOMAIN\\user",
+		SecretRef:   secret.Ref("memory:ews"),
+	}, secret.NewMemoryStore(map[string]string{"memory:ews": "password-secret"}), server.Client())
+
+	result := client.Execute(context.Background(), transport.ActionRequest{
+		Name:    "mail.search",
+		Payload: map[string]any{"query": "budget"},
+	})
+
+	if !result.OK {
+		t.Fatalf("expected mail.search ok, got %#v", result)
+	}
+	messages := result.Data["messages"].([]any)
+	if len(messages) != 1 {
+		t.Fatalf("expected one filtered message, got %#v", messages)
+	}
+	message := messages[0].(map[string]any)
+	if message["subject"] != "Budget update" {
+		t.Fatalf("unexpected filtered message: %#v", message)
 	}
 }
 
@@ -280,6 +380,53 @@ func successfulGetFolderResponse() string {
         </m:GetFolderResponseMessage>
       </m:ResponseMessages>
     </m:GetFolderResponse>
+  </soap:Body>
+</soap:Envelope>`
+}
+
+func successfulFindItemResponse() string {
+	return `<?xml version="1.0" encoding="utf-8"?>
+<soap:Envelope xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/"
+  xmlns:m="http://schemas.microsoft.com/exchange/services/2006/messages"
+  xmlns:t="http://schemas.microsoft.com/exchange/services/2006/types">
+  <soap:Body>
+    <m:FindItemResponse>
+      <m:ResponseMessages>
+        <m:FindItemResponseMessage ResponseClass="Success">
+          <m:ResponseCode>NoError</m:ResponseCode>
+          <m:RootFolder IndexedPagingOffset="2" TotalItemsInView="2" IncludesLastItemInRange="true">
+            <t:Items>
+              <t:Message>
+                <t:ItemId Id="message-1" ChangeKey="ck-1"/>
+                <t:Subject>Quarterly planning</t:Subject>
+                <t:DateTimeReceived>2026-05-28T07:15:00Z</t:DateTimeReceived>
+                <t:From>
+                  <t:Mailbox>
+                    <t:Name>Alex Example</t:Name>
+                    <t:EmailAddress>alex@example.com</t:EmailAddress>
+                  </t:Mailbox>
+                </t:From>
+                <t:IsRead>false</t:IsRead>
+                <t:HasAttachments>true</t:HasAttachments>
+              </t:Message>
+              <t:Message>
+                <t:ItemId Id="message-2" ChangeKey="ck-2"/>
+                <t:Subject>Budget update</t:Subject>
+                <t:DateTimeReceived>2026-05-28T08:30:00Z</t:DateTimeReceived>
+                <t:From>
+                  <t:Mailbox>
+                    <t:Name>Maria Example</t:Name>
+                    <t:EmailAddress>maria@example.com</t:EmailAddress>
+                  </t:Mailbox>
+                </t:From>
+                <t:IsRead>true</t:IsRead>
+                <t:HasAttachments>false</t:HasAttachments>
+              </t:Message>
+            </t:Items>
+          </m:RootFolder>
+        </m:FindItemResponseMessage>
+      </m:ResponseMessages>
+    </m:FindItemResponse>
   </soap:Body>
 </soap:Envelope>`
 }

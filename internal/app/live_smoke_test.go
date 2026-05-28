@@ -236,6 +236,17 @@ func TestLiveEWSReadMetadataSmoke(t *testing.T) {
 	if !hasAnyEWSFolderMetadata(folder) {
 		t.Fatalf("expected EWS folder metadata keys, got %#v", folder)
 	}
+
+	search := client.Execute(ctx, transport.ActionRequest{
+		Name:    "mail.search",
+		Payload: map[string]any{"folder_id": "inbox", "max": 5},
+	})
+	if !search.OK {
+		t.Fatalf("live EWS mail.search failed: %s summary=%#v", search.Error, responseSummary(search.Data))
+	}
+	if _, ok := search.Data["messages"].([]any); !ok {
+		t.Fatalf("expected EWS message metadata list, got %#v", responseSummary(search.Data))
+	}
 }
 
 func TestLiveOWARawFindPeopleSmoke(t *testing.T) {

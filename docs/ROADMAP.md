@@ -73,14 +73,15 @@ Status: implemented initial slice.
   compatibility, device-code OAuth acquisition, refresh-capable JSON token
   credential handling, `GetMailFolder`, `mail.search`, `mail.fetch_metadata`,
   `mail.fetch_body`, `mail.list_attachments`, `mail.fetch_attachment`,
-  `mail.create_draft`, `mail.move_to_deleted_items`, `calendar.list`, and
-  `calendar.availability` actions implemented; guarded raw `GraphRequest`
-  implemented as an unsafe dry-run/confirm escape hatch; admin consent, live
-  token storage validation, and typed rule/settings/shared-mailbox shortcuts
+  `mail.create_draft`, `mail.move_to_deleted_items`, `mail.rules.list`,
+  `mailbox.settings.get`, `calendar.list`, and `calendar.availability` actions
+  implemented; guarded raw `GraphRequest` implemented as an unsafe
+  dry-run/confirm escape hatch; admin consent and live token storage validation
   remain.
 - EWS transport where Exchange policy allows it: initial SOAP `GetFolder`
-  read-metadata probe/action implemented; guarded raw `EWSRequest` implemented
-  as an unsafe dry-run/confirm escape hatch; typed high-level EWS workflows and
+  read-metadata probe/action and typed metadata-only `mail.search` via
+  `FindItem` implemented; guarded raw `EWSRequest` implemented as an unsafe
+  dry-run/confirm escape hatch; additional typed high-level EWS workflows and
   live environment/auth enablement remain.
 - OWA-like REST transport interface: implemented initial generic adapter with
   mocked auth/service tests.
