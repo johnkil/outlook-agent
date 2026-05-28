@@ -581,6 +581,22 @@ func TestTransportDryRunMoveToDeletedItemsRequiresConfirmation(t *testing.T) {
 	}
 }
 
+func TestTransportDryRunGraphRequestRequiresConfirmation(t *testing.T) {
+	client := graph.NewTransport(graph.Config{
+		BaseURL:   "https://graph.example.test/v1.0",
+		SecretRef: secret.Ref("memory:graph"),
+	}, secret.NewMemoryStore(map[string]string{"memory:graph": "token-secret"}), nil)
+
+	summary := client.DryRun(context.Background(), transport.ActionRequest{
+		Name:    "GraphRequest",
+		Payload: map[string]any{"method": "DELETE", "path": "/me/messages/message-1"},
+	})
+
+	if summary.Action != "GraphRequest" || summary.Count != 1 || summary.Reversible || !summary.RequiresConfirmation {
+		t.Fatalf("unexpected GraphRequest dry-run summary: %#v", summary)
+	}
+}
+
 func TestTransportExecutesCalendarList(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
 		if request.Method != http.MethodGet || request.URL.Path != "/v1.0/me/calendarView" {

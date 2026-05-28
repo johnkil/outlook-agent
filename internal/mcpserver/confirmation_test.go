@@ -10,6 +10,7 @@ import (
 	"github.com/johnkil/outlook-agent/internal/secret"
 	"github.com/johnkil/outlook-agent/internal/transport"
 	"github.com/johnkil/outlook-agent/internal/transport/fake"
+	"github.com/johnkil/outlook-agent/internal/transport/graph"
 	"github.com/johnkil/outlook-agent/internal/transport/owa"
 )
 
@@ -173,6 +174,32 @@ func TestDryRunAllowsRawDeleteItemMoveToDeletedItemsWithoutUnsafe(t *testing.T) 
 	}
 	if !output.OK || output.ConfirmationToken == "" || output.RequiresUnsafe {
 		t.Fatalf("expected reversible raw DeleteItem dry-run token without unsafe: %#v", output)
+	}
+}
+
+func TestDryRunHandlerReportsConfirmedDestructiveSummary(t *testing.T) {
+	client := graph.NewTransport(graph.Config{
+		BaseURL:   "https://graph.example.test/v1.0",
+		SecretRef: secret.Ref("memory:graph"),
+	}, secret.NewMemoryStore(map[string]string{"memory:graph": "token-secret"}), nil)
+	runtime := NewRuntime(client)
+
+	_, output, err := dryRunHandler(runtime)(context.Background(), nil, DryRunInput{
+		Action: "GraphRequest",
+		Payload: map[string]any{
+			"method": "DELETE",
+			"path":   "/me/messages/message-1",
+		},
+		UnsafeMode: true,
+	})
+	if err != nil {
+		t.Fatalf("dry-run handler: %v", err)
+	}
+	if !output.OK || output.ConfirmationToken == "" || output.RequiresUnsafe {
+		t.Fatalf("expected unsafe GraphRequest dry-run token: %#v", output)
+	}
+	if !output.RequiresConfirmation || output.Count != 1 || output.Reversible {
+		t.Fatalf("expected destructive GraphRequest summary to require confirmation: %#v", output)
 	}
 }
 

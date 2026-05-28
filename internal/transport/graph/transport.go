@@ -169,6 +169,9 @@ func (client *Transport) DryRun(_ context.Context, request transport.ActionReque
 	if request.Name == "mail.move_to_deleted_items" {
 		return transport.DryRunSummary{Action: request.Name, Count: len(stringSlice(request.Payload["ids"])), Reversible: true, RequiresConfirmation: true}
 	}
+	if request.Name == "GraphRequest" {
+		return transport.DryRunSummary{Action: request.Name, Count: 1, Reversible: false, RequiresConfirmation: true}
+	}
 	return transport.DryRunSummary{Action: request.Name, Count: 1, Reversible: false, RequiresConfirmation: false}
 }
 
