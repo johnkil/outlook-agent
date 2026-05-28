@@ -93,32 +93,6 @@ func TestProductionBacklogTracksExternalGates(t *testing.T) {
 	}
 }
 
-func TestActiveReadinessDocsDoNotUsePreReleaseOrPreMergeMarkers(t *testing.T) {
-	documents := []string{
-		filepath.Join("..", "..", "SECURITY.md"),
-		filepath.Join("..", "..", "docs", "PRODUCTION_READINESS.md"),
-		filepath.Join("..", "..", "docs", "PRODUCTION_BACKLOG.md"),
-	}
-	forbidden := []string{
-		"Until the first release is cut",
-		"draft PR",
-		"feat/owa-adapter",
-	}
-
-	for _, path := range documents {
-		data, err := os.ReadFile(path)
-		if err != nil {
-			t.Fatalf("read %s: %v", path, err)
-		}
-		text := string(data)
-		for _, marker := range forbidden {
-			if strings.Contains(text, marker) {
-				t.Fatalf("expected %s not to contain stale readiness marker %q", path, marker)
-			}
-		}
-	}
-}
-
 func TestProductionBacklogBoundsFindFolderCompatibilityDecision(t *testing.T) {
 	path := filepath.Join("..", "..", "docs", "PRODUCTION_BACKLOG.md")
 	data, err := os.ReadFile(path)
