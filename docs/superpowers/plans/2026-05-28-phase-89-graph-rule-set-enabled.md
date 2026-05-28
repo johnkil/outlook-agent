@@ -40,4 +40,4 @@ confirmation token from `outlook.action_dry_run` before transport execution.
   compatibility docs.
 - [x] Run full local CI, release smoke, public-safety, private-marker, and temp
   artifact checks.
-- [ ] Update PR #1 and issue #5/#6 as appropriate.
+- [x] Update PR #1 and issue #5 as appropriate.
