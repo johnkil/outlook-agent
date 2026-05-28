@@ -69,3 +69,37 @@ func TestReleaseReadinessArtifactsExist(t *testing.T) {
 		}
 	}
 }
+
+func TestGitHubTemplatesGuideProductionWorkflow(t *testing.T) {
+	requiredFiles := map[string][]string{
+		filepath.Join("..", "..", ".github", "PULL_REQUEST_TEMPLATE.md"): {
+			"## Verification",
+			"scripts/ci-local.sh",
+			"scripts/release-smoke.sh",
+			"Hosted CI",
+			"docs/PRODUCTION_BACKLOG.md",
+			"public/private boundary",
+		},
+		filepath.Join("..", "..", ".github", "ISSUE_TEMPLATE", "production-gate.md"): {
+			"Production gate",
+			"Required evidence",
+			"Acceptance criteria",
+			"Do not include",
+			"tenant endpoints",
+			"secrets",
+		},
+	}
+
+	for path, markers := range requiredFiles {
+		data, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatalf("read GitHub template %s: %v", path, err)
+		}
+		text := string(data)
+		for _, marker := range markers {
+			if !strings.Contains(text, marker) {
+				t.Fatalf("expected %s to contain %q", path, marker)
+			}
+		}
+	}
+}
