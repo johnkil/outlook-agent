@@ -34,3 +34,30 @@ func TestOperationsRunbookDocumentsProductionRunbooks(t *testing.T) {
 		}
 	}
 }
+
+func TestEnterpriseEnablementPlaybookDocumentsExternalGates(t *testing.T) {
+	path := filepath.Join("..", "..", "docs", "ENTERPRISE_ENABLEMENT.md")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read enterprise enablement playbook: %v", err)
+	}
+	text := string(data)
+
+	for _, required := range []string{
+		"# Enterprise Enablement Playbook",
+		"## Graph Enablement",
+		"## EWS Enablement",
+		"## Secret Store And Config",
+		"## OpenCode MCP Rollout",
+		"## Enterprise Distribution",
+		"## Validation Matrix",
+		"## Rollback And Ownership",
+		"admin consent",
+		"exact confirmation",
+		"outside this public repository",
+	} {
+		if !strings.Contains(text, required) {
+			t.Fatalf("expected enterprise enablement playbook to contain %q", required)
+		}
+	}
+}

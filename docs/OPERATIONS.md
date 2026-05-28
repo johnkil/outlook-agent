@@ -6,6 +6,10 @@ placeholder-only and live tenant profiles, mailbox identifiers, endpoints,
 credentials, cookies, canary values, raw messages, HAR files, screenshots, raw
 HTML, and raw JavaScript must stay outside this public repository.
 
+For the public-safe enablement checklist that connects Graph, EWS, OpenCode
+MCP, secret-store ownership, and enterprise distribution, see
+`docs/ENTERPRISE_ENABLEMENT.md`.
+
 ## Release Operator Checklist
 
 Before publishing a release:

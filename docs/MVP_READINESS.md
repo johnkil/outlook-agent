@@ -55,6 +55,9 @@ production-ready, but they are intentionally outside the public core repository:
 - Live mailbox validation against controlled enterprise fixtures for attachment
   listing/fetching and any organization-specific destructive/send-like action.
 
+Use `docs/ENTERPRISE_ENABLEMENT.md` as the public-safe checklist for turning
+these gates into an enterprise rollout plan.
+
 ## Not Required For MVP
 
 These items are useful follow-ups, but the MVP can be considered complete
