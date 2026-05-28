@@ -2,6 +2,7 @@ package mcpserver
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 
@@ -503,6 +504,52 @@ func TestRawActionAllowsSafeMetadataAction(t *testing.T) {
 	}
 }
 
+func TestRawActionDoesNotTrustCallerSuppliedExplicitTarget(t *testing.T) {
+	client := newRecordingTransport(action.Definition{Name: "SearchMailboxes", Transport: "test", Class: policy.ReadBodyExplicit, Level: action.LevelRawGuardedExecution})
+	runtime := NewRuntime(client)
+
+	_, output, err := rawActionHandler(runtime)(context.Background(), nil, RawActionInput{
+		Action:         "SearchMailboxes",
+		Payload:        map[string]any{"Body": map[string]any{"Query": "broad body search"}},
+		ExplicitTarget: true,
+	})
+	if err != nil {
+		t.Fatalf("raw action handler: %v", err)
+	}
+	if output.OK {
+		t.Fatalf("caller-supplied explicit_target must not allow broad body reads: %#v", output)
+	}
+	if client.executed {
+		t.Fatal("broad body read must not execute when only caller-supplied explicit_target is present")
+	}
+	if !strings.Contains(output.Error, "explicit target required") {
+		t.Fatalf("expected explicit target policy error, got %#v", output)
+	}
+}
+
+func TestRawActionAllowsNestedSingleExplicitTarget(t *testing.T) {
+	client := newRecordingTransport(action.Definition{Name: "GetItem", Transport: "test", Class: policy.ReadBodyExplicit, Level: action.LevelRawGuardedExecution})
+	runtime := NewRuntime(client)
+
+	_, output, err := rawActionHandler(runtime)(context.Background(), nil, RawActionInput{
+		Action: "GetItem",
+		Payload: map[string]any{
+			"Body": map[string]any{
+				"ItemIds": []any{map[string]any{"Id": "msg-1"}},
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("raw action handler: %v", err)
+	}
+	if !output.OK {
+		t.Fatalf("expected nested single item target to allow explicit read: %#v", output)
+	}
+	if !client.executed {
+		t.Fatal("expected nested single item target to execute")
+	}
+}
+
 func TestRawActionDoesNotExecuteUnknownActionDirectlyWithUnsafe(t *testing.T) {
 	client := newRecordingTransport(action.Definition{Name: "known.action", Transport: "test", Class: policy.ReadMetadata, Level: action.LevelRawGuardedExecution})
 	runtime := NewRuntime(client)
@@ -538,6 +585,29 @@ func TestRawActionReturnsTransportFailureWithoutData(t *testing.T) {
 	}
 	if output.OK || output.Error != "transport failed" || output.Data != nil {
 		t.Fatalf("expected transport failure without data to be returned, got %#v", output)
+	}
+}
+
+func TestActionResultRedactsSecretBearingError(t *testing.T) {
+	output := actionResultFromResponse(transport.ActionResponse{
+		OK:    false,
+		Error: "upstream redirect failed: https://example.test/callback?access_token=secret-token&X-OWA-CANARY=canary-secret",
+		Data:  map[string]any{"accessToken": "secret-token"},
+	})
+
+	if output.OK {
+		t.Fatalf("expected failed action result, got %#v", output)
+	}
+	for _, leaked := range []string{"secret-token", "canary-secret"} {
+		if strings.Contains(output.Error, leaked) {
+			t.Fatalf("expected secret %q to be redacted from error, got %q", leaked, output.Error)
+		}
+	}
+	if !strings.Contains(output.Error, "[REDACTED]") {
+		t.Fatalf("expected redaction marker in error, got %q", output.Error)
+	}
+	if output.Data["accessToken"] != "[REDACTED]" {
+		t.Fatalf("expected response data to remain redacted, got %#v", output.Data)
 	}
 }
 

@@ -85,6 +85,13 @@ func (client *Transport) executeHighLevel(ctx context.Context, request transport
 		if messageID == "" || attachmentID == "" {
 			return transport.ActionResponse{OK: false, Error: "mail.fetch_attachment requires message_id and attachment_id"}, true
 		}
+		response := client.executeService(ctx, "GetItem", client.buildListAttachmentsRequest(messageID), false)
+		if !response.OK {
+			return response, true
+		}
+		if !attachmentBelongsToMessage(response.Data, attachmentID) {
+			return transport.ActionResponse{OK: false, Error: "attachment_id does not belong to message_id"}, true
+		}
 		attachment, err := client.downloadFileAttachment(ctx, attachmentID)
 		if err != nil {
 			return transport.ActionResponse{OK: false, Error: err.Error()}, true
@@ -106,15 +113,76 @@ func (client *Transport) executeHighLevel(ctx context.Context, request transport
 		if !response.OK {
 			return response, true
 		}
-		return transport.ActionResponse{OK: true, Data: map[string]any{
-			"moved_count": len(ids),
-			"reversible":  true,
-			"succeeded":   anyStrings(ids),
-			"failed":      []map[string]any{},
-		}}, true
+		return moveToDeletedResult(ids, response.Data), true
 	default:
 		return transport.ActionResponse{}, false
 	}
+}
+
+func attachmentBelongsToMessage(payload map[string]any, attachmentID string) bool {
+	for _, attachment := range normalizeAttachmentMetadata(extractAttachments(payload)) {
+		attachmentMap, ok := attachment.(map[string]any)
+		if !ok {
+			continue
+		}
+		if stringValue(attachmentMap, "id") == attachmentID {
+			return true
+		}
+	}
+	return false
+}
+
+func moveToDeletedResult(ids []any, payload map[string]any) transport.ActionResponse {
+	requested := anyStrings(ids)
+	messages := responseMessages(payload)
+	if len(messages) == 0 {
+		return transport.ActionResponse{OK: true, Data: map[string]any{
+			"moved_count": len(requested),
+			"reversible":  true,
+			"succeeded":   requested,
+			"failed":      []map[string]any{},
+		}}
+	}
+	succeeded := make([]string, 0, len(requested))
+	failed := make([]map[string]any, 0)
+	for index, id := range requested {
+		message := map[string]any{}
+		if index < len(messages) {
+			message, _ = messages[index].(map[string]any)
+		}
+		responseClass := strings.TrimSpace(stringValue(message, "ResponseClass"))
+		if responseClass == "" || strings.EqualFold(responseClass, "Success") {
+			succeeded = append(succeeded, id)
+			continue
+		}
+		failed = append(failed, map[string]any{"id": id, "error": responseMessageError(message)})
+	}
+	data := map[string]any{
+		"moved_count": len(succeeded),
+		"reversible":  true,
+		"succeeded":   succeeded,
+		"failed":      failed,
+	}
+	if len(failed) > 0 {
+		return transport.ActionResponse{OK: false, Error: "some messages failed to move to Deleted Items", Data: data}
+	}
+	return transport.ActionResponse{OK: true, Data: data}
+}
+
+func responseMessages(payload map[string]any) []any {
+	body, _ := payload["Body"].(map[string]any)
+	responseMessages, _ := body["ResponseMessages"].(map[string]any)
+	return anySlice(responseMessages["Items"])
+}
+
+func responseMessageError(message map[string]any) string {
+	if text := strings.TrimSpace(stringValue(message, "MessageText")); text != "" {
+		return text
+	}
+	if code := strings.TrimSpace(stringValue(message, "ResponseCode")); code != "" {
+		return code
+	}
+	return "unknown error"
 }
 
 func (client *Transport) downloadFileAttachment(ctx context.Context, attachmentID string) (map[string]any, error) {
@@ -649,7 +717,14 @@ func anySlice(value any) []any {
 func anyStrings(values []any) []string {
 	output := make([]string, 0, len(values))
 	for _, value := range values {
-		if text, ok := value.(string); ok && strings.TrimSpace(text) != "" {
+		text := ""
+		switch typed := value.(type) {
+		case string:
+			text = typed
+		case map[string]any:
+			text = stringValue(typed, "Id")
+		}
+		if text = strings.TrimSpace(text); text != "" {
 			output = append(output, text)
 		}
 	}

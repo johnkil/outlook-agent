@@ -583,6 +583,28 @@ func TestHighLevelMailFetchAttachmentDownloadsFileAttachmentByID(t *testing.T) {
 		case "/owa/auth.owa":
 			http.SetCookie(response, &http.Cookie{Name: "X-OWA-CANARY", Value: "canary-secret"})
 			response.WriteHeader(http.StatusOK)
+		case "/owa/service.svc":
+			response.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(response).Encode(map[string]any{
+				"Body": map[string]any{
+					"ResponseMessages": map[string]any{
+						"Items": []any{
+							map[string]any{
+								"Items": []any{
+									map[string]any{
+										"Attachments": []any{
+											map[string]any{
+												"AttachmentId": map[string]any{"Id": "att-1"},
+												"Name":         "notes.txt",
+											},
+										},
+									},
+								},
+							},
+						},
+					},
+				},
+			})
 		case "/owa/service.svc/s/GetFileAttachment":
 			downloadPath = request.URL.Path
 			downloadID = request.URL.Query().Get("id")
@@ -620,12 +642,89 @@ func TestHighLevelMailFetchAttachmentDownloadsFileAttachmentByID(t *testing.T) {
 	}
 }
 
+func TestHighLevelMailFetchAttachmentRejectsAttachmentOutsideMessage(t *testing.T) {
+	var downloadCalled bool
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		switch request.URL.Path {
+		case "/owa/auth.owa":
+			http.SetCookie(response, &http.Cookie{Name: "X-OWA-CANARY", Value: "canary-secret"})
+			response.WriteHeader(http.StatusOK)
+		case "/owa/service.svc":
+			response.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(response).Encode(map[string]any{
+				"Body": map[string]any{
+					"ResponseMessages": map[string]any{
+						"Items": []any{
+							map[string]any{
+								"Items": []any{
+									map[string]any{
+										"Attachments": []any{
+											map[string]any{
+												"AttachmentId": map[string]any{"Id": "att-expected"},
+												"Name":         "expected.txt",
+											},
+										},
+									},
+								},
+							},
+						},
+					},
+				},
+			})
+		case "/owa/service.svc/s/GetFileAttachment":
+			downloadCalled = true
+			response.WriteHeader(http.StatusOK)
+		default:
+			t.Fatalf("unexpected path: %s", request.URL.Path)
+		}
+	}))
+	defer server.Close()
+	client := newTestTransport(server)
+
+	response := client.Execute(context.Background(), transport.ActionRequest{
+		Name: "mail.fetch_attachment",
+		Payload: map[string]any{
+			"message_id":    "msg-1",
+			"attachment_id": "att-other",
+		},
+	})
+
+	if response.OK || !strings.Contains(response.Error, "does not belong to message") {
+		t.Fatalf("expected mismatched attachment to be rejected, got %#v", response)
+	}
+	if downloadCalled {
+		t.Fatal("mismatched attachment must be rejected before download")
+	}
+}
+
 func TestHighLevelMailFetchAttachmentRejectsOversizedDownload(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
 		switch request.URL.Path {
 		case "/owa/auth.owa":
 			http.SetCookie(response, &http.Cookie{Name: "X-OWA-CANARY", Value: "canary-secret"})
 			response.WriteHeader(http.StatusOK)
+		case "/owa/service.svc":
+			response.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(response).Encode(map[string]any{
+				"Body": map[string]any{
+					"ResponseMessages": map[string]any{
+						"Items": []any{
+							map[string]any{
+								"Items": []any{
+									map[string]any{
+										"Attachments": []any{
+											map[string]any{
+												"AttachmentId": map[string]any{"Id": "att-1"},
+												"Name":         "notes.txt",
+											},
+										},
+									},
+								},
+							},
+						},
+					},
+				},
+			})
 		case "/owa/service.svc/s/GetFileAttachment":
 			response.Header().Set("Content-Type", "text/plain")
 			_, _ = response.Write([]byte(strings.Repeat("x", transport.MaxResponseBytes+1)))
@@ -733,6 +832,105 @@ func TestHighLevelMailMoveToDeletedItemsCallsDeleteItem(t *testing.T) {
 	failed := response.Data["failed"].([]map[string]any)
 	if len(succeeded) != 2 || succeeded[0] != "msg-1" || succeeded[1] != "msg-2" || len(failed) != 0 {
 		t.Fatalf("unexpected partial-result fields: %#v", response.Data)
+	}
+}
+
+func TestHighLevelMailMoveToDeletedItemsReportsItemLevelFailures(t *testing.T) {
+	var calls []recordedServiceCall
+	server := newOWAServiceServer(t, &calls, map[string]any{
+		"Body": map[string]any{"ResponseMessages": map[string]any{"Items": []any{
+			map[string]any{"ResponseClass": "Success"},
+			map[string]any{"ResponseClass": "Error", "ResponseCode": "ErrorItemNotFound", "MessageText": "item was not found"},
+		}}},
+	})
+	defer server.Close()
+	client := newTestTransport(server)
+
+	response := client.Execute(context.Background(), transport.ActionRequest{
+		Name:    "mail.move_to_deleted_items",
+		Payload: map[string]any{"ids": []any{"msg-1", "msg-2"}},
+	})
+
+	if response.OK || !strings.Contains(response.Error, "some messages failed") {
+		t.Fatalf("expected item-level failure result, got %#v", response)
+	}
+	if response.Data["moved_count"] != 1 || response.Data["reversible"] != true {
+		t.Fatalf("unexpected move result metadata: %#v", response.Data)
+	}
+	succeeded := response.Data["succeeded"].([]string)
+	failed := response.Data["failed"].([]map[string]any)
+	if len(succeeded) != 1 || succeeded[0] != "msg-1" {
+		t.Fatalf("unexpected succeeded ids: %#v", response.Data)
+	}
+	if len(failed) != 1 || failed[0]["id"] != "msg-2" || failed[0]["error"] != "item was not found" {
+		t.Fatalf("unexpected failed ids: %#v", response.Data)
+	}
+}
+
+func TestHighLevelMailMoveToDeletedItemsReportsMapItemIDs(t *testing.T) {
+	var calls []recordedServiceCall
+	server := newOWAServiceServer(t, &calls, map[string]any{
+		"Body": map[string]any{"ResponseMessages": map[string]any{"Items": []any{
+			map[string]any{"ResponseClass": "Success"},
+			map[string]any{"ResponseClass": "Error", "ResponseCode": "ErrorItemNotFound"},
+		}}},
+	})
+	defer server.Close()
+	client := newTestTransport(server)
+	ids := []any{
+		map[string]any{"__type": "ItemId:#Exchange", "Id": "msg-map-1", "ChangeKey": "ck-1"},
+		map[string]any{"__type": "ItemId:#Exchange", "Id": "msg-map-2", "ChangeKey": "ck-2"},
+	}
+
+	response := client.Execute(context.Background(), transport.ActionRequest{
+		Name:    "mail.move_to_deleted_items",
+		Payload: map[string]any{"ids": ids},
+	})
+
+	if response.OK || !strings.Contains(response.Error, "some messages failed") {
+		t.Fatalf("expected item-level failure result, got %#v", response)
+	}
+	if response.Data["moved_count"] != 1 || response.Data["reversible"] != true {
+		t.Fatalf("unexpected move result metadata: %#v", response.Data)
+	}
+	succeeded := response.Data["succeeded"].([]string)
+	failed := response.Data["failed"].([]map[string]any)
+	if len(succeeded) != 1 || succeeded[0] != "msg-map-1" {
+		t.Fatalf("unexpected succeeded ids: %#v", response.Data)
+	}
+	if len(failed) != 1 || failed[0]["id"] != "msg-map-2" || failed[0]["error"] != "ErrorItemNotFound" {
+		t.Fatalf("unexpected failed ids: %#v", response.Data)
+	}
+	body := calls[0].Body["Body"].(map[string]any)
+	itemIDs := body["ItemIds"].([]any)
+	if len(itemIDs) != 2 || itemIDs[0].(map[string]any)["ChangeKey"] != "ck-1" {
+		t.Fatalf("expected original map item ids to be sent, got %#v", itemIDs)
+	}
+}
+
+func TestHighLevelMailSearchRejectsOversizedServiceResponse(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		switch request.URL.Path {
+		case "/owa/auth.owa":
+			http.SetCookie(response, &http.Cookie{Name: "X-OWA-CANARY", Value: "canary-secret"})
+			response.WriteHeader(http.StatusOK)
+		case "/owa/service.svc":
+			response.Header().Set("Content-Type", "application/json")
+			_, _ = response.Write([]byte(`{"Body":"` + strings.Repeat("x", transport.MaxResponseBytes+1) + `"}`))
+		default:
+			t.Fatalf("unexpected path: %s", request.URL.Path)
+		}
+	}))
+	defer server.Close()
+	client := newTestTransport(server)
+
+	response := client.Execute(context.Background(), transport.ActionRequest{
+		Name:    "mail.search",
+		Payload: map[string]any{"query": "anything"},
+	})
+
+	if response.OK || !strings.Contains(response.Error, "response too large") {
+		t.Fatalf("expected oversized OWA service response to be rejected, got %#v", response)
 	}
 }
 

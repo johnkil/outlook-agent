@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/johnkil/outlook-agent/internal/policy"
@@ -328,6 +329,42 @@ func TestTransportDiscoveryDiagnosticsReportsFinalPathTitleMarkerAndScriptBlocks
 	}
 	if source.ScriptBlocks != 1 {
 		t.Fatalf("expected one inline script block, got %#v", source)
+	}
+}
+
+func TestTransportDiscoveryDiagnosticsRedactsSensitiveQueryParameters(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		switch request.URL.Path {
+		case "/owa/auth.owa":
+			http.SetCookie(response, &http.Cookie{Name: "X-OWA-CANARY", Value: "canary-secret"})
+			response.WriteHeader(http.StatusOK)
+		case "/owa/start":
+			http.Redirect(response, request, "/owa/final?X-OWA-CANARY=canary-secret&layout=1", http.StatusFound)
+		case "/owa/final":
+			response.Header().Set("Content-Type", "text/html")
+			_, _ = response.Write([]byte(`<html><head><title>Outlook</title></head></html>`))
+		default:
+			t.Fatalf("unexpected path: %s", request.URL.String())
+		}
+	}))
+	defer server.Close()
+	client := owa.NewTransport(owa.Config{
+		BaseURL:   server.URL,
+		Username:  "DOMAIN\\user",
+		SecretRef: secret.Ref("memory:owa"),
+	}, secret.NewMemoryStore(map[string]string{"memory:owa": "password"}), server.Client())
+
+	diagnostics, err := client.DiscoverServiceActionsFromURLDiagnostics(context.Background(), "/owa/start", owa.DiscoveryOptions{})
+
+	if err != nil {
+		t.Fatalf("discover diagnostics: %v", err)
+	}
+	finalPath := diagnostics.Sources[0].FinalPath
+	if strings.Contains(finalPath, "canary-secret") {
+		t.Fatalf("expected canary query value to be redacted, got %q", finalPath)
+	}
+	if !strings.Contains(finalPath, "[REDACTED]") || !strings.Contains(finalPath, "layout=1") {
+		t.Fatalf("expected redacted canary and preserved layout query, got %q", finalPath)
 	}
 }
 

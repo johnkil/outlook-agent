@@ -23,7 +23,30 @@ func NewTransport(config Config, secrets secret.Store, client *http.Client) *Tra
 	if client == nil {
 		client = transport.DefaultHTTPClient()
 	}
+	client = withEWSRedirectPolicy(client)
 	return &Transport{config: config, secrets: secrets, client: client}
+}
+
+func withEWSRedirectPolicy(client *http.Client) *http.Client {
+	cloned := *client
+	previous := client.CheckRedirect
+	cloned.CheckRedirect = func(request *http.Request, via []*http.Request) error {
+		if previous != nil {
+			if err := previous(request, via); err != nil {
+				return err
+			}
+		}
+		if len(via) >= 10 {
+			return fmt.Errorf("stopped after 10 redirects")
+		}
+		for _, prior := range via {
+			if prior.Header.Get("Authorization") != "" {
+				return fmt.Errorf("%w for authenticated EWS request", transport.ErrUnsafeRedirect)
+			}
+		}
+		return nil
+	}
+	return &cloned
 }
 
 func (client *Transport) Name() string {

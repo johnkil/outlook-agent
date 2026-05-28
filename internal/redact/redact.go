@@ -1,6 +1,9 @@
 package redact
 
-import "strings"
+import (
+	"regexp"
+	"strings"
+)
 
 const Marker = "[REDACTED]"
 
@@ -29,6 +32,8 @@ var privateContentKeys = map[string]struct{}{
 	"xml_text":       {},
 }
 
+var sensitiveQueryValuePattern = regexp.MustCompile(`(?i)(^|[?&;\s])((?:[^?&;\s=]*?(?:password|token|cookie|canary|secret)[^?&;\s=]*)=)([^&;\s]+)`)
+
 func Value(input any) any {
 	switch value := input.(type) {
 	case map[string]any:
@@ -47,9 +52,18 @@ func Value(input any) any {
 			output[index] = Value(child)
 		}
 		return output
+	case string:
+		return String(value)
 	default:
 		return input
 	}
+}
+
+func String(input string) string {
+	if input == "" {
+		return input
+	}
+	return sensitiveQueryValuePattern.ReplaceAllString(input, "${1}${2}"+Marker)
 }
 
 func shouldRedactKey(key string) bool {

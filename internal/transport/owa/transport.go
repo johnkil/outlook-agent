@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strings"
 	"sync"
 
 	"github.com/johnkil/outlook-agent/internal/secret"
@@ -23,6 +24,7 @@ func NewTransport(config Config, secrets secret.Store, client *http.Client) *Tra
 	if client == nil {
 		client = defaultHTTPClient()
 	}
+	client = withOWARedirectPolicy(client)
 	return &Transport{config: config, secrets: secrets, client: client}
 }
 
@@ -36,6 +38,43 @@ func defaultHTTPClient() *http.Client {
 	cloned.ForceAttemptHTTP2 = false
 	cloned.DisableKeepAlives = true
 	return &http.Client{Transport: cloned, Timeout: transport.DefaultHTTPTimeout}
+}
+
+func withOWARedirectPolicy(client *http.Client) *http.Client {
+	cloned := *client
+	previous := client.CheckRedirect
+	cloned.CheckRedirect = func(request *http.Request, via []*http.Request) error {
+		if previous != nil {
+			if err := previous(request, via); err != nil {
+				return err
+			}
+		}
+		if len(via) >= 10 {
+			return fmt.Errorf("stopped after 10 redirects")
+		}
+		for _, prior := range via {
+			if requestHasOWASessionMaterial(prior) && !transport.SameOrigin(prior.URL, request.URL) {
+				return fmt.Errorf("%w for OWA session request", transport.ErrUnsafeRedirect)
+			}
+		}
+		return nil
+	}
+	return &cloned
+}
+
+func requestHasOWASessionMaterial(request *http.Request) bool {
+	if request == nil || request.URL == nil {
+		return false
+	}
+	if request.Header.Get("X-OWA-CANARY") != "" {
+		return true
+	}
+	for key := range request.URL.Query() {
+		if strings.Contains(strings.ToLower(key), "canary") {
+			return true
+		}
+	}
+	return false
 }
 
 func (client *Transport) Name() string {
@@ -83,8 +122,12 @@ func (client *Transport) executeService(ctx context.Context, actionName string, 
 	}
 	defer response.Body.Close()
 
+	rawBody, err := transport.ReadLimited(response.Body, transport.MaxResponseBytes)
+	if err != nil {
+		return transport.ActionResponse{OK: false, Error: err.Error()}
+	}
 	var payload map[string]any
-	if err := json.NewDecoder(response.Body).Decode(&payload); err != nil {
+	if err := json.Unmarshal(rawBody, &payload); err != nil {
 		return transport.ActionResponse{OK: false, Error: err.Error()}
 	}
 	if response.StatusCode < 200 || response.StatusCode >= 300 {

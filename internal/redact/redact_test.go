@@ -1,6 +1,7 @@
 package redact_test
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/johnkil/outlook-agent/internal/redact"
@@ -106,5 +107,33 @@ func TestRedactsBodyPreviewSnippetAndMixedCaseContentKeys(t *testing.T) {
 	}
 	if output["safe"] != "metadata" {
 		t.Fatalf("expected safe metadata preserved, got %#v", output["safe"])
+	}
+}
+
+func TestRedactsSensitiveURLQueryValues(t *testing.T) {
+	input := map[string]any{
+		"headers": map[string]any{
+			"location": "https://example.test/callback?access_token=secret-token&X-OWA-CANARY=canary-secret&layout=mouse",
+		},
+		"safe_url": "https://example.test/owa/?layout=mouse",
+	}
+
+	output := redact.Value(input).(map[string]any)
+	headers := output["headers"].(map[string]any)
+	location := headers["location"].(string)
+
+	for _, leaked := range []string{"secret-token", "canary-secret"} {
+		if strings.Contains(location, leaked) {
+			t.Fatalf("expected %q to be redacted from location, got %q", leaked, location)
+		}
+	}
+	if !strings.Contains(location, redact.Marker) {
+		t.Fatalf("expected redaction marker in location, got %q", location)
+	}
+	if !strings.Contains(location, "layout=mouse") {
+		t.Fatalf("expected non-sensitive query value to be preserved, got %q", location)
+	}
+	if output["safe_url"] != "https://example.test/owa/?layout=mouse" {
+		t.Fatalf("expected safe url to be preserved, got %#v", output["safe_url"])
 	}
 }
