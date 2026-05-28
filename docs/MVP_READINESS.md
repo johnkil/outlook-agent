@@ -57,6 +57,8 @@ production-ready, but they are intentionally outside the public core repository:
 
 Use `docs/ENTERPRISE_ENABLEMENT.md` as the public-safe checklist for turning
 these gates into an enterprise rollout plan.
+Use `docs/PRODUCTION_BACKLOG.md` as the tracked GitHub issue index for open
+external rollout gates.
 
 ## Not Required For MVP
 

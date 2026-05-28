@@ -7,6 +7,8 @@ or raw OWA assets.
 
 For the explicit MVP boundary between repository-owned readiness and external
 enterprise rollout gates, see `docs/MVP_READINESS.md`.
+For the tracked external-gate backlog and GitHub issues, see
+`docs/PRODUCTION_BACKLOG.md`.
 
 Status values:
 
@@ -65,6 +67,9 @@ Status values:
   - `internal/redact/redact_test.go`
 
 ## Remaining Gaps
+
+Tracked GitHub issues for these gates are listed in
+`docs/PRODUCTION_BACKLOG.md`.
 
 - Build and release:
   - installer or package-manager distribution in the target enterprise channel.

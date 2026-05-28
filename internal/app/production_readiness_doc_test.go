@@ -67,3 +67,29 @@ func TestMVPReadinessBoundaryDocumentsDoneAndExternalGates(t *testing.T) {
 		}
 	}
 }
+
+func TestProductionBacklogTracksExternalGates(t *testing.T) {
+	path := filepath.Join("..", "..", "docs", "PRODUCTION_BACKLOG.md")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read production backlog: %v", err)
+	}
+	text := string(data)
+
+	for _, required := range []string{
+		"# Production Backlog",
+		"## Open External Gates",
+		"GitHub Actions billing",
+		"organization secret scanning",
+		"enterprise distribution",
+		"Graph OAuth",
+		"EWS enablement",
+		"FindFolder compatibility",
+		"GitHub issue",
+		"https://github.com/johnkil/outlook-agent/issues/",
+	} {
+		if !strings.Contains(text, required) {
+			t.Fatalf("expected production backlog to contain %q", required)
+		}
+	}
+}
