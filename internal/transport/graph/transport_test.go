@@ -82,6 +82,7 @@ func TestTransportGraphCapabilitiesIncludeBodyDraftMove(t *testing.T) {
 		{name: "mail.search", class: policy.ReadMetadata, level: action.LevelHighLevelMCPTool},
 		{name: "mail.fetch_metadata", class: policy.ReadMetadata, level: action.LevelHighLevelMCPTool},
 		{name: "mail.fetch_body", class: policy.ReadBodyExplicit, level: action.LevelHighLevelMCPTool},
+		{name: "mail.fetch_attachment", class: policy.ReadAttachmentExplicit, level: action.LevelHighLevelMCPTool},
 		{name: "mail.create_draft", class: policy.DraftOnly, level: action.LevelHighLevelMCPTool},
 		{name: "mail.move_to_deleted_items", class: policy.ReversibleBulk, level: action.LevelHighLevelMCPTool},
 		{name: "calendar.list", class: policy.ReadMetadata, level: action.LevelHighLevelMCPTool},
@@ -271,6 +272,52 @@ func TestTransportExecutesMailFetchBody(t *testing.T) {
 	}
 	if result.Data["id"] != "message-1" || result.Data["body_text"] != "Hello from Graph body" {
 		t.Fatalf("unexpected body response: %#v", result.Data)
+	}
+}
+
+func TestTransportExecutesMailFetchAttachment(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		if request.Method != http.MethodGet || request.URL.Path != "/v1.0/me/messages/message-1/attachments/attachment-1" {
+			t.Fatalf("unexpected request: %s %s", request.Method, request.URL.String())
+		}
+		if request.Header.Get("Authorization") != "Bearer token-secret" {
+			t.Fatal("expected bearer token header")
+		}
+		response.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(response).Encode(map[string]any{
+			"@odata.type":  "#microsoft.graph.fileAttachment",
+			"id":           "attachment-1",
+			"name":         "notes.txt",
+			"contentType":  "text/plain",
+			"size":         12,
+			"isInline":     false,
+			"contentBytes": "SGVsbG8=",
+		})
+	}))
+	defer server.Close()
+
+	client := graph.NewTransport(graph.Config{
+		BaseURL:   server.URL + "/v1.0",
+		SecretRef: secret.Ref("memory:graph"),
+	}, secret.NewMemoryStore(map[string]string{"memory:graph": "token-secret"}), server.Client())
+
+	result := client.Execute(context.Background(), transport.ActionRequest{
+		Name: "mail.fetch_attachment",
+		Payload: map[string]any{
+			"message_id":    "message-1",
+			"attachment_id": "attachment-1",
+		},
+	})
+
+	if !result.OK {
+		t.Fatalf("expected mail.fetch_attachment ok, got %#v", result)
+	}
+	attachment := result.Data["attachment"].(map[string]any)
+	if attachment["id"] != "attachment-1" || attachment["name"] != "notes.txt" || attachment["content_type"] != "text/plain" {
+		t.Fatalf("unexpected attachment metadata: %#v", attachment)
+	}
+	if attachment["size"] != 12 || attachment["is_inline"] != false || attachment["content_base64"] != "SGVsbG8=" {
+		t.Fatalf("unexpected attachment content fields: %#v", attachment)
 	}
 }
 

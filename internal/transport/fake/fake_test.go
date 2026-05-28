@@ -60,6 +60,7 @@ func TestFakeTransportExecutesInitialHighLevelActions(t *testing.T) {
 	}{
 		{name: "mail.fetch_metadata", key: "message"},
 		{name: "mail.fetch_body", key: "body_text"},
+		{name: "mail.fetch_attachment", key: "attachment"},
 		{name: "mail.create_draft", key: "draft"},
 		{name: "mail.move_to_deleted_items", key: "moved_count"},
 		{name: "calendar.list", key: "events"},
@@ -71,9 +72,10 @@ func TestFakeTransportExecutesInitialHighLevelActions(t *testing.T) {
 			response := client.Execute(context.Background(), transport.ActionRequest{
 				Name: tt.name,
 				Payload: map[string]any{
-					"id":      "msg-1",
-					"ids":     []any{"msg-1"},
-					"subject": "Draft",
+					"id":            "msg-1",
+					"ids":           []any{"msg-1"},
+					"attachment_id": "att-1",
+					"subject":       "Draft",
 				},
 			})
 			if !response.OK {

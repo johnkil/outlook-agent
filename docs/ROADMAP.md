@@ -42,6 +42,7 @@ Status: implemented initial slice.
 - Mail search: implemented.
 - Mail metadata fetch: implemented.
 - Explicit body fetch: implemented.
+- Explicit attachment fetch: implemented.
 - Draft creation: implemented.
 - Move to deleted items with dry-run for broad requests: implemented through
   confirmation-token gated flow.
@@ -69,10 +70,10 @@ Status: implemented initial slice.
 - Fake transport for tests and examples.
 - Graph transport where delegated OAuth is available: initial bearer-token
   `GetMailFolder`, `mail.search`, `mail.fetch_metadata`, `mail.fetch_body`,
-  `mail.create_draft`, `mail.move_to_deleted_items`, `calendar.list`, and
-  `calendar.availability` actions implemented; OAuth acquisition, refresh,
-  admin consent, and broader attachment/rule/settings/shared-mailbox coverage
-  remain.
+  `mail.fetch_attachment`, `mail.create_draft`,
+  `mail.move_to_deleted_items`, `calendar.list`, and `calendar.availability`
+  actions implemented; OAuth acquisition, refresh, admin consent, and broader
+  rule/settings/shared-mailbox coverage remain.
 - EWS transport where Exchange policy allows it: initial SOAP `GetFolder`
   read-metadata probe/action implemented; broader action coverage and live
   environment/auth enablement remain.
@@ -81,8 +82,9 @@ Status: implemented initial slice.
 - Runtime config wiring: implemented for fake, generic OWA, initial EWS, and
   initial Graph profiles.
 - OWA high-level mappings: implemented for mail search, metadata/body fetch,
-  draft save, move to Deleted Items, calendar list, and calendar availability;
-  mail search and availability have live opt-in smoke tests.
+  attachment fetch, draft save, move to Deleted Items, calendar list, and
+  calendar availability; mail search and availability have live opt-in smoke
+  tests.
 - MCP stdio smoke: implemented for the packaged binary, including resolved
   config profile propagation and an opt-in live OWA availability smoke.
 - Private enterprise adapter outside the public core.

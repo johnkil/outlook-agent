@@ -46,6 +46,7 @@ func (client *Transport) Capabilities(context.Context) transport.CapabilitySet {
 		{Name: "mail.search", Transport: "graph", Class: policy.ReadMetadata, Level: action.LevelHighLevelMCPTool},
 		{Name: "mail.fetch_metadata", Transport: "graph", Class: policy.ReadMetadata, Level: action.LevelHighLevelMCPTool},
 		{Name: "mail.fetch_body", Transport: "graph", Class: policy.ReadBodyExplicit, Level: action.LevelHighLevelMCPTool},
+		{Name: "mail.fetch_attachment", Transport: "graph", Class: policy.ReadAttachmentExplicit, Level: action.LevelHighLevelMCPTool},
 		{Name: "mail.create_draft", Transport: "graph", Class: policy.DraftOnly, Level: action.LevelHighLevelMCPTool},
 		{Name: "mail.move_to_deleted_items", Transport: "graph", Class: policy.ReversibleBulk, Level: action.LevelHighLevelMCPTool},
 		{Name: "calendar.list", Transport: "graph", Class: policy.ReadMetadata, Level: action.LevelHighLevelMCPTool},
@@ -94,6 +95,17 @@ func (client *Transport) Execute(ctx context.Context, request transport.ActionRe
 			return transport.ActionResponse{OK: false, Error: err.Error()}
 		}
 		return transport.ActionResponse{OK: true, Data: map[string]any{"id": body.ID, "body_text": body.Body.Content}}
+	case "mail.fetch_attachment":
+		messageID := strings.TrimSpace(stringValue(request.Payload, "message_id", ""))
+		attachmentID := strings.TrimSpace(stringValue(request.Payload, "attachment_id", ""))
+		if messageID == "" || attachmentID == "" {
+			return transport.ActionResponse{OK: false, Error: "mail.fetch_attachment requires message_id and attachment_id"}
+		}
+		attachment, err := client.getAttachment(ctx, messageID, attachmentID)
+		if err != nil {
+			return transport.ActionResponse{OK: false, Error: err.Error()}
+		}
+		return transport.ActionResponse{OK: true, Data: map[string]any{"attachment": normalizeGraphAttachment(attachment)}}
 	case "mail.create_draft":
 		draft, err := client.createDraft(ctx, request.Payload)
 		if err != nil {
@@ -154,6 +166,16 @@ type message struct {
 	IsRead         bool      `json:"isRead"`
 	HasAttachments bool      `json:"hasAttachments"`
 	Body           itemBody  `json:"body"`
+}
+
+type attachment struct {
+	ODataType    string `json:"@odata.type"`
+	ID           string `json:"id"`
+	Name         string `json:"name"`
+	ContentType  string `json:"contentType"`
+	Size         int    `json:"size"`
+	IsInline     bool   `json:"isInline"`
+	ContentBytes string `json:"contentBytes"`
 }
 
 type recipient struct {
@@ -280,6 +302,21 @@ func (client *Transport) getMessageBody(ctx context.Context, id string) (message
 	}
 	if item.ID == "" {
 		return message{}, fmt.Errorf("missing Graph message body response")
+	}
+	return item, nil
+}
+
+func (client *Transport) getAttachment(ctx context.Context, messageID string, attachmentID string) (attachment, error) {
+	requestURL, err := client.messageAttachmentURL(messageID, attachmentID)
+	if err != nil {
+		return attachment{}, err
+	}
+	var item attachment
+	if err := client.getJSON(ctx, requestURL, &item); err != nil {
+		return attachment{}, err
+	}
+	if item.ID == "" {
+		return attachment{}, fmt.Errorf("missing Graph attachment response")
 	}
 	return item, nil
 }
@@ -499,6 +536,14 @@ func (client *Transport) messageBodyURL(id string) (string, error) {
 	return base + "/me/messages/" + url.PathEscape(id) + "?" + values.Encode(), nil
 }
 
+func (client *Transport) messageAttachmentURL(messageID string, attachmentID string) (string, error) {
+	base, err := client.config.normalizedBaseURL()
+	if err != nil {
+		return "", err
+	}
+	return base + "/me/messages/" + url.PathEscape(messageID) + "/attachments/" + url.PathEscape(attachmentID), nil
+}
+
 func (client *Transport) messagesCollectionURL() (string, error) {
 	base, err := client.config.normalizedBaseURL()
 	if err != nil {
@@ -552,6 +597,17 @@ func normalizeGraphDraft(item message) map[string]any {
 		"id":      item.ID,
 		"subject": item.Subject,
 		"status":  "saved",
+	}
+}
+
+func normalizeGraphAttachment(item attachment) map[string]any {
+	return map[string]any{
+		"id":             item.ID,
+		"name":           item.Name,
+		"content_type":   item.ContentType,
+		"size":           item.Size,
+		"is_inline":      item.IsInline,
+		"content_base64": item.ContentBytes,
 	}
 }
 

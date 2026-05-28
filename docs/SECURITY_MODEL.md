@@ -19,7 +19,9 @@
 - Unsafe mode bypasses allowlists but not confirmation gates.
 - Confirmation tokens do not bypass unsafe-mode or explicit-target policy
   checks; confirmed actions are rechecked before transport execution.
-- Output redaction runs before responses leave the runtime.
+- Generic and raw outputs are redacted before responses leave the runtime;
+  explicit body or attachment tools may return the requested content only for
+  the caller-supplied narrow target.
 - Live transports must keep session material in memory unless a secret-store
   backed cache is explicitly implemented.
 

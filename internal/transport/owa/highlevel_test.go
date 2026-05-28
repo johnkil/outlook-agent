@@ -298,6 +298,7 @@ func TestCapabilitiesIncludeOWAHighLevelReadActions(t *testing.T) {
 		"mail.search",
 		"mail.fetch_metadata",
 		"mail.fetch_body",
+		"mail.fetch_attachment",
 		"mail.create_draft",
 		"mail.move_to_deleted_items",
 		"calendar.list",
@@ -391,6 +392,63 @@ func TestHighLevelMailFetchBodyCallsGetItemForExplicitBody(t *testing.T) {
 	}
 	if response.Data["id"] != "msg-1" || response.Data["body_text"] != "Hello from body" {
 		t.Fatalf("unexpected body response: %#v", response.Data)
+	}
+}
+
+func TestHighLevelMailFetchAttachmentCallsGetAttachmentForExplicitTarget(t *testing.T) {
+	var calls []recordedServiceCall
+	server := newOWAServiceServer(t, &calls, map[string]any{
+		"Body": map[string]any{
+			"ResponseMessages": map[string]any{
+				"Items": []any{
+					map[string]any{
+						"Attachments": []any{
+							map[string]any{
+								"AttachmentId": map[string]any{"Id": "att-1"},
+								"Name":         "notes.txt",
+								"ContentType":  "text/plain",
+								"Size":         12,
+								"IsInline":     false,
+								"Content":      "SGVsbG8=",
+							},
+						},
+					},
+				},
+			},
+		},
+	})
+	defer server.Close()
+	client := newTestTransport(server)
+
+	response := client.Execute(context.Background(), transport.ActionRequest{
+		Name: "mail.fetch_attachment",
+		Payload: map[string]any{
+			"message_id":    "msg-1",
+			"attachment_id": "att-1",
+		},
+	})
+
+	if !response.OK {
+		t.Fatalf("expected mail.fetch_attachment ok: %#v", response)
+	}
+	if calls[0].Action != "GetAttachment" {
+		t.Fatalf("expected GetAttachment, got %q", calls[0].Action)
+	}
+	body := calls[0].Body["Body"].(map[string]any)
+	attachmentShape := body["AttachmentShape"].(map[string]any)
+	if attachmentShape["BodyType"] != "Text" {
+		t.Fatalf("expected text attachment body shape, got %#v", attachmentShape)
+	}
+	attachmentIDs := body["AttachmentIds"].([]any)
+	if attachmentIDs[0].(map[string]any)["Id"] != "att-1" {
+		t.Fatalf("expected explicit attachment id, got %#v", attachmentIDs)
+	}
+	attachment := response.Data["attachment"].(map[string]any)
+	if attachment["id"] != "att-1" || attachment["name"] != "notes.txt" || attachment["content_type"] != "text/plain" {
+		t.Fatalf("unexpected attachment metadata: %#v", attachment)
+	}
+	if attachment["size"] != 12 || attachment["is_inline"] != false || attachment["content_base64"] != "SGVsbG8=" {
+		t.Fatalf("unexpected attachment content fields: %#v", attachment)
 	}
 }
 

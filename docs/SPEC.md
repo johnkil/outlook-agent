@@ -37,6 +37,7 @@ outlook.capabilities
 outlook.mail_search
 outlook.mail_fetch_metadata
 outlook.mail_fetch_body
+outlook.mail_fetch_attachment
 outlook.mail_create_draft
 outlook.mail_move_to_deleted_items
 outlook.calendar_list
@@ -60,6 +61,9 @@ Key tool inputs:
 - `outlook.calendar_availability`: `start`, `end`, and optional `email`.
   When `email` is omitted, OWA profiles use `settings.mailbox_email` if
   configured.
+- `outlook.mail_fetch_attachment`: `message_id` and `attachment_id`. The tool
+  is explicit-target only and returns normalized attachment metadata plus
+  base64 content when the transport provides it.
 - `outlook.action_dry_run`: returns `ok=false`, `error`, and no
   `confirmation_token` when the requested confirmed action is not permitted in
   the selected mode. For example, destructive and unknown actions require
@@ -129,10 +133,11 @@ Configured transports:
 - `graph`: initial Microsoft Graph REST transport. Profiles use optional
   `settings.base_url` and `secret_ref` for a bearer access token. Supported
   read-metadata actions are `GetMailFolder`, `mail.search`, and
-  `mail.fetch_metadata`, plus explicit `mail.fetch_body`, `mail.create_draft`,
-  `mail.move_to_deleted_items`, `calendar.list`, and `calendar.availability`;
-  `auth check` probes `/me/mailFolders/inbox`. OAuth token acquisition, admin
-  consent, and token refresh are outside the public runtime in this phase.
+  `mail.fetch_metadata`, plus explicit `mail.fetch_body`, explicit
+  `mail.fetch_attachment`, `mail.create_draft`, `mail.move_to_deleted_items`,
+  `calendar.list`, and `calendar.availability`; `auth check` probes
+  `/me/mailFolders/inbox`. OAuth token acquisition, admin consent, and token
+  refresh are outside the public runtime in this phase.
 
 ## Redaction
 
@@ -141,7 +146,7 @@ Default output redacts:
 - secrets and tokens;
 - cookies and canary values;
 - raw message bodies;
-- attachment contents;
+- attachment contents except through explicit attachment tools;
 - opaque transport ids unless needed for follow-up operations.
 
 The runtime may return stable handles that map to transport ids in memory or in

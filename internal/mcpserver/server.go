@@ -68,6 +68,11 @@ type MessageIDInput struct {
 	ID string `json:"id" jsonschema:"message id"`
 }
 
+type AttachmentIDInput struct {
+	MessageID    string `json:"message_id" jsonschema:"message id"`
+	AttachmentID string `json:"attachment_id" jsonschema:"attachment id"`
+}
+
 type MailFetchMetadataOutput struct {
 	Message any `json:"message"`
 }
@@ -75,6 +80,10 @@ type MailFetchMetadataOutput struct {
 type MailFetchBodyOutput struct {
 	ID       any    `json:"id"`
 	BodyText string `json:"body_text"`
+}
+
+type MailFetchAttachmentOutput struct {
+	Attachment any `json:"attachment"`
 }
 
 type MailCreateDraftInput struct {
@@ -161,6 +170,7 @@ func Catalog() ToolCatalog {
 			{Name: "outlook.mail_search", Description: "Search mail metadata using the configured transport."},
 			{Name: "outlook.mail_fetch_metadata", Description: "Fetch metadata for a single message."},
 			{Name: "outlook.mail_fetch_body", Description: "Fetch body text for an explicit message."},
+			{Name: "outlook.mail_fetch_attachment", Description: "Fetch a single explicit message attachment."},
 			{Name: "outlook.mail_create_draft", Description: "Create a saved draft without sending."},
 			{Name: "outlook.mail_move_to_deleted_items", Description: "Move confirmed messages to Deleted Items."},
 			{Name: "outlook.calendar_list", Description: "List calendar events for a bounded window."},
@@ -229,6 +239,7 @@ func NewWithRuntime(runtime *Runtime) *mcp.Server {
 	mcp.AddTool(server, &mcp.Tool{Name: "outlook.mail_search", Description: "Search mail metadata using the configured transport."}, mailSearchHandler(runtime.client))
 	mcp.AddTool(server, &mcp.Tool{Name: "outlook.mail_fetch_metadata", Description: "Fetch metadata for a single message."}, mailFetchMetadataHandler(runtime.client))
 	mcp.AddTool(server, &mcp.Tool{Name: "outlook.mail_fetch_body", Description: "Fetch body text for an explicit message."}, mailFetchBodyHandler(runtime.client))
+	mcp.AddTool(server, &mcp.Tool{Name: "outlook.mail_fetch_attachment", Description: "Fetch a single explicit message attachment."}, mailFetchAttachmentHandler(runtime.client))
 	mcp.AddTool(server, &mcp.Tool{Name: "outlook.mail_create_draft", Description: "Create a saved draft without sending."}, mailCreateDraftHandler(runtime.client))
 	mcp.AddTool(server, &mcp.Tool{Name: "outlook.mail_move_to_deleted_items", Description: "Move confirmed messages to Deleted Items."}, mailMoveToDeletedItemsHandler(runtime))
 	mcp.AddTool(server, &mcp.Tool{Name: "outlook.calendar_list", Description: "List calendar events for a bounded window."}, calendarListHandler(runtime.client))
@@ -325,6 +336,19 @@ func mailFetchBodyHandler(client transport.Transport) func(context.Context, *mcp
 		response := client.Execute(ctx, transport.ActionRequest{Name: "mail.fetch_body", Payload: map[string]any{"id": input.ID}})
 		body, _ := response.Data["body_text"].(string)
 		return nil, MailFetchBodyOutput{ID: response.Data["id"], BodyText: body}, nil
+	}
+}
+
+func mailFetchAttachmentHandler(client transport.Transport) func(context.Context, *mcp.CallToolRequest, AttachmentIDInput) (*mcp.CallToolResult, MailFetchAttachmentOutput, error) {
+	return func(ctx context.Context, _ *mcp.CallToolRequest, input AttachmentIDInput) (*mcp.CallToolResult, MailFetchAttachmentOutput, error) {
+		response := client.Execute(ctx, transport.ActionRequest{
+			Name: "mail.fetch_attachment",
+			Payload: map[string]any{
+				"message_id":    input.MessageID,
+				"attachment_id": input.AttachmentID,
+			},
+		})
+		return nil, MailFetchAttachmentOutput{Attachment: response.Data["attachment"]}, nil
 	}
 }
 
@@ -499,6 +523,9 @@ func hasExplicitTarget(payload map[string]any) bool {
 		return false
 	}
 	if id, ok := payload["id"].(string); ok && id != "" {
+		return true
+	}
+	if id, ok := payload["attachment_id"].(string); ok && id != "" {
 		return true
 	}
 	ids, ok := payload["ids"].([]any)

@@ -49,6 +49,12 @@ func (client *Transport) executeHighLevel(ctx context.Context, request transport
 		item := firstMap(extractItems(response.Data))
 		itemID := itemID(item)
 		return transport.ActionResponse{OK: true, Data: map[string]any{"id": itemID["id"], "body_text": bodyText(item)}}, true
+	case "mail.fetch_attachment":
+		response := client.executeService(ctx, "GetAttachment", client.buildGetAttachmentRequest(stringValue(request.Payload, "attachment_id")), false)
+		if !response.OK {
+			return response, true
+		}
+		return transport.ActionResponse{OK: true, Data: map[string]any{"attachment": firstAny(normalizeAttachments(extractAttachments(response.Data)))}}, true
 	case "mail.create_draft":
 		response := client.executeService(ctx, "CreateItem", client.buildCreateDraftRequest(request.Payload), false)
 		if !response.OK {
@@ -188,6 +194,24 @@ func (client *Transport) buildGetItemRequest(id string, includeBody bool) any {
 	)
 }
 
+func (client *Transport) buildGetAttachmentRequest(id string) any {
+	return object(
+		field("__type", "GetAttachmentJsonRequest:#Exchange"),
+		field("Header", client.requestHeaderPayload("Exchange2013")),
+		field("Body", object(
+			field("__type", "GetAttachmentRequest:#Exchange"),
+			field("AttachmentShape", object(
+				field("__type", "AttachmentResponseShape:#Exchange"),
+				field("IncludeMimeContent", false),
+				field("BodyType", "Text"),
+			)),
+			field("AttachmentIds", []any{
+				object(field("__type", "AttachmentId:#Exchange"), field("Id", id)),
+			}),
+		)),
+	)
+}
+
 func (client *Transport) buildCreateDraftRequest(payload map[string]any) any {
 	recipients := make([]any, 0)
 	for _, recipient := range anySlice(payload["to"]) {
@@ -295,6 +319,27 @@ func extractItems(payload map[string]any) []any {
 	return nil
 }
 
+func extractAttachments(payload map[string]any) []any {
+	body, _ := payload["Body"].(map[string]any)
+	if attachments := anySlice(body["Attachments"]); len(attachments) > 0 {
+		return attachments
+	}
+	responseMessages, _ := body["ResponseMessages"].(map[string]any)
+	for _, message := range anySlice(responseMessages["Items"]) {
+		messageMap, _ := message.(map[string]any)
+		if attachments := anySlice(messageMap["Attachments"]); len(attachments) > 0 {
+			return attachments
+		}
+		for _, item := range anySlice(messageMap["Items"]) {
+			itemMap, _ := item.(map[string]any)
+			if attachments := anySlice(itemMap["Attachments"]); len(attachments) > 0 {
+				return attachments
+			}
+		}
+	}
+	return nil
+}
+
 func firstAny(values []any) any {
 	if len(values) == 0 {
 		return map[string]any{}
@@ -333,6 +378,34 @@ func normalizeMailItems(items []any) []any {
 		})
 	}
 	return output
+}
+
+func normalizeAttachments(items []any) []any {
+	output := make([]any, 0, len(items))
+	for _, item := range items {
+		itemMap, ok := item.(map[string]any)
+		if !ok {
+			continue
+		}
+		output = append(output, normalizeAttachment(itemMap))
+	}
+	return output
+}
+
+func normalizeAttachment(item map[string]any) map[string]any {
+	id := attachmentID(item)
+	contentBase64 := stringValue(item, "Content")
+	if contentBase64 == "" {
+		contentBase64 = stringValue(item, "ContentBytes")
+	}
+	return map[string]any{
+		"id":             id["id"],
+		"name":           stringValue(item, "Name"),
+		"content_type":   stringValue(item, "ContentType"),
+		"size":           intValue(item, "Size", 0),
+		"is_inline":      boolValue(item, "IsInline"),
+		"content_base64": contentBase64,
+	}
 }
 
 func normalizeCalendarItems(items []any) []any {
@@ -414,6 +487,22 @@ func itemID(item map[string]any) map[string]string {
 	return map[string]string{
 		"id":         stringValue(raw, "Id"),
 		"change_key": stringValue(raw, "ChangeKey"),
+	}
+}
+
+func attachmentID(item map[string]any) map[string]string {
+	raw, _ := item["AttachmentId"].(map[string]any)
+	if raw == nil {
+		raw, _ = item["Id"].(map[string]any)
+	}
+	if raw == nil {
+		if id := stringValue(item, "Id"); id != "" {
+			return map[string]string{"id": id}
+		}
+		return map[string]string{}
+	}
+	return map[string]string{
+		"id": stringValue(raw, "Id"),
 	}
 }
 

@@ -121,6 +121,7 @@ The MCP server registers the initial public tool surface from `docs/SPEC.md`:
 - `outlook.mail_search`
 - `outlook.mail_fetch_metadata`
 - `outlook.mail_fetch_body`
+- `outlook.mail_fetch_attachment`
 - `outlook.mail_create_draft`
 - `outlook.mail_move_to_deleted_items`
 - `outlook.calendar_list`
