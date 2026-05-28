@@ -122,6 +122,18 @@ if [[ -n "${OUTLOOK_AGENT_OPENCODE_LIVE_DIR:-}" ]]; then
   fi
   jq -s -e '
     def part: .part // .;
+    def parse_output($value):
+      if ($value | type) == "object" then
+        $value
+      elif ($value | type) == "string" then
+        ($value | fromjson? // {})
+      elif ($value | type) == "array" then
+        (([$value[]? | .text? | fromjson? // empty] | first) // {})
+      else
+        {}
+      end;
+    def tool_output($part):
+      parse_output($part.state.output // $part.state.result // $part.output // $part.result // {});
     def dry_run_call($unsafe):
       [
         .[]
@@ -133,6 +145,19 @@ if [[ -n "${OUTLOOK_AGENT_OPENCODE_LIVE_DIR:-}" ]]; then
         | select($part.state.input.payload.Body.DeleteType == "HardDelete")
         | select($part.state.input.payload.Body.ItemIds[0].Id == "dry-run-item")
         | select($part.state.input.unsafe_mode == $unsafe)
+        | (tool_output($part)) as $output
+        | select(
+            if $unsafe then
+              $output.ok == true
+              and (($output.confirmation_token // "") != "")
+              and (($output.requires_unsafe // false) == false)
+            else
+              $output.ok == false
+              and $output.requires_unsafe == true
+              and (($output.confirmation_token // "") == "")
+              and (($output.error // "") != "")
+            end
+          )
       ]
       | length;
     dry_run_call(false) >= 1
