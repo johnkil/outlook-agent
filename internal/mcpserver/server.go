@@ -568,7 +568,7 @@ func transportResponseError(response transport.ActionResponse) error {
 
 func actionResultFromResponse(response transport.ActionResponse) ActionResultOutput {
 	output := ActionResultOutput{OK: response.OK, Error: response.Error}
-	if !response.OK || response.Data == nil {
+	if response.Data == nil {
 		return output
 	}
 	redacted, ok := redact.Value(response.Data).(map[string]any)

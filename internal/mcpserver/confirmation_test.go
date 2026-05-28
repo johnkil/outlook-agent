@@ -293,6 +293,31 @@ func TestActionConfirmAllowsRawDeleteItemMoveToDeletedItemsWithoutUnsafe(t *test
 	}
 }
 
+func TestActionResultFromResponsePreservesFailureData(t *testing.T) {
+	output := actionResultFromResponse(transport.ActionResponse{
+		OK:    false,
+		Error: "some messages failed to move to Deleted Items",
+		Data: map[string]any{
+			"moved_count": 1,
+			"succeeded":   []any{"msg-1"},
+			"failed":      []any{map[string]any{"id": "msg-2", "error": "not found"}},
+		},
+	})
+
+	if output.OK || output.Error != "some messages failed to move to Deleted Items" {
+		t.Fatalf("expected failed action result, got %#v", output)
+	}
+	if output.Data == nil || output.Data["moved_count"] != 1 {
+		t.Fatalf("expected failure data to be preserved, got %#v", output.Data)
+	}
+	if succeeded, _ := output.Data["succeeded"].([]any); len(succeeded) != 1 || succeeded[0] != "msg-1" {
+		t.Fatalf("expected succeeded ids in failure data, got %#v", output.Data["succeeded"])
+	}
+	if failed, _ := output.Data["failed"].([]any); len(failed) != 1 {
+		t.Fatalf("expected failed ids in failure data, got %#v", output.Data["failed"])
+	}
+}
+
 func TestActionConfirmReturnsTransportFailureWithoutData(t *testing.T) {
 	client := newFailingResponseTransport(action.Definition{Name: "mail.move_to_deleted_items", Transport: "test", Class: policy.ReversibleBulk, Level: action.LevelHighLevelMCPTool})
 	runtime := NewRuntime(client)
