@@ -37,3 +37,29 @@ func TestProductionReadinessAuditDocumentsObjectiveEvidence(t *testing.T) {
 		}
 	}
 }
+
+func TestMVPReadinessBoundaryDocumentsDoneAndExternalGates(t *testing.T) {
+	path := filepath.Join("..", "..", "docs", "MVP_READINESS.md")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read MVP readiness boundary: %v", err)
+	}
+	text := string(data)
+
+	for _, required := range []string{
+		"# MVP Readiness Boundary",
+		"## MVP Done",
+		"## External Rollout Gates",
+		"## Not Required For MVP",
+		"all discovered OWA actions",
+		"raw GraphRequest",
+		"raw EWSRequest",
+		"OpenCode MCP",
+		"exact confirmation",
+		"enterprise secret scanning",
+	} {
+		if !strings.Contains(text, required) {
+			t.Fatalf("expected MVP readiness boundary to contain %q", required)
+		}
+	}
+}

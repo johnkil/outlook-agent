@@ -5,6 +5,9 @@ evidence. It is intentionally generic and public-safe: it does not contain
 tenant endpoints, accounts, passwords, cookies, canary values, mailbox content,
 or raw OWA assets.
 
+For the explicit MVP boundary between repository-owned readiness and external
+enterprise rollout gates, see `docs/MVP_READINESS.md`.
+
 Status values:
 
 - `Ready`: implemented and verified in the current repository.
