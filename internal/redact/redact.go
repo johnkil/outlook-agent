@@ -19,6 +19,7 @@ var privateContentKeys = map[string]struct{}{
 	"contentbytes":   {},
 	"content_bytes":  {},
 	"content_base64": {},
+	"xml_text":       {},
 }
 
 func Value(input any) any {

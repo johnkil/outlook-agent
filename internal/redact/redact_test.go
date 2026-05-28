@@ -42,6 +42,7 @@ func TestRedactsMessageBodiesAndAttachmentContent(t *testing.T) {
 		"sender":    "person@example.com",
 		"body":      "full private message body",
 		"body_text": "full private message body text",
+		"xml_text":  "<soap:Envelope>private SOAP response</soap:Envelope>",
 		"attachments": []any{
 			map[string]any{
 				"name":           "plan.txt",
@@ -65,6 +66,9 @@ func TestRedactsMessageBodiesAndAttachmentContent(t *testing.T) {
 	}
 	if output["body_text"] != redact.Marker {
 		t.Fatalf("expected body_text redacted, got %#v", output["body_text"])
+	}
+	if output["xml_text"] != redact.Marker {
+		t.Fatalf("expected xml_text redacted, got %#v", output["xml_text"])
 	}
 
 	attachments := output["attachments"].([]any)

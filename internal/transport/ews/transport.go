@@ -3,7 +3,9 @@ package ews
 import (
 	"context"
 	"fmt"
+	"io"
 	"net/http"
+	"strings"
 
 	"github.com/johnkil/outlook-agent/internal/action"
 	"github.com/johnkil/outlook-agent/internal/policy"
@@ -38,6 +40,7 @@ func (client *Transport) Authenticate(ctx context.Context, _ string) transport.A
 func (client *Transport) Capabilities(context.Context) transport.CapabilitySet {
 	return transport.CapabilitySet{Actions: []action.Definition{
 		{Name: "GetFolder", Transport: "ews", Class: policy.ReadMetadata, Level: action.LevelRawGuardedExecution},
+		{Name: "EWSRequest", Transport: "ews", Class: policy.Destructive, Level: action.LevelRawGuardedExecution},
 	}}
 }
 
@@ -56,13 +59,76 @@ func (client *Transport) Execute(ctx context.Context, request transport.ActionRe
 			"unread_count":       metadata.UnreadCount,
 			"response_code":      metadata.ResponseCode,
 		}}}
+	case "EWSRequest":
+		data, err := client.executeRawEWSRequest(ctx, request.Payload)
+		if err != nil {
+			return transport.ActionResponse{OK: false, Error: err.Error()}
+		}
+		ok := true
+		if status, _ := data["status"].(int); status < 200 || status >= 300 {
+			ok = false
+		}
+		errorText := ""
+		if !ok {
+			errorText = fmt.Sprintf("ews returned HTTP %v", data["status"])
+		}
+		return transport.ActionResponse{OK: ok, Data: data, Error: errorText}
 	default:
 		return transport.ActionResponse{OK: false, Error: "ews transport action is not implemented"}
 	}
 }
 
 func (client *Transport) DryRun(_ context.Context, request transport.ActionRequest) transport.DryRunSummary {
+	if request.Name == "EWSRequest" {
+		return transport.DryRunSummary{Action: request.Name, Count: 1, Reversible: false, RequiresConfirmation: true}
+	}
 	return transport.DryRunSummary{Action: request.Name, Count: 1, Reversible: true, RequiresConfirmation: false}
+}
+
+func (client *Transport) executeRawEWSRequest(ctx context.Context, payload map[string]any) (map[string]any, error) {
+	bodyXML := stringValue(payload, "body_xml", "")
+	if strings.TrimSpace(bodyXML) == "" {
+		return nil, fmt.Errorf("EWSRequest requires body_xml")
+	}
+	if err := client.config.Validate(); err != nil {
+		return nil, err
+	}
+	if client.secrets == nil {
+		return nil, fmt.Errorf("secret store is not configured")
+	}
+	password, err := client.secrets.Get(ctx, client.config.SecretRef)
+	if err != nil {
+		return nil, err
+	}
+	request, err := BuildRawEWSRequest(client.config, password, bodyXML, stringValue(payload, "soap_action", ""))
+	if err != nil {
+		return nil, err
+	}
+	request = request.WithContext(ctx)
+	response, err := client.client.Do(request)
+	if err != nil {
+		return nil, err
+	}
+	defer response.Body.Close()
+
+	data := map[string]any{
+		"status":  response.StatusCode,
+		"headers": selectedEWSResponseHeaders(response.Header),
+	}
+	rawBody, err := io.ReadAll(response.Body)
+	if err != nil {
+		return nil, err
+	}
+	if len(rawBody) > 0 {
+		contentType := response.Header.Get("Content-Type")
+		data["content_type"] = contentType
+		if strings.Contains(strings.ToLower(contentType), "xml") || strings.TrimSpace(contentType) == "" {
+			data["xml_text"] = string(rawBody)
+		} else {
+			data["body_text"] = string(rawBody)
+		}
+	}
+	return data, nil
 }
 
 func (client *Transport) getFolder(ctx context.Context, folderID string) (folderMetadata, error) {
@@ -108,4 +174,14 @@ func stringValue(values map[string]any, key string, fallback string) string {
 		return fallback
 	}
 	return value
+}
+
+func selectedEWSResponseHeaders(headers http.Header) map[string]any {
+	output := map[string]any{}
+	for _, key := range []string{"request-id", "client-request-id", "retry-after", "location", "content-type"} {
+		if value := headers.Get(key); value != "" {
+			output[key] = value
+		}
+	}
+	return output
 }

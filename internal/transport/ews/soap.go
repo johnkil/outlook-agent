@@ -30,6 +30,25 @@ func BuildGetFolderRequest(config Config, password secret.Value, folderID string
 	return request, nil
 }
 
+func BuildRawEWSRequest(config Config, password secret.Value, bodyXML string, soapAction string) (*http.Request, error) {
+	endpoint, err := config.normalizedEndpointURL()
+	if err != nil {
+		return nil, err
+	}
+	request, err := http.NewRequest(http.MethodPost, endpoint, strings.NewReader(bodyXML))
+	if err != nil {
+		return nil, err
+	}
+	request.Header.Set("Content-Type", "text/xml; charset=utf-8")
+	request.Header.Set("Accept", "text/xml")
+	request.Header.Set("User-Agent", "outlook-agent")
+	if strings.TrimSpace(soapAction) != "" {
+		request.Header.Set("SOAPAction", strings.TrimSpace(soapAction))
+	}
+	request.SetBasicAuth(config.Username, string(password))
+	return request, nil
+}
+
 func getFolderEnvelope(folderID string) string {
 	if strings.TrimSpace(folderID) == "" {
 		folderID = "inbox"

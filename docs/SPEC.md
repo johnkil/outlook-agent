@@ -79,6 +79,11 @@ Key tool inputs:
   callers must use unsafe dry-run plus exact confirmation before execution.
   JSON responses are returned under `json`; non-JSON text is returned under
   `body_text` and redacted on generic/raw MCP paths.
+- Raw `EWSRequest`: transport action for a caller-provided SOAP XML envelope
+  with `body_xml` and optional `soap_action`. It is intentionally classified as
+  `destructive`, so MCP callers must use unsafe dry-run plus exact confirmation
+  before execution. XML responses are returned under `xml_text` and redacted on
+  generic/raw MCP paths.
 
 ## Safety Classes
 
@@ -135,10 +140,11 @@ Configured transports:
   raw guarded action execution, in-memory authenticated discovery, and action
   context diagnostics.
 - `ews`: initial Exchange Web Services SOAP transport. Profiles use
-  `settings.endpoint_url`, `settings.username`, and `secret_ref`. The first
-  supported action is read-metadata `GetFolder`, also used by `auth check`.
-  Deployments that require NTLM, Negotiate, OAuth, or server-side EWS
-  allow-listing need additional adapter/auth work.
+  `settings.endpoint_url`, `settings.username`, and `secret_ref`. Supported
+  actions are read-metadata `GetFolder`, also used by `auth check`, and raw
+  guarded `EWSRequest` for caller-provided SOAP XML envelopes. Deployments that
+  require NTLM, Negotiate, OAuth, or server-side EWS allow-listing need
+  additional adapter/auth work.
 - `graph`: initial Microsoft Graph REST transport. Profiles use optional
   `settings.base_url` and `secret_ref` for a bearer access token. Supported
   read-metadata actions are `GetMailFolder`, `mail.search`, and
@@ -157,8 +163,8 @@ Default output redacts:
 - cookies and canary values;
 - raw message bodies;
 - attachment contents except through explicit attachment tools;
-- generic raw response fields such as `body_text`, `contentBytes`, and
-  `content_base64`;
+- generic raw response fields such as `body_text`, `xml_text`, `contentBytes`,
+  and `content_base64`;
 - opaque transport ids unless needed for follow-up operations.
 
 The runtime may return stable handles that map to transport ids in memory or in

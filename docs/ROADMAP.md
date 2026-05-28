@@ -77,8 +77,9 @@ Status: implemented initial slice.
   dry-run/confirm escape hatch; OAuth acquisition, refresh, admin consent, and
   typed rule/settings/shared-mailbox shortcuts remain.
 - EWS transport where Exchange policy allows it: initial SOAP `GetFolder`
-  read-metadata probe/action implemented; broader action coverage and live
-  environment/auth enablement remain.
+  read-metadata probe/action implemented; guarded raw `EWSRequest` implemented
+  as an unsafe dry-run/confirm escape hatch; typed high-level EWS workflows and
+  live environment/auth enablement remain.
 - OWA-like REST transport interface: implemented initial generic adapter with
   mocked auth/service tests.
 - Runtime config wiring: implemented for fake, generic OWA, initial EWS, and

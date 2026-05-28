@@ -24,6 +24,8 @@
   the caller-supplied narrow target.
 - Generic Graph raw requests are treated as destructive by default because an
   arbitrary Microsoft Graph method can send, mutate, or delete data.
+- Generic EWS raw SOAP requests are treated as destructive by default because an
+  arbitrary EWS operation can send, mutate, or delete mailbox data.
 - Live transports must keep session material in memory unless a secret-store
   backed cache is explicitly implemented.
 

@@ -9,6 +9,7 @@ import (
 	"github.com/johnkil/outlook-agent/internal/policy"
 	"github.com/johnkil/outlook-agent/internal/secret"
 	"github.com/johnkil/outlook-agent/internal/transport"
+	"github.com/johnkil/outlook-agent/internal/transport/ews"
 	"github.com/johnkil/outlook-agent/internal/transport/fake"
 	"github.com/johnkil/outlook-agent/internal/transport/graph"
 	"github.com/johnkil/outlook-agent/internal/transport/owa"
@@ -200,6 +201,32 @@ func TestDryRunHandlerReportsConfirmedDestructiveSummary(t *testing.T) {
 	}
 	if !output.RequiresConfirmation || output.Count != 1 || output.Reversible {
 		t.Fatalf("expected destructive GraphRequest summary to require confirmation: %#v", output)
+	}
+}
+
+func TestDryRunHandlerReportsConfirmedRawEWSSummary(t *testing.T) {
+	client := ews.NewTransport(ews.Config{
+		EndpointURL: "https://ews.example.test/EWS/Exchange.asmx",
+		Username:    "DOMAIN\\user",
+		SecretRef:   secret.Ref("memory:ews"),
+	}, secret.NewMemoryStore(map[string]string{"memory:ews": "password-secret"}), nil)
+	runtime := NewRuntime(client)
+
+	_, output, err := dryRunHandler(runtime)(context.Background(), nil, DryRunInput{
+		Action: "EWSRequest",
+		Payload: map[string]any{
+			"body_xml": `<soap:Envelope xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/"><soap:Body/></soap:Envelope>`,
+		},
+		UnsafeMode: true,
+	})
+	if err != nil {
+		t.Fatalf("dry-run handler: %v", err)
+	}
+	if !output.OK || output.ConfirmationToken == "" || output.RequiresUnsafe {
+		t.Fatalf("expected unsafe EWSRequest dry-run token: %#v", output)
+	}
+	if !output.RequiresConfirmation || output.Count != 1 || output.Reversible {
+		t.Fatalf("expected destructive EWSRequest summary to require confirmation: %#v", output)
 	}
 }
 
