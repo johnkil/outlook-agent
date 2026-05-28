@@ -68,17 +68,33 @@ func Run(args []string, stdout io.Writer, stderr io.Writer) int {
 }
 
 func RunWithRuntime(args []string, stdout io.Writer, stderr io.Writer, runtime Runtime) int {
+	if len(args) == 0 {
+		return writeHelp(stdout)
+	}
+	if len(args) == 1 && isHelpCommand(args[0]) {
+		return writeHelp(stdout)
+	}
+	if setupArgs, ok := setupOpencodeArgsFromRaw(args); ok {
+		options, _, err := parseOptionsBeforeCommand(args)
+		if err != nil {
+			fmt.Fprintln(stderr, err)
+			return 1
+		}
+		return runSetupOpencode(setupArgs, options, stdout, stderr)
+	}
+
 	options, commandArgs, err := parseOptions(args)
 	if err != nil {
 		fmt.Fprintln(stderr, err)
 		return 1
 	}
 	if len(commandArgs) == 0 {
-		fmt.Fprintln(stderr, "missing command")
-		return 1
+		return writeHelp(stdout)
 	}
 
 	switch commandArgs[0] {
+	case "", "help", "--help", "-h":
+		return writeHelp(stdout)
 	case "doctor":
 		return runDoctor(stdout, options)
 	case "policy":
@@ -154,7 +170,19 @@ type doctorOutput struct {
 	SecretStore doctorSecretStoreOutput `json:"secret_store"`
 	MCPStdio    bool                    `json:"mcp_stdio"`
 	Transports  []string                `json:"transports"`
+	NextSteps   []string                `json:"next_steps,omitempty"`
 	Error       string                  `json:"error,omitempty"`
+}
+
+type setupOpencodeOutput struct {
+	Schema string                            `json:"$schema,omitempty"`
+	MCP    map[string]setupOpencodeMCPServer `json:"mcp"`
+}
+
+type setupOpencodeMCPServer struct {
+	Type    string   `json:"type"`
+	Command []string `json:"command"`
+	Enabled bool     `json:"enabled"`
 }
 
 func runDoctor(stdout io.Writer, options Options) int {
@@ -183,9 +211,11 @@ func runDoctor(stdout io.Writer, options Options) int {
 	if err != nil {
 		output.Error = err.Error()
 		output.Config.Error = err.Error()
+		output.NextSteps = doctorNextSteps(output)
 		writeJSON(stdout, output)
 		return 1
 	}
+	output.NextSteps = doctorNextSteps(output)
 	return writeJSON(stdout, output)
 }
 
@@ -544,6 +574,162 @@ func parseOptions(args []string) (Options, []string, error) {
 		}
 	}
 	return options, commandArgs, nil
+}
+
+const helpText = `Outlook Agent
+
+Safe local CLI and MCP server for Outlook-like mail and calendar access.
+
+Usage:
+  outlook-agent help
+  outlook-agent --help
+  outlook-agent doctor
+  outlook-agent auth check --config <path> [--profile <name>]
+  outlook-agent auth graph-device-code --config <path> [--profile <name>]
+  outlook-agent policy explain [--action <name>]
+  outlook-agent setup opencode --print [--binary <path>] [--config <path>]
+  outlook-agent mcp --config <path>
+
+Agent workflow:
+  Use metadata-first reads. Fetch message bodies and attachments only for
+  explicit targets. Use dry-run and exact confirmation for broad, mutating,
+  send-like, destructive, or unknown actions.
+`
+
+func isHelpCommand(command string) bool {
+	return command == "" || command == "help" || command == "--help" || command == "-h"
+}
+
+func setupOpencodeArgsFromRaw(args []string) ([]string, bool) {
+	commandIndex := firstCommandIndex(args)
+	if commandIndex+1 < len(args) && args[commandIndex] == "setup" && args[commandIndex+1] == "opencode" {
+		return args[commandIndex+2:], true
+	}
+	return nil, false
+}
+
+func firstCommandIndex(args []string) int {
+	for index := 0; index < len(args); index++ {
+		switch args[index] {
+		case "--config", "--profile":
+			index++
+			if index >= len(args) {
+				return len(args)
+			}
+		default:
+			return index
+		}
+	}
+	return len(args)
+}
+
+func writeHelp(stdout io.Writer) int {
+	if _, err := fmt.Fprint(stdout, helpText); err != nil {
+		return 1
+	}
+	return 0
+}
+
+func doctorNextSteps(output doctorOutput) []string {
+	steps := make([]string, 0)
+	if output.Config.Kind == "none" {
+		steps = append(steps, "No config file was found; Outlook Agent will use the safe fake transport until you pass --config <path> or OUTLOOK_AGENT_CONFIG.")
+		steps = append(steps, "Run outlook-agent setup opencode --print after choosing the binary and config path for your agent client.")
+	}
+	if output.Config.Kind != "none" && output.Config.Error != "" {
+		steps = append(steps, "Create the missing config file or update the configured config path: "+output.Config.Path)
+	}
+	if !output.SecretStore.Available {
+		steps = append(steps, "The macOS Keychain secret store is unavailable on this platform; configure an approved secret-store backend before live profiles.")
+	}
+	if output.MCPStdio {
+		steps = append(steps, "OpenCode can run Outlook Agent through a local MCP entry that executes outlook-agent --config <path> mcp.")
+	}
+	return steps
+}
+
+type setupOpencodeArgs struct {
+	Binary     string
+	ConfigPath string
+}
+
+func runSetupOpencode(args []string, options Options, stdout io.Writer, stderr io.Writer) int {
+	settings, err := parseSetupOpencodeArgs(args)
+	if err != nil {
+		fmt.Fprintln(stderr, err)
+		return 1
+	}
+	if settings.ConfigPath == "" {
+		settings.ConfigPath = options.ConfigPath
+	}
+	command := []string{settings.Binary}
+	if settings.ConfigPath != "" {
+		command = append(command, "--config", settings.ConfigPath)
+	}
+	command = append(command, "mcp")
+	return writeJSON(stdout, setupOpencodeOutput{
+		Schema: "https://opencode.ai/config.json",
+		MCP: map[string]setupOpencodeMCPServer{
+			"outlook-agent": {
+				Type:    "local",
+				Command: command,
+				Enabled: true,
+			},
+		},
+	})
+}
+
+func parseSetupOpencodeArgs(args []string) (setupOpencodeArgs, error) {
+	settings := setupOpencodeArgs{Binary: "outlook-agent"}
+	seenPrint := false
+	for index := 0; index < len(args); index++ {
+		switch args[index] {
+		case "--print":
+			seenPrint = true
+		case "--binary":
+			index++
+			if index >= len(args) {
+				return setupOpencodeArgs{}, fmt.Errorf("--binary requires a value")
+			}
+			settings.Binary = args[index]
+		case "--config":
+			index++
+			if index >= len(args) {
+				return setupOpencodeArgs{}, fmt.Errorf("--config requires a value")
+			}
+			settings.ConfigPath = args[index]
+		default:
+			return setupOpencodeArgs{}, fmt.Errorf("unknown setup opencode argument: %s", args[index])
+		}
+	}
+	if !seenPrint {
+		return setupOpencodeArgs{}, fmt.Errorf("setup opencode requires --print")
+	}
+	return settings, nil
+}
+
+func parseOptionsBeforeCommand(args []string) (Options, []string, error) {
+	var options Options
+	commandIndex := firstCommandIndex(args)
+	for index := 0; index < commandIndex; index++ {
+		switch args[index] {
+		case "--config":
+			index++
+			if index >= commandIndex {
+				return Options{}, nil, fmt.Errorf("--config requires a value")
+			}
+			options.ConfigPath = args[index]
+		case "--profile":
+			index++
+			if index >= commandIndex {
+				return Options{}, nil, fmt.Errorf("--profile requires a value")
+			}
+			options.Profile = args[index]
+		default:
+			return Options{}, nil, fmt.Errorf("unknown command: %s", args[index])
+		}
+	}
+	return options, args[commandIndex:], nil
 }
 
 func writeJSON(stdout io.Writer, payload any) int {

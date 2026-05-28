@@ -46,6 +46,101 @@ func TestCatalogContainsInitialTools(t *testing.T) {
 	}
 }
 
+func TestToolDescriptionsGuideAgentWorkflow(t *testing.T) {
+	descriptions := map[string]string{}
+	for _, tool := range mcpserver.Catalog().Tools {
+		descriptions[tool.Name] = tool.Description
+	}
+
+	expectDescriptionMarkers := map[string][]string{
+		"outlook.mail_search": {
+			"first",
+			"metadata-only",
+			"bounded",
+		},
+		"outlook.mail_fetch_body": {
+			"explicit message",
+			"not a bulk",
+		},
+		"outlook.mail_create_draft": {
+			"save-only",
+			"does not send",
+		},
+		"outlook.mail_rule_set_enabled": {
+			"dry-run",
+			"settings",
+		},
+		"outlook.action_dry_run": {
+			"required",
+			"mutating",
+			"destructive",
+		},
+		"outlook.action_confirm": {
+			"exact payload",
+			"reviewed",
+		},
+		"outlook.raw_action": {
+			"advanced",
+			"prefer high-level tools",
+		},
+	}
+
+	for name, markers := range expectDescriptionMarkers {
+		description := descriptions[name]
+		if description == "" {
+			t.Fatalf("missing description for %s", name)
+		}
+		lower := strings.ToLower(description)
+		for _, marker := range markers {
+			if !strings.Contains(lower, marker) {
+				t.Fatalf("expected %s description to contain %q, got %q", name, marker, description)
+			}
+		}
+	}
+}
+
+func TestMCPListToolsMatchesCatalogDescriptions(t *testing.T) {
+	ctx := context.Background()
+	serverTransport, clientTransport := mcp.NewInMemoryTransports()
+
+	serverSession, err := mcpserver.New().Connect(ctx, serverTransport, nil)
+	if err != nil {
+		t.Fatalf("connect server: %v", err)
+	}
+	defer serverSession.Close()
+	defer serverSession.Wait()
+
+	client := mcp.NewClient(&mcp.Implementation{Name: "test-client", Version: "0.0.1"}, nil)
+	clientSession, err := client.Connect(ctx, clientTransport, nil)
+	if err != nil {
+		t.Fatalf("connect client: %v", err)
+	}
+	defer clientSession.Close()
+
+	listed, err := clientSession.ListTools(ctx, nil)
+	if err != nil {
+		t.Fatalf("list tools: %v", err)
+	}
+	catalog := mcpserver.Catalog()
+	if len(listed.Tools) != len(catalog.Tools) {
+		t.Fatalf("expected %d listed tools, got %d", len(catalog.Tools), len(listed.Tools))
+	}
+
+	catalogDescriptions := map[string]string{}
+	for _, tool := range catalog.Tools {
+		catalogDescriptions[tool.Name] = tool.Description
+	}
+	for _, got := range listed.Tools {
+		want, ok := catalogDescriptions[got.Name]
+		if !ok {
+			t.Fatalf("listed tool %q is missing from catalog", got.Name)
+		}
+		if got.Description != want {
+			t.Fatalf("description mismatch for %s: got %q, want %q", got.Name, got.Description, want)
+		}
+	}
+}
+
 func TestNewServerBuildsMCPServer(t *testing.T) {
 	server := mcpserver.New()
 	if server == nil {

@@ -2,7 +2,8 @@
 
 ## CLI Contract
 
-All commands write JSON to stdout and diagnostics to stderr.
+Operational commands write JSON to stdout and diagnostics to stderr. `help`
+and `--help` are human-readable onboarding output.
 
 When no config path is configured, the runtime uses the fake transport for
 safe local development. When a config path is explicitly provided through
@@ -10,10 +11,13 @@ safe local development. When a config path is explicitly provided through
 config paths fail fast instead of silently falling back to fake data.
 
 ```text
+outlook-agent help
+outlook-agent --help
 outlook-agent doctor [--json]
 outlook-agent --config <path> auth check [--profile <name>]
 outlook-agent --config <path> auth graph-device-code [--profile <name>]
 outlook-agent policy explain [--action <name>]
+outlook-agent setup opencode --print [--binary <path>] [--config <path>]
 outlook-agent owa discover-actions --file <path>
 outlook-agent --config <path> owa discover-actions --url <path-or-url> [--include-linked-scripts] [--follow-navigation-hints] [--diagnostics] [--max-sources <positive-int>]
 outlook-agent --config <path> owa discover-action-context --action <OWAAction> --url <path-or-url> [--include-linked-scripts] [--follow-navigation-hints] [--max-sources <positive-int>]
@@ -38,11 +42,20 @@ includes:
   `--profile`;
 - `secret_store`: keychain readiness metadata for the current platform;
 - `transports`: supported transport names;
-- `mcp_stdio`: whether the local MCP server mode is compiled in.
+- `mcp_stdio`: whether the local MCP server mode is compiled in;
+- `next_steps`: sanitized, actionable onboarding guidance for common states.
 
 If an explicit or environment config path is missing or invalid, `doctor`
 returns exit code `1`, `ok=false`, and a sanitized `error` mirrored under
 `config.error`.
+
+`doctor.next_steps` covers common onboarding states such as fake transport
+fallback when no config is found, missing explicit config paths, unavailable
+secret stores, and OpenCode MCP setup.
+
+`setup opencode --print` emits a public-safe local MCP config block. It prints
+only the binary path, optional config path, and MCP command arguments; it never
+reads or prints secrets.
 
 `auth graph-device-code` performs device-code OAuth enrollment for a configured
 Graph profile. The command prints human device-code sign-in instructions to
@@ -82,6 +95,11 @@ outlook.action_dry_run
 outlook.action_confirm
 outlook.raw_action
 ```
+
+MCP tool descriptions are part of the agent UX contract. They should remain
+concise but must identify metadata-first reads, explicit body or attachment
+targets, save-only drafts, dry-run requirements, exact confirmation, and raw
+escape-hatch behavior.
 
 Key tool inputs:
 

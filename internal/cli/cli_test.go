@@ -144,6 +144,214 @@ func TestDoctorReportsMissingExplicitConfig(t *testing.T) {
 	}
 }
 
+func TestHelpPrintsHumanReadableUsage(t *testing.T) {
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+
+	code := Run([]string{"help"}, &stdout, &stderr)
+
+	if code != 0 {
+		t.Fatalf("expected exit code 0, got %d, stderr=%s", code, stderr.String())
+	}
+	output := stdout.String()
+	for _, required := range []string{
+		"Outlook Agent",
+		"outlook-agent doctor",
+		"outlook-agent auth check",
+		"outlook-agent setup opencode --print",
+		"outlook-agent mcp",
+		"metadata-first",
+		"dry-run",
+	} {
+		if !strings.Contains(output, required) {
+			t.Fatalf("expected help output to contain %q, got:\n%s", required, output)
+		}
+	}
+	if stderr.Len() != 0 {
+		t.Fatalf("expected no stderr, got %s", stderr.String())
+	}
+}
+
+func TestHelpFlagPrintsHumanReadableUsage(t *testing.T) {
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+
+	code := Run([]string{"--help"}, &stdout, &stderr)
+
+	if code != 0 {
+		t.Fatalf("expected exit code 0, got %d, stderr=%s", code, stderr.String())
+	}
+	if !strings.Contains(stdout.String(), "outlook-agent setup opencode --print") {
+		t.Fatalf("expected setup command in --help output, got %s", stdout.String())
+	}
+}
+
+func TestDoctorIncludesNextStepsWithoutConfig(t *testing.T) {
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+
+	code := Run([]string{"doctor"}, &stdout, &stderr)
+
+	if code != 0 {
+		t.Fatalf("expected exit code 0, got %d, stderr=%s", code, stderr.String())
+	}
+	var payload struct {
+		OK        bool     `json:"ok"`
+		Command   string   `json:"command"`
+		NextSteps []string `json:"next_steps"`
+		Config    struct {
+			Found bool   `json:"found"`
+			Kind  string `json:"kind"`
+		} `json:"config"`
+	}
+	if err := json.Unmarshal(stdout.Bytes(), &payload); err != nil {
+		t.Fatalf("doctor output is not JSON: %v; output=%s", err, stdout.String())
+	}
+	if !payload.OK || payload.Command != "doctor" {
+		t.Fatalf("unexpected doctor identity: %#v", payload)
+	}
+	if payload.Config.Found {
+		t.Fatalf("expected fake-transport no-config state, got %#v", payload.Config)
+	}
+	for _, required := range []string{
+		"fake transport",
+		"--config",
+		"setup opencode --print",
+	} {
+		if !stringSliceContainsText(payload.NextSteps, required) {
+			t.Fatalf("expected next_steps to mention %q, got %#v", required, payload.NextSteps)
+		}
+	}
+}
+
+func TestDoctorIncludesNextStepsForMissingExplicitConfig(t *testing.T) {
+	missingConfig := filepath.Join(t.TempDir(), "missing.json")
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+
+	code := Run([]string{"--config", missingConfig, "doctor"}, &stdout, &stderr)
+
+	if code == 0 {
+		t.Fatalf("expected non-zero exit for missing explicit config, stdout=%s", stdout.String())
+	}
+	var payload struct {
+		OK        bool     `json:"ok"`
+		NextSteps []string `json:"next_steps"`
+		Config    struct {
+			Path string `json:"path"`
+		} `json:"config"`
+	}
+	if err := json.Unmarshal(stdout.Bytes(), &payload); err != nil {
+		t.Fatalf("doctor output is not JSON: %v; output=%s stderr=%s", err, stdout.String(), stderr.String())
+	}
+	if payload.OK {
+		t.Fatalf("expected ok=false, got %#v", payload)
+	}
+	if stringSliceContainsText(payload.NextSteps, "fake transport") {
+		t.Fatalf("missing explicit config must not mention fake transport fallback, got %#v", payload.NextSteps)
+	}
+	if !stringSliceContainsText(payload.NextSteps, missingConfig) {
+		t.Fatalf("expected missing path in next_steps, got %#v", payload.NextSteps)
+	}
+}
+
+func TestSetupOpencodePrintsLocalMCPConfig(t *testing.T) {
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+
+	code := Run([]string{"setup", "opencode", "--print", "--binary", "/usr/local/bin/outlook-agent", "--config", ".local/outlook-agent.json"}, &stdout, &stderr)
+
+	if code != 0 {
+		t.Fatalf("expected exit code 0, got %d, stderr=%s", code, stderr.String())
+	}
+	var payload struct {
+		MCP map[string]struct {
+			Type    string   `json:"type"`
+			Command []string `json:"command"`
+			Enabled bool     `json:"enabled"`
+		} `json:"mcp"`
+	}
+	if err := json.Unmarshal(stdout.Bytes(), &payload); err != nil {
+		t.Fatalf("setup output is not JSON: %v; output=%s", err, stdout.String())
+	}
+	server, ok := payload.MCP["outlook-agent"]
+	if !ok {
+		t.Fatalf("expected outlook-agent MCP server, got %#v", payload.MCP)
+	}
+	expectedCommand := []string{"/usr/local/bin/outlook-agent", "--config", ".local/outlook-agent.json", "mcp"}
+	if server.Type != "local" || !server.Enabled || !stringSlicesEqual(server.Command, expectedCommand) {
+		t.Fatalf("unexpected server config: %#v", server)
+	}
+	for _, forbidden := range []string{"password", "access_token", "refresh_token", "cookie", "canary"} {
+		if strings.Contains(strings.ToLower(stdout.String()), forbidden) {
+			t.Fatalf("setup output leaked forbidden marker %q: %s", forbidden, stdout.String())
+		}
+	}
+}
+
+func TestSetupOpencodeKeepsLocalConfigAfterGlobalConfig(t *testing.T) {
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+
+	code := Run([]string{"--config", "global.json", "setup", "opencode", "--print", "--config", "local.json"}, &stdout, &stderr)
+
+	if code != 0 {
+		t.Fatalf("expected exit code 0, got %d, stderr=%s", code, stderr.String())
+	}
+	var payload struct {
+		MCP map[string]struct {
+			Command []string `json:"command"`
+		} `json:"mcp"`
+	}
+	if err := json.Unmarshal(stdout.Bytes(), &payload); err != nil {
+		t.Fatalf("setup output is not JSON: %v; output=%s", err, stdout.String())
+	}
+	expectedCommand := []string{"outlook-agent", "--config", "local.json", "mcp"}
+	if !stringSlicesEqual(payload.MCP["outlook-agent"].Command, expectedCommand) {
+		t.Fatalf("expected setup-local config command %#v, got %#v", expectedCommand, payload.MCP["outlook-agent"].Command)
+	}
+}
+
+func TestSetupOpencodeUsesLeadingGlobalConfigWhenNoLocalConfig(t *testing.T) {
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+
+	code := Run([]string{"--config", ".local/outlook-agent.json", "setup", "opencode", "--print"}, &stdout, &stderr)
+
+	if code != 0 {
+		t.Fatalf("expected exit code 0, got %d, stderr=%s", code, stderr.String())
+	}
+	var payload struct {
+		MCP map[string]struct {
+			Command []string `json:"command"`
+		} `json:"mcp"`
+	}
+	if err := json.Unmarshal(stdout.Bytes(), &payload); err != nil {
+		t.Fatalf("setup output is not JSON: %v; output=%s", err, stdout.String())
+	}
+	expectedCommand := []string{"outlook-agent", "--config", ".local/outlook-agent.json", "mcp"}
+	if !stringSlicesEqual(payload.MCP["outlook-agent"].Command, expectedCommand) {
+		t.Fatalf("expected leading global config command %#v, got %#v", expectedCommand, payload.MCP["outlook-agent"].Command)
+	}
+}
+
+func TestSetupOpencodeDoesNotMatchGlobalConfigValue(t *testing.T) {
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+
+	code := Run([]string{"--config", "setup", "opencode", "--print"}, &stdout, &stderr)
+
+	if code == 0 {
+		t.Fatalf("expected non-zero exit because setup is a config value, stdout=%s", stdout.String())
+	}
+	if stdout.Len() != 0 {
+		t.Fatalf("expected no setup JSON output, got %s", stdout.String())
+	}
+	if !strings.Contains(stderr.String(), "unknown command: opencode") {
+		t.Fatalf("expected opencode to be treated as the command, got stderr=%s", stderr.String())
+	}
+}
+
 func TestPolicyExplainListsSafetyClasses(t *testing.T) {
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer
@@ -656,6 +864,27 @@ func stringSliceContains(values []string, expected string) bool {
 		}
 	}
 	return false
+}
+
+func stringSliceContainsText(values []string, needle string) bool {
+	for _, value := range values {
+		if strings.Contains(value, needle) {
+			return true
+		}
+	}
+	return false
+}
+
+func stringSlicesEqual(left []string, right []string) bool {
+	if len(left) != len(right) {
+		return false
+	}
+	for index := range left {
+		if left[index] != right[index] {
+			return false
+		}
+	}
+	return true
 }
 
 func TestMCPCommandDispatchesRunner(t *testing.T) {

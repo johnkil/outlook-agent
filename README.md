@@ -57,6 +57,30 @@ tokens, cookies, or canary values.
 `settings.mailbox_email` is the default mailbox used by
 `calendar.availability` when the request does not pass an explicit `email`.
 
+## Agent UX Quick Start
+
+Start with the local diagnostics:
+
+```bash
+outlook-agent help
+outlook-agent doctor
+outlook-agent --config .local/outlook-agent.json auth check
+outlook-agent setup opencode --print --config .local/outlook-agent.json
+```
+
+Add the printed local MCP config to OpenCode, then use the checked-in
+`.opencode/skills` workflows for ordinary requests:
+
+- `outlook-mail` for metadata-first mail inspection, summaries, and draft
+  preparation;
+- `outlook-mail-inbox-triage` for inbox buckets and follow-up review;
+- `outlook-calendar` for schedule and availability work;
+- `outlook-calendar-daily-brief` for today/tomorrow schedule summaries.
+
+The agent should prefer high-level MCP tools, fetch bodies or attachments only
+for explicit targets, and use dry-run plus exact confirmation for write-like
+actions.
+
 For an EWS profile, use an explicit SOAP endpoint and a secret-store reference:
 
 ```json
