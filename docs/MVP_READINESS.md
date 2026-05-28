@@ -75,13 +75,21 @@ surface:
 
 ## Verification
 
-Before claiming the MVP boundary still holds, run:
+Before claiming the MVP boundary still holds, run the local CI mirror and
+release smoke:
+
+```bash
+GOPATH=$PWD/.cache/go GOCACHE=$PWD/.cache/go-build GOMODCACHE=$PWD/.cache/go-mod scripts/ci-local.sh
+GOPATH=$PWD/.cache/go GOCACHE=$PWD/.cache/go-build GOMODCACHE=$PWD/.cache/go-mod scripts/release-smoke.sh
+```
+
+For manual debugging, the core fallback checks are:
 
 ```bash
 GOPATH=$PWD/.cache/go GOCACHE=$PWD/.cache/go-build GOMODCACHE=$PWD/.cache/go-mod go test -count=1 ./...
 GOPATH=$PWD/.cache/go GOCACHE=$PWD/.cache/go-build GOMODCACHE=$PWD/.cache/go-mod go build -o /private/tmp/outlook-agent-build-check ./cmd/outlook-agent
-bash -n scripts/release-build.sh scripts/public-safety-check.sh
-scripts/public-safety-check.sh
+bash -n scripts/release-build.sh scripts/public-safety-check.sh scripts/ci-local.sh scripts/release-smoke.sh
+bash scripts/public-safety-check.sh
 git diff --check
 ```
 

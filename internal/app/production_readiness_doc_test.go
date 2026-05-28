@@ -57,6 +57,10 @@ func TestMVPReadinessBoundaryDocumentsDoneAndExternalGates(t *testing.T) {
 		"OpenCode MCP",
 		"exact confirmation",
 		"enterprise secret scanning",
+		"scripts/ci-local.sh",
+		"scripts/release-smoke.sh",
+		"local CI mirror",
+		"release smoke",
 	} {
 		if !strings.Contains(text, required) {
 			t.Fatalf("expected MVP readiness boundary to contain %q", required)
