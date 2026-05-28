@@ -57,7 +57,11 @@ type MailSearchInput struct {
 }
 
 type MailSearchOutput struct {
-	Messages []any `json:"messages"`
+	Messages  []any  `json:"messages"`
+	Returned  int    `json:"returned"`
+	Limit     int    `json:"limit"`
+	Truncated bool   `json:"truncated"`
+	NextLink  string `json:"next_link,omitempty"`
 }
 
 type MessageIDInput struct {
@@ -390,7 +394,13 @@ func mailSearchHandler(client transport.Transport) func(context.Context, *mcp.Ca
 		}
 		redacted := redact.Value(response.Data).(map[string]any)
 		messages, _ := redacted["messages"].([]any)
-		return nil, MailSearchOutput{Messages: messages}, nil
+		return nil, MailSearchOutput{
+			Messages:  messages,
+			Returned:  intMetadata(redacted, "returned"),
+			Limit:     intMetadata(redacted, "limit"),
+			Truncated: boolMetadata(redacted, "truncated"),
+			NextLink:  stringMetadata(redacted, "next_link"),
+		}, nil
 	}
 }
 
@@ -725,6 +735,47 @@ func withMailbox(payload map[string]any, mailbox string) map[string]any {
 		payload["mailbox"] = strings.TrimSpace(mailbox)
 	}
 	return payload
+}
+
+func intMetadata(data map[string]any, key string) int {
+	switch value := data[key].(type) {
+	case int:
+		return value
+	case int8:
+		return int(value)
+	case int16:
+		return int(value)
+	case int32:
+		return int(value)
+	case int64:
+		return int(value)
+	case uint:
+		return int(value)
+	case uint8:
+		return int(value)
+	case uint16:
+		return int(value)
+	case uint32:
+		return int(value)
+	case uint64:
+		return int(value)
+	case float32:
+		return int(value)
+	case float64:
+		return int(value)
+	default:
+		return 0
+	}
+}
+
+func boolMetadata(data map[string]any, key string) bool {
+	value, _ := data[key].(bool)
+	return value
+}
+
+func stringMetadata(data map[string]any, key string) string {
+	value, _ := data[key].(string)
+	return value
 }
 
 func stringsToAny(values []string) []any {
