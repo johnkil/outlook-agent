@@ -44,6 +44,13 @@ func TestReleaseReadinessArtifactsExist(t *testing.T) {
 			"OUTLOOK_AGENT_PUBLIC_SAFETY_PATTERN",
 			"forbidden generated artifact",
 		},
+		filepath.Join("..", "..", "scripts", "action-coverage-smoke.sh"): {
+			"policy coverage",
+			"live_check_level",
+			"OUTLOOK_AGENT_LIVE_CONFIG",
+			"OUTLOOK_AGENT_OPENCODE_LIVE_DIR",
+			"outlook.action_dry_run",
+		},
 		filepath.Join("..", "..", ".github", "workflows", "ci.yml"): {
 			"go test -count=1 ./...",
 			"govulncheck",
