@@ -85,6 +85,30 @@ if [[ -n "${OUTLOOK_AGENT_OPENCODE_LIVE_DIR:-}" ]]; then
     and ([.[] | select(.type == "tool_use" and .part.tool == "outlook-agent_outlook_capabilities" and .part.state.status == "completed")] | length) == 1
     and ([.[] | select(.type == "tool_use" and .part.tool == "outlook-agent_outlook_action_dry_run" and .part.state.status == "completed")] | length) >= 2
   ' "$opencode_jsonl" >/dev/null
+  forbidden_tools="$(
+    jq -r -s '
+      [
+        .[]
+        | select(.type == "tool_use")
+        | (.part.tool // empty)
+        | select(startswith("outlook-agent_outlook_"))
+        | select(
+            . != "outlook-agent_outlook_auth_check"
+            and . != "outlook-agent_outlook_capabilities"
+            and . != "outlook-agent_outlook_action_dry_run"
+          )
+      ]
+      | unique
+      | .[]
+    ' "$opencode_jsonl"
+  )"
+  if [[ -n "$forbidden_tools" ]]; then
+    echo "forbidden opencode tool calls:" >&2
+    while IFS= read -r tool_name; do
+      echo "- ${tool_name}" >&2
+    done <<< "$forbidden_tools"
+    exit 1
+  fi
   opencode_ok="true"
 fi
 

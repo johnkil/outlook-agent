@@ -76,7 +76,8 @@ level 5: workflow skill guidance
   invariants for every registered action. With `OUTLOOK_AGENT_LIVE_CONFIG`, it
   also verifies live auth. With `OUTLOOK_AGENT_OPENCODE_LIVE_DIR`, it runs a
   sanitized Opencode MCP smoke for auth, capabilities, and destructive
-  dry-run-guard behavior without confirmation execution.
+  dry-run-guard behavior without confirmation execution, and rejects extra
+  Outlook MCP tool calls outside the smoke's explicit allowlist.
 - MCP callers should inspect `outlook.capabilities.details` before choosing
   `outlook.raw_action`; the details array exposes each action's transport,
   safety class, coverage level, and direct policy gates from the runtime
