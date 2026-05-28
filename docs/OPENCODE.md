@@ -56,6 +56,14 @@ configuration:
 During local development, use the checked-out binary path or `go run` wrapper
 instead of `outlook-agent` if the binary is not installed globally.
 
+To print a local MCP configuration block without reading secrets:
+
+```bash
+outlook-agent setup opencode --print --config .local/outlook-agent.json
+```
+
+Use `--binary <path>` when the binary is not installed as `outlook-agent`.
+
 To run against a local OWA-like profile, pass an ignored local config path:
 
 ```json
@@ -103,6 +111,18 @@ Example `.local/outlook-agent.json`:
 The `skills/` directory provides workflow guidance inspired by the OpenAI
 Outlook Email and Outlook Calendar plugins. Skills help agents choose safe
 workflows, but they are not a security boundary.
+
+OpenCode can discover project skills from `.opencode/skills`. This repository
+ships the first agent-facing Outlook workflows there:
+
+- `.opencode/skills/outlook-mail`
+- `.opencode/skills/outlook-mail-inbox-triage`
+- `.opencode/skills/outlook-calendar`
+- `.opencode/skills/outlook-calendar-daily-brief`
+
+Use skills for ordinary user requests and MCP tools for execution. Skills are
+workflow guidance, not a security boundary. The Go runtime still enforces
+capabilities, dry-run, exact confirmation, unsafe mode, and redaction.
 
 All hard enforcement belongs in the Go runtime:
 

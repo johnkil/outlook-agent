@@ -103,3 +103,41 @@ func TestGitHubTemplatesGuideProductionWorkflow(t *testing.T) {
 		}
 	}
 }
+
+func TestAgentUXDocumentationNamesHappyPath(t *testing.T) {
+	requiredFiles := map[string][]string{
+		filepath.Join("..", "..", "README.md"): {
+			"outlook-agent help",
+			"outlook-agent setup opencode --print",
+			".opencode/skills",
+			"metadata-first",
+		},
+		filepath.Join("..", "..", "docs", "OPENCODE.md"): {
+			"outlook-agent setup opencode --print",
+			".opencode/skills/outlook-mail",
+			".opencode/skills/outlook-calendar",
+			"capabilities",
+			"dry-run",
+			"exact confirmation",
+		},
+		filepath.Join("..", "..", "docs", "SPEC.md"): {
+			"outlook-agent help",
+			"setup opencode --print",
+			"next_steps",
+			"metadata-first",
+		},
+	}
+
+	for path, markers := range requiredFiles {
+		data, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatalf("read UX doc %s: %v", path, err)
+		}
+		text := string(data)
+		for _, marker := range markers {
+			if !strings.Contains(text, marker) {
+				t.Fatalf("expected %s to contain %q", path, marker)
+			}
+		}
+	}
+}

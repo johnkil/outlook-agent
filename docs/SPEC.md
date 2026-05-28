@@ -96,6 +96,11 @@ outlook.action_confirm
 outlook.raw_action
 ```
 
+MCP tool descriptions are part of the agent UX contract. They should remain
+concise but must identify metadata-first reads, explicit body or attachment
+targets, save-only drafts, dry-run requirements, exact confirmation, and raw
+escape-hatch behavior.
+
 Key tool inputs:
 
 - `outlook.capabilities`: returns `compatibility_version` for runtime contract
