@@ -150,19 +150,21 @@ The initial Graph adapter supports `GetMailFolder`, `mail.search`,
 `calendar.availability`, plus guarded raw `GraphRequest`. It
 uses `/me/mailFolders/inbox` as its auth probe and keeps default message access
 metadata-only through `/me/mailFolders/{folder}/messages` and
-`/me/messages/{id}`. Explicit body access requests text bodies only; explicit
-attachment listing returns metadata for one message without content; explicit
-attachment fetch gets one attachment by message id and attachment id. Draft
-creation saves without sending; move-to-Deleted-Items uses Graph's reversible
-message move. Calendar metadata uses `/me/calendarView` and
-`/me/calendar/getSchedule`. Rule metadata uses
-`/me/mailFolders/{folder}/messageRules`; mailbox settings metadata uses
-`/me/mailboxSettings` and approved subresources such as `workingHours` and
-`timeZone`. Rule/settings writes stay behind raw `GraphRequest`, which is
-intentionally classified as destructive and requires unsafe dry-run plus exact
-confirmation because an arbitrary Graph request can send, mutate, or delete
-data. App registration, admin consent, and live tenant policy approval stay
-outside the public repository.
+`/me/messages/{id}`. High-level Graph actions accept optional `mailbox` to use
+the corresponding `/users/{id|userPrincipalName}/...` endpoint for a shared or
+delegated mailbox when tenant permissions allow it. Explicit body access
+requests text bodies only; explicit attachment listing returns metadata for one
+message without content; explicit attachment fetch gets one attachment by
+message id and attachment id. Draft creation saves without sending;
+move-to-Deleted-Items uses Graph's reversible message move. Calendar metadata
+uses `calendarView` and `calendar/getSchedule` under the selected owner path.
+Rule metadata uses `mailFolders/{folder}/messageRules`; mailbox settings
+metadata uses `mailboxSettings` and approved subresources such as
+`workingHours` and `timeZone`. Rule/settings writes stay behind raw
+`GraphRequest`, which is intentionally classified as destructive and requires
+unsafe dry-run plus exact confirmation because an arbitrary Graph request can
+send, mutate, or delete data. App registration, admin consent, and live tenant
+policy approval stay outside the public repository.
 
 ## Product Shape
 

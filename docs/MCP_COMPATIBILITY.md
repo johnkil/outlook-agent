@@ -42,6 +42,11 @@ The following changes are additive within a compatibility version:
 - adding new safety classes only when older clients can treat them as
   `unknown`.
 
+Compatibility version `0.1` includes the additive optional `mailbox` input on
+high-level mail and calendar tools. Transports that support delegated or shared
+mailbox targeting may use it; transports that do not support it keep their
+existing behavior or return a normal transport error.
+
 Clients must ignore unknown output fields and unknown capability detail fields.
 Servers must keep existing fields present with compatible meanings.
 

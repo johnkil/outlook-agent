@@ -36,7 +36,7 @@ func (client *Transport) Name() string {
 }
 
 func (client *Transport) Authenticate(ctx context.Context, _ string) transport.AuthResult {
-	if _, err := client.getMailFolder(ctx, "inbox"); err != nil {
+	if _, err := client.getMailFolder(ctx, "", "inbox"); err != nil {
 		return transport.AuthResult{OK: false, Error: err.Error()}
 	}
 	return transport.AuthResult{OK: true, Principal: "graph:me"}
@@ -61,10 +61,11 @@ func (client *Transport) Capabilities(context.Context) transport.CapabilitySet {
 }
 
 func (client *Transport) Execute(ctx context.Context, request transport.ActionRequest) transport.ActionResponse {
+	mailbox := mailboxTarget(request.Payload)
 	switch request.Name {
 	case "GetMailFolder":
 		folderID := stringValue(request.Payload, "folder_id", "inbox")
-		folder, err := client.getMailFolder(ctx, folderID)
+		folder, err := client.getMailFolder(ctx, mailbox, folderID)
 		if err != nil {
 			return transport.ActionResponse{OK: false, Error: err.Error()}
 		}
@@ -90,7 +91,7 @@ func (client *Transport) Execute(ctx context.Context, request transport.ActionRe
 		}
 		return transport.ActionResponse{OK: ok, Data: data, Error: errorText}
 	case "mail.search":
-		messages, err := client.listMessages(ctx, stringValue(request.Payload, "folder_id", "inbox"), intValue(request.Payload, "max", 150), stringValue(request.Payload, "query", ""))
+		messages, err := client.listMessages(ctx, mailbox, stringValue(request.Payload, "folder_id", "inbox"), intValue(request.Payload, "max", 150), stringValue(request.Payload, "query", ""))
 		if err != nil {
 			return transport.ActionResponse{OK: false, Error: err.Error()}
 		}
@@ -100,7 +101,7 @@ func (client *Transport) Execute(ctx context.Context, request transport.ActionRe
 		if messageID == "" {
 			return transport.ActionResponse{OK: false, Error: "mail.fetch_metadata requires id"}
 		}
-		message, err := client.getMessage(ctx, messageID)
+		message, err := client.getMessage(ctx, mailbox, messageID)
 		if err != nil {
 			return transport.ActionResponse{OK: false, Error: err.Error()}
 		}
@@ -110,7 +111,7 @@ func (client *Transport) Execute(ctx context.Context, request transport.ActionRe
 		if messageID == "" {
 			return transport.ActionResponse{OK: false, Error: "mail.fetch_body requires id"}
 		}
-		body, err := client.getMessageBody(ctx, messageID)
+		body, err := client.getMessageBody(ctx, mailbox, messageID)
 		if err != nil {
 			return transport.ActionResponse{OK: false, Error: err.Error()}
 		}
@@ -120,7 +121,7 @@ func (client *Transport) Execute(ctx context.Context, request transport.ActionRe
 		if messageID == "" {
 			return transport.ActionResponse{OK: false, Error: "mail.list_attachments requires id"}
 		}
-		attachments, err := client.listAttachments(ctx, messageID)
+		attachments, err := client.listAttachments(ctx, mailbox, messageID)
 		if err != nil {
 			return transport.ActionResponse{OK: false, Error: err.Error()}
 		}
@@ -131,13 +132,13 @@ func (client *Transport) Execute(ctx context.Context, request transport.ActionRe
 		if messageID == "" || attachmentID == "" {
 			return transport.ActionResponse{OK: false, Error: "mail.fetch_attachment requires message_id and attachment_id"}
 		}
-		attachment, err := client.getAttachment(ctx, messageID, attachmentID)
+		attachment, err := client.getAttachment(ctx, mailbox, messageID, attachmentID)
 		if err != nil {
 			return transport.ActionResponse{OK: false, Error: err.Error()}
 		}
 		return transport.ActionResponse{OK: true, Data: map[string]any{"attachment": normalizeGraphAttachment(attachment)}}
 	case "mail.create_draft":
-		draft, err := client.createDraft(ctx, request.Payload)
+		draft, err := client.createDraft(ctx, mailbox, request.Payload)
 		if err != nil {
 			return transport.ActionResponse{OK: false, Error: err.Error()}
 		}
@@ -147,24 +148,24 @@ func (client *Transport) Execute(ctx context.Context, request transport.ActionRe
 		if len(ids) == 0 {
 			return transport.ActionResponse{OK: false, Error: "mail.move_to_deleted_items requires ids"}
 		}
-		if err := client.moveMessagesToDeletedItems(ctx, ids); err != nil {
+		if err := client.moveMessagesToDeletedItems(ctx, mailbox, ids); err != nil {
 			return transport.ActionResponse{OK: false, Error: err.Error()}
 		}
 		return transport.ActionResponse{OK: true, Data: map[string]any{"moved_count": len(ids), "reversible": true}}
 	case "mail.rules.list":
-		rules, err := client.listMessageRules(ctx, stringValue(request.Payload, "folder_id", "inbox"))
+		rules, err := client.listMessageRules(ctx, mailbox, stringValue(request.Payload, "folder_id", "inbox"))
 		if err != nil {
 			return transport.ActionResponse{OK: false, Error: err.Error()}
 		}
 		return transport.ActionResponse{OK: true, Data: map[string]any{"rules": rules}}
 	case "mailbox.settings.get":
-		settings, err := client.getMailboxSettings(ctx, stringValue(request.Payload, "setting", ""))
+		settings, err := client.getMailboxSettings(ctx, mailbox, stringValue(request.Payload, "setting", ""))
 		if err != nil {
 			return transport.ActionResponse{OK: false, Error: err.Error()}
 		}
 		return transport.ActionResponse{OK: true, Data: map[string]any{"settings": settings}}
 	case "calendar.list":
-		events, err := client.listCalendarEvents(ctx, stringValue(request.Payload, "start", ""), stringValue(request.Payload, "end", ""))
+		events, err := client.listCalendarEvents(ctx, mailbox, stringValue(request.Payload, "start", ""), stringValue(request.Payload, "end", ""))
 		if err != nil {
 			return transport.ActionResponse{OK: false, Error: err.Error()}
 		}
@@ -320,8 +321,8 @@ const messageMetadataSelect = "id,subject,from,receivedDateTime,importance,isRea
 const messageBodySelect = "id,body"
 const eventMetadataSelect = "id,subject,start,end,location"
 
-func (client *Transport) getMailFolder(ctx context.Context, folderID string) (mailFolder, error) {
-	requestURL, err := client.mailFolderURL(folderID)
+func (client *Transport) getMailFolder(ctx context.Context, mailbox string, folderID string) (mailFolder, error) {
+	requestURL, err := client.mailFolderURL(mailbox, folderID)
 	if err != nil {
 		return mailFolder{}, err
 	}
@@ -335,8 +336,8 @@ func (client *Transport) getMailFolder(ctx context.Context, folderID string) (ma
 	return folder, nil
 }
 
-func (client *Transport) listMessages(ctx context.Context, folderID string, maxItems int, query string) ([]any, error) {
-	requestURL, err := client.messagesURL(folderID, maxItems)
+func (client *Transport) listMessages(ctx context.Context, mailbox string, folderID string, maxItems int, query string) ([]any, error) {
+	requestURL, err := client.messagesURL(mailbox, folderID, maxItems)
 	if err != nil {
 		return nil, err
 	}
@@ -357,8 +358,8 @@ func (client *Transport) listMessages(ctx context.Context, folderID string, maxI
 	return messages, nil
 }
 
-func (client *Transport) getMessage(ctx context.Context, id string) (message, error) {
-	requestURL, err := client.messageURL(id)
+func (client *Transport) getMessage(ctx context.Context, mailbox string, id string) (message, error) {
+	requestURL, err := client.messageURL(mailbox, id)
 	if err != nil {
 		return message{}, err
 	}
@@ -372,8 +373,8 @@ func (client *Transport) getMessage(ctx context.Context, id string) (message, er
 	return item, nil
 }
 
-func (client *Transport) getMessageBody(ctx context.Context, id string) (message, error) {
-	requestURL, err := client.messageBodyURL(id)
+func (client *Transport) getMessageBody(ctx context.Context, mailbox string, id string) (message, error) {
+	requestURL, err := client.messageBodyURL(mailbox, id)
 	if err != nil {
 		return message{}, err
 	}
@@ -414,8 +415,8 @@ func (client *Transport) executeRawGraphRequest(ctx context.Context, payload map
 	return data, nil
 }
 
-func (client *Transport) getAttachment(ctx context.Context, messageID string, attachmentID string) (attachment, error) {
-	requestURL, err := client.messageAttachmentURL(messageID, attachmentID)
+func (client *Transport) getAttachment(ctx context.Context, mailbox string, messageID string, attachmentID string) (attachment, error) {
+	requestURL, err := client.messageAttachmentURL(mailbox, messageID, attachmentID)
 	if err != nil {
 		return attachment{}, err
 	}
@@ -429,8 +430,8 @@ func (client *Transport) getAttachment(ctx context.Context, messageID string, at
 	return item, nil
 }
 
-func (client *Transport) listAttachments(ctx context.Context, messageID string) ([]any, error) {
-	requestURL, err := client.messageAttachmentsURL(messageID)
+func (client *Transport) listAttachments(ctx context.Context, mailbox string, messageID string) ([]any, error) {
+	requestURL, err := client.messageAttachmentsURL(mailbox, messageID)
 	if err != nil {
 		return nil, err
 	}
@@ -448,8 +449,8 @@ func (client *Transport) listAttachments(ctx context.Context, messageID string) 
 	return attachments, nil
 }
 
-func (client *Transport) createDraft(ctx context.Context, payload map[string]any) (message, error) {
-	requestURL, err := client.messagesCollectionURL()
+func (client *Transport) createDraft(ctx context.Context, mailbox string, payload map[string]any) (message, error) {
+	requestURL, err := client.messagesCollectionURL(mailbox)
 	if err != nil {
 		return message{}, err
 	}
@@ -473,9 +474,9 @@ func (client *Transport) createDraft(ctx context.Context, payload map[string]any
 	return draft, nil
 }
 
-func (client *Transport) moveMessagesToDeletedItems(ctx context.Context, ids []string) error {
+func (client *Transport) moveMessagesToDeletedItems(ctx context.Context, mailbox string, ids []string) error {
 	for _, id := range ids {
-		requestURL, err := client.messageMoveURL(id)
+		requestURL, err := client.messageMoveURL(mailbox, id)
 		if err != nil {
 			return err
 		}
@@ -487,8 +488,8 @@ func (client *Transport) moveMessagesToDeletedItems(ctx context.Context, ids []s
 	return nil
 }
 
-func (client *Transport) listMessageRules(ctx context.Context, folderID string) ([]any, error) {
-	requestURL, err := client.messageRulesURL(folderID)
+func (client *Transport) listMessageRules(ctx context.Context, mailbox string, folderID string) ([]any, error) {
+	requestURL, err := client.messageRulesURL(mailbox, folderID)
 	if err != nil {
 		return nil, err
 	}
@@ -506,8 +507,8 @@ func (client *Transport) listMessageRules(ctx context.Context, folderID string) 
 	return rules, nil
 }
 
-func (client *Transport) getMailboxSettings(ctx context.Context, setting string) (any, error) {
-	requestURL, err := client.mailboxSettingsURL(setting)
+func (client *Transport) getMailboxSettings(ctx context.Context, mailbox string, setting string) (any, error) {
+	requestURL, err := client.mailboxSettingsURL(mailbox, setting)
 	if err != nil {
 		return nil, err
 	}
@@ -521,11 +522,11 @@ func (client *Transport) getMailboxSettings(ctx context.Context, setting string)
 	return settings, nil
 }
 
-func (client *Transport) listCalendarEvents(ctx context.Context, start string, end string) ([]any, error) {
+func (client *Transport) listCalendarEvents(ctx context.Context, mailbox string, start string, end string) ([]any, error) {
 	if strings.TrimSpace(start) == "" || strings.TrimSpace(end) == "" {
 		return nil, fmt.Errorf("calendar.list requires start and end")
 	}
-	requestURL, err := client.calendarViewURL(start, end)
+	requestURL, err := client.calendarViewURL(mailbox, start, end)
 	if err != nil {
 		return nil, err
 	}
@@ -544,6 +545,7 @@ func (client *Transport) listCalendarEvents(ctx context.Context, start string, e
 }
 
 func (client *Transport) getSchedule(ctx context.Context, payload map[string]any) ([]any, error) {
+	mailbox := mailboxTarget(payload)
 	email := strings.TrimSpace(stringValue(payload, "email", ""))
 	if email == "" {
 		return nil, fmt.Errorf("calendar.availability requires email")
@@ -566,7 +568,7 @@ func (client *Transport) getSchedule(ctx context.Context, payload map[string]any
 		},
 		"availabilityViewInterval": intValue(payload, "interval_minutes", 30),
 	}
-	requestURL, err := client.getScheduleURL()
+	requestURL, err := client.getScheduleURL(mailbox)
 	if err != nil {
 		return nil, err
 	}
@@ -828,7 +830,7 @@ func (client *Transport) refreshTokenCredential(ctx context.Context, credential 
 	}, nil
 }
 
-func (client *Transport) mailFolderURL(folderID string) (string, error) {
+func (client *Transport) mailFolderURL(mailbox string, folderID string) (string, error) {
 	base, err := client.config.normalizedBaseURL()
 	if err != nil {
 		return "", err
@@ -836,10 +838,10 @@ func (client *Transport) mailFolderURL(folderID string) (string, error) {
 	if strings.TrimSpace(folderID) == "" {
 		folderID = "inbox"
 	}
-	return base + "/me/mailFolders/" + url.PathEscape(folderID), nil
+	return base + graphOwnerPath(mailbox) + "/mailFolders/" + url.PathEscape(folderID), nil
 }
 
-func (client *Transport) messagesURL(folderID string, maxItems int) (string, error) {
+func (client *Transport) messagesURL(mailbox string, folderID string, maxItems int) (string, error) {
 	base, err := client.config.normalizedBaseURL()
 	if err != nil {
 		return "", err
@@ -853,43 +855,43 @@ func (client *Transport) messagesURL(folderID string, maxItems int) (string, err
 	values := url.Values{}
 	values.Set("$top", strconv.Itoa(maxItems))
 	values.Set("$select", messageMetadataSelect)
-	return base + "/me/mailFolders/" + url.PathEscape(folderID) + "/messages?" + values.Encode(), nil
+	return base + graphOwnerPath(mailbox) + "/mailFolders/" + url.PathEscape(folderID) + "/messages?" + values.Encode(), nil
 }
 
-func (client *Transport) messageURL(id string) (string, error) {
+func (client *Transport) messageURL(mailbox string, id string) (string, error) {
 	base, err := client.config.normalizedBaseURL()
 	if err != nil {
 		return "", err
 	}
 	values := url.Values{}
 	values.Set("$select", messageMetadataSelect)
-	return base + "/me/messages/" + url.PathEscape(id) + "?" + values.Encode(), nil
+	return base + graphOwnerPath(mailbox) + "/messages/" + url.PathEscape(id) + "?" + values.Encode(), nil
 }
 
-func (client *Transport) messageBodyURL(id string) (string, error) {
+func (client *Transport) messageBodyURL(mailbox string, id string) (string, error) {
 	base, err := client.config.normalizedBaseURL()
 	if err != nil {
 		return "", err
 	}
 	values := url.Values{}
 	values.Set("$select", messageBodySelect)
-	return base + "/me/messages/" + url.PathEscape(id) + "?" + values.Encode(), nil
+	return base + graphOwnerPath(mailbox) + "/messages/" + url.PathEscape(id) + "?" + values.Encode(), nil
 }
 
-func (client *Transport) messageAttachmentURL(messageID string, attachmentID string) (string, error) {
+func (client *Transport) messageAttachmentURL(mailbox string, messageID string, attachmentID string) (string, error) {
 	base, err := client.config.normalizedBaseURL()
 	if err != nil {
 		return "", err
 	}
-	return base + "/me/messages/" + url.PathEscape(messageID) + "/attachments/" + url.PathEscape(attachmentID), nil
+	return base + graphOwnerPath(mailbox) + "/messages/" + url.PathEscape(messageID) + "/attachments/" + url.PathEscape(attachmentID), nil
 }
 
-func (client *Transport) messageAttachmentsURL(messageID string) (string, error) {
+func (client *Transport) messageAttachmentsURL(mailbox string, messageID string) (string, error) {
 	base, err := client.config.normalizedBaseURL()
 	if err != nil {
 		return "", err
 	}
-	return base + "/me/messages/" + url.PathEscape(messageID) + "/attachments", nil
+	return base + graphOwnerPath(mailbox) + "/messages/" + url.PathEscape(messageID) + "/attachments", nil
 }
 
 func (client *Transport) rawGraphRequestURL(path string, rawQuery any) (string, error) {
@@ -919,23 +921,23 @@ func (client *Transport) rawGraphRequestURL(path string, rawQuery any) (string, 
 	return requestURL.String(), nil
 }
 
-func (client *Transport) messagesCollectionURL() (string, error) {
+func (client *Transport) messagesCollectionURL(mailbox string) (string, error) {
 	base, err := client.config.normalizedBaseURL()
 	if err != nil {
 		return "", err
 	}
-	return base + "/me/messages", nil
+	return base + graphOwnerPath(mailbox) + "/messages", nil
 }
 
-func (client *Transport) messageMoveURL(id string) (string, error) {
+func (client *Transport) messageMoveURL(mailbox string, id string) (string, error) {
 	base, err := client.config.normalizedBaseURL()
 	if err != nil {
 		return "", err
 	}
-	return base + "/me/messages/" + url.PathEscape(id) + "/move", nil
+	return base + graphOwnerPath(mailbox) + "/messages/" + url.PathEscape(id) + "/move", nil
 }
 
-func (client *Transport) messageRulesURL(folderID string) (string, error) {
+func (client *Transport) messageRulesURL(mailbox string, folderID string) (string, error) {
 	base, err := client.config.normalizedBaseURL()
 	if err != nil {
 		return "", err
@@ -943,25 +945,25 @@ func (client *Transport) messageRulesURL(folderID string) (string, error) {
 	if strings.TrimSpace(folderID) == "" {
 		folderID = "inbox"
 	}
-	return base + "/me/mailFolders/" + url.PathEscape(folderID) + "/messageRules", nil
+	return base + graphOwnerPath(mailbox) + "/mailFolders/" + url.PathEscape(folderID) + "/messageRules", nil
 }
 
-func (client *Transport) mailboxSettingsURL(setting string) (string, error) {
+func (client *Transport) mailboxSettingsURL(mailbox string, setting string) (string, error) {
 	base, err := client.config.normalizedBaseURL()
 	if err != nil {
 		return "", err
 	}
 	setting = strings.TrimSpace(setting)
 	if setting == "" {
-		return base + "/me/mailboxSettings", nil
+		return base + graphOwnerPath(mailbox) + "/mailboxSettings", nil
 	}
 	if !allowedMailboxSetting(setting) {
 		return "", fmt.Errorf("unsupported mailbox setting %q", setting)
 	}
-	return base + "/me/mailboxSettings/" + url.PathEscape(setting), nil
+	return base + graphOwnerPath(mailbox) + "/mailboxSettings/" + url.PathEscape(setting), nil
 }
 
-func (client *Transport) calendarViewURL(start string, end string) (string, error) {
+func (client *Transport) calendarViewURL(mailbox string, start string, end string) (string, error) {
 	base, err := client.config.normalizedBaseURL()
 	if err != nil {
 		return "", err
@@ -970,15 +972,15 @@ func (client *Transport) calendarViewURL(start string, end string) (string, erro
 	values.Set("startDateTime", start)
 	values.Set("endDateTime", end)
 	values.Set("$select", eventMetadataSelect)
-	return base + "/me/calendarView?" + values.Encode(), nil
+	return base + graphOwnerPath(mailbox) + "/calendarView?" + values.Encode(), nil
 }
 
-func (client *Transport) getScheduleURL() (string, error) {
+func (client *Transport) getScheduleURL(mailbox string) (string, error) {
 	base, err := client.config.normalizedBaseURL()
 	if err != nil {
 		return "", err
 	}
-	return base + "/me/calendar/getSchedule", nil
+	return base + graphOwnerPath(mailbox) + "/calendar/getSchedule", nil
 }
 
 func normalizeGraphMessage(item message) map[string]any {
@@ -1201,6 +1203,22 @@ func rawGraphQuery(value any) url.Values {
 		}
 	}
 	return values
+}
+
+func mailboxTarget(payload map[string]any) string {
+	mailbox := strings.TrimSpace(stringValue(payload, "mailbox", ""))
+	if mailbox != "" {
+		return mailbox
+	}
+	return strings.TrimSpace(stringValue(payload, "user_id", ""))
+}
+
+func graphOwnerPath(mailbox string) string {
+	mailbox = strings.TrimSpace(mailbox)
+	if mailbox == "" {
+		return "/me"
+	}
+	return "/users/" + url.PathEscape(mailbox)
 }
 
 func allowedMailboxSetting(setting string) bool {

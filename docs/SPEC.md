@@ -92,6 +92,9 @@ Key tool inputs:
   `execution_route` field is one of `direct`, `direct_explicit_target`,
   `direct_explicit_intent`, `dry_run_confirm`, `unsafe_dry_run_confirm`, or
   `unsafe_direct`.
+- High-level mail and calendar tools accept optional `mailbox` for transports
+  that support delegated or shared mailbox targeting. Graph uses that value as
+  `/users/{id|userPrincipalName}`; when omitted, Graph uses `/me`.
 - `outlook.calendar_availability`: `start`, `end`, and optional `email`.
   When `email` is omitted, OWA profiles use `settings.mailbox_email` if
   configured.
@@ -198,9 +201,11 @@ Configured transports:
   subresource: `automaticRepliesSetting`, `dateFormat`,
   `delegateMeetingMessageDeliveryOptions`, `language`, `timeFormat`,
   `timeZone`, `workingHours`, or `userPurpose`. Rule/settings writes remain
-  covered only by raw guarded `GraphRequest`. App registration, admin consent,
-  and live tenant policy approval remain external to the public runtime in this
-  phase.
+  covered only by raw guarded `GraphRequest`. High-level Graph actions accept
+  optional payload `mailbox` or `user_id` to target the matching
+  `/users/{id|userPrincipalName}` endpoint for delegated or shared mailboxes;
+  MCP tools expose `mailbox`. App registration, admin consent, and live tenant
+  policy approval remain external to the public runtime in this phase.
 
 ## Redaction
 

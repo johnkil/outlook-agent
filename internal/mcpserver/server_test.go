@@ -7,7 +7,9 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/johnkil/outlook-agent/internal/action"
 	"github.com/johnkil/outlook-agent/internal/mcpserver"
+	"github.com/johnkil/outlook-agent/internal/policy"
 	"github.com/johnkil/outlook-agent/internal/transport"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
@@ -152,6 +154,88 @@ func TestMCPToolCalendarAvailabilityForwardsEmail(t *testing.T) {
 	}
 	if capturing.lastRequest.Payload["email"] != "colleague@example.com" {
 		t.Fatalf("expected email forwarded to transport, got %#v", capturing.lastRequest.Payload)
+	}
+}
+
+func TestMCPHighLevelToolsForwardMailboxTarget(t *testing.T) {
+	ctx := context.Background()
+	capturing := &capturingTransport{}
+	serverTransport, clientTransport := mcp.NewInMemoryTransports()
+
+	serverSession, err := mcpserver.NewWithTransport(capturing).Connect(ctx, serverTransport, nil)
+	if err != nil {
+		t.Fatalf("connect server: %v", err)
+	}
+	defer serverSession.Close()
+	defer serverSession.Wait()
+
+	client := mcp.NewClient(&mcp.Implementation{Name: "test-client", Version: "0.0.1"}, nil)
+	clientSession, err := client.Connect(ctx, clientTransport, nil)
+	if err != nil {
+		t.Fatalf("connect client: %v", err)
+	}
+	defer clientSession.Close()
+
+	for _, call := range []struct {
+		name      string
+		arguments map[string]any
+		action    string
+	}{
+		{name: "outlook.mail_search", arguments: map[string]any{"query": "x", "mailbox": "shared@example.com"}, action: "mail.search"},
+		{name: "outlook.mail_fetch_metadata", arguments: map[string]any{"id": "msg-1", "mailbox": "shared@example.com"}, action: "mail.fetch_metadata"},
+		{name: "outlook.calendar_list", arguments: map[string]any{"start": "2026-05-27T00:00:00+02:00", "end": "2026-05-28T00:00:00+02:00", "mailbox": "shared@example.com"}, action: "calendar.list"},
+		{name: "outlook.calendar_availability", arguments: map[string]any{"start": "2026-05-27T09:00:00+02:00", "end": "2026-05-27T18:00:00+02:00", "email": "person@example.com", "mailbox": "shared@example.com"}, action: "calendar.availability"},
+	} {
+		t.Run(call.name, func(t *testing.T) {
+			capturing.lastRequest = transport.ActionRequest{}
+			result, err := clientSession.CallTool(ctx, &mcp.CallToolParams{Name: call.name, Arguments: call.arguments})
+			if err != nil {
+				t.Fatalf("call %s: %v", call.name, err)
+			}
+			if result.IsError {
+				t.Fatalf("expected %s success, got error result: %#v", call.name, result)
+			}
+			if capturing.lastRequest.Name != call.action {
+				t.Fatalf("expected %s request, got %#v", call.action, capturing.lastRequest)
+			}
+			if capturing.lastRequest.Payload["mailbox"] != "shared@example.com" {
+				t.Fatalf("expected mailbox forwarded to %s, got %#v", call.action, capturing.lastRequest.Payload)
+			}
+		})
+	}
+
+	dryRunResult, err := clientSession.CallTool(ctx, &mcp.CallToolParams{
+		Name: "outlook.action_dry_run",
+		Arguments: map[string]any{
+			"action":  "mail.move_to_deleted_items",
+			"payload": map[string]any{"ids": []any{"msg-1"}, "mailbox": "shared@example.com"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("call dry-run: %v", err)
+	}
+	dryRun := decodeStructured[mcpserver.DryRunOutput](t, dryRunResult)
+	if dryRun.ConfirmationToken == "" {
+		t.Fatalf("expected confirmation token for mailbox move: %#v", dryRun)
+	}
+
+	moveResult, err := clientSession.CallTool(ctx, &mcp.CallToolParams{
+		Name: "outlook.mail_move_to_deleted_items",
+		Arguments: map[string]any{
+			"ids":           []any{"msg-1"},
+			"mailbox":       "shared@example.com",
+			"confirm_token": dryRun.ConfirmationToken,
+		},
+	})
+	if err != nil {
+		t.Fatalf("call move: %v", err)
+	}
+	moveOutput := decodeStructured[mcpserver.ActionResultOutput](t, moveResult)
+	if !moveOutput.OK {
+		t.Fatalf("expected mailbox move to execute: %#v", moveOutput)
+	}
+	if capturing.lastRequest.Name != "mail.move_to_deleted_items" || capturing.lastRequest.Payload["mailbox"] != "shared@example.com" {
+		t.Fatalf("expected mailbox in move payload, got %#v", capturing.lastRequest)
 	}
 }
 
@@ -325,7 +409,9 @@ func (capturing *capturingTransport) Authenticate(context.Context, string) trans
 }
 
 func (capturing *capturingTransport) Capabilities(context.Context) transport.CapabilitySet {
-	return transport.CapabilitySet{}
+	return transport.CapabilitySet{Actions: []action.Definition{
+		{Name: "mail.move_to_deleted_items", Transport: "capture", Class: policy.ReversibleBulk, Level: action.LevelHighLevelMCPTool},
+	}}
 }
 
 func (capturing *capturingTransport) Execute(_ context.Context, request transport.ActionRequest) transport.ActionResponse {
@@ -333,6 +419,9 @@ func (capturing *capturingTransport) Execute(_ context.Context, request transpor
 	return transport.ActionResponse{
 		OK: true,
 		Data: map[string]any{
+			"messages":    []any{},
+			"message":     map[string]any{"id": "msg-1"},
+			"moved_count": 1,
 			"windows": []any{
 				map[string]any{
 					"start":          "2026-05-27T10:00:00+02:00",
@@ -340,12 +429,13 @@ func (capturing *capturingTransport) Execute(_ context.Context, request transpor
 					"free_busy_type": "Busy",
 				},
 			},
+			"events": []any{},
 		},
 	}
 }
 
 func (capturing *capturingTransport) DryRun(context.Context, transport.ActionRequest) transport.DryRunSummary {
-	return transport.DryRunSummary{}
+	return transport.DryRunSummary{Action: "mail.move_to_deleted_items", Count: 1, Reversible: true, RequiresConfirmation: true}
 }
 
 type failingTransport struct{}

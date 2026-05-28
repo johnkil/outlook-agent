@@ -277,6 +277,40 @@ func TestTransportExecutesMailSearchMetadata(t *testing.T) {
 	}
 }
 
+func TestTransportExecutesMailSearchForMailboxTarget(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		if request.Method != http.MethodGet || request.URL.Path != "/v1.0/users/shared@example.com/mailFolders/inbox/messages" {
+			t.Fatalf("unexpected request: %s %s", request.Method, request.URL.String())
+		}
+		if request.Header.Get("Authorization") != "Bearer token-secret" {
+			t.Fatal("expected bearer token header")
+		}
+		response.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(response).Encode(map[string]any{
+			"value": []any{graphMessageResponse("message-1", "Shared", "Team", "team@example.com")},
+		})
+	}))
+	defer server.Close()
+
+	client := graph.NewTransport(graph.Config{
+		BaseURL:   server.URL + "/v1.0",
+		SecretRef: secret.Ref("memory:graph"),
+	}, secret.NewMemoryStore(map[string]string{"memory:graph": "token-secret"}), server.Client())
+
+	result := client.Execute(context.Background(), transport.ActionRequest{
+		Name:    "mail.search",
+		Payload: map[string]any{"mailbox": "shared@example.com", "max": 1},
+	})
+
+	if !result.OK {
+		t.Fatalf("expected shared mailbox mail.search ok, got %#v", result)
+	}
+	messages := result.Data["messages"].([]any)
+	if len(messages) != 1 || messages[0].(map[string]any)["subject"] != "Shared" {
+		t.Fatalf("unexpected shared mailbox messages: %#v", messages)
+	}
+}
+
 func TestTransportExecutesMailSearchFiltersByQuery(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
 		response.Header().Set("Content-Type", "application/json")
@@ -335,6 +369,36 @@ func TestTransportExecutesMailFetchMetadata(t *testing.T) {
 	message := result.Data["message"].(map[string]any)
 	if message["id"] != "message-1" || message["subject"] != "Planning" || message["sender"] != "Alice <alice@example.com>" {
 		t.Fatalf("unexpected message metadata: %#v", message)
+	}
+}
+
+func TestTransportExecutesMailFetchMetadataForMailboxTarget(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		if request.Method != http.MethodGet || request.URL.Path != "/v1.0/users/shared@example.com/messages/message-1" {
+			t.Fatalf("unexpected request: %s %s", request.Method, request.URL.String())
+		}
+		assertGraphMessageSelect(t, request.URL.Query().Get("$select"))
+		response.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(response).Encode(graphMessageResponse("message-1", "Shared", "Team", "team@example.com"))
+	}))
+	defer server.Close()
+
+	client := graph.NewTransport(graph.Config{
+		BaseURL:   server.URL + "/v1.0",
+		SecretRef: secret.Ref("memory:graph"),
+	}, secret.NewMemoryStore(map[string]string{"memory:graph": "token-secret"}), server.Client())
+
+	result := client.Execute(context.Background(), transport.ActionRequest{
+		Name:    "mail.fetch_metadata",
+		Payload: map[string]any{"mailbox": "shared@example.com", "id": "message-1"},
+	})
+
+	if !result.OK {
+		t.Fatalf("expected shared mailbox mail.fetch_metadata ok, got %#v", result)
+	}
+	message := result.Data["message"].(map[string]any)
+	if message["id"] != "message-1" || message["subject"] != "Shared" {
+		t.Fatalf("unexpected shared mailbox message metadata: %#v", message)
 	}
 }
 
@@ -711,6 +775,38 @@ func TestTransportExecutesMailboxSettingsGetSpecificSetting(t *testing.T) {
 	}
 }
 
+func TestTransportExecutesMailboxSettingsGetForMailboxTarget(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		if request.Method != http.MethodGet || request.URL.Path != "/v1.0/users/shared@example.com/mailboxSettings" {
+			t.Fatalf("unexpected request: %s %s", request.Method, request.URL.String())
+		}
+		if request.Header.Get("Authorization") != "Bearer token-secret" {
+			t.Fatal("expected bearer token header")
+		}
+		response.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(response).Encode(map[string]any{"timeZone": "UTC"})
+	}))
+	defer server.Close()
+
+	client := graph.NewTransport(graph.Config{
+		BaseURL:   server.URL + "/v1.0",
+		SecretRef: secret.Ref("memory:graph"),
+	}, secret.NewMemoryStore(map[string]string{"memory:graph": "token-secret"}), server.Client())
+
+	result := client.Execute(context.Background(), transport.ActionRequest{
+		Name:    "mailbox.settings.get",
+		Payload: map[string]any{"mailbox": "shared@example.com"},
+	})
+
+	if !result.OK {
+		t.Fatalf("expected shared mailbox settings ok, got %#v", result)
+	}
+	settings := result.Data["settings"].(map[string]any)
+	if settings["timeZone"] != "UTC" {
+		t.Fatalf("unexpected shared mailbox settings: %#v", settings)
+	}
+}
+
 func TestTransportDryRunMoveToDeletedItemsRequiresConfirmation(t *testing.T) {
 	client := graph.NewTransport(graph.Config{
 		BaseURL:   "https://graph.example.test/v1.0",
@@ -793,6 +889,47 @@ func TestTransportExecutesCalendarList(t *testing.T) {
 	}
 	if event["start"] != "2026-05-28T09:00:00" || event["end"] != "2026-05-28T09:30:00" {
 		t.Fatalf("unexpected event time fields: %#v", event)
+	}
+}
+
+func TestTransportExecutesCalendarListForMailboxTarget(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		if request.Method != http.MethodGet || request.URL.Path != "/v1.0/users/shared@example.com/calendarView" {
+			t.Fatalf("unexpected request: %s %s", request.Method, request.URL.String())
+		}
+		if request.URL.Query().Get("startDateTime") != "2026-05-28T00:00:00Z" {
+			t.Fatalf("unexpected startDateTime: %q", request.URL.Query().Get("startDateTime"))
+		}
+		if request.URL.Query().Get("endDateTime") != "2026-05-29T00:00:00Z" {
+			t.Fatalf("unexpected endDateTime: %q", request.URL.Query().Get("endDateTime"))
+		}
+		response.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(response).Encode(map[string]any{
+			"value": []any{graphEventResponse("event-1", "Shared Planning", "2026-05-28T09:00:00", "2026-05-28T09:30:00", "Room 1")},
+		})
+	}))
+	defer server.Close()
+
+	client := graph.NewTransport(graph.Config{
+		BaseURL:   server.URL + "/v1.0",
+		SecretRef: secret.Ref("memory:graph"),
+	}, secret.NewMemoryStore(map[string]string{"memory:graph": "token-secret"}), server.Client())
+
+	result := client.Execute(context.Background(), transport.ActionRequest{
+		Name: "calendar.list",
+		Payload: map[string]any{
+			"mailbox": "shared@example.com",
+			"start":   "2026-05-28T00:00:00Z",
+			"end":     "2026-05-29T00:00:00Z",
+		},
+	})
+
+	if !result.OK {
+		t.Fatalf("expected shared mailbox calendar.list ok, got %#v", result)
+	}
+	events := result.Data["events"].([]any)
+	if len(events) != 1 || events[0].(map[string]any)["title"] != "Shared Planning" {
+		t.Fatalf("unexpected shared mailbox events: %#v", events)
 	}
 }
 

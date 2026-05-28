@@ -50,7 +50,8 @@ type CapabilitiesOutput struct {
 }
 
 type MailSearchInput struct {
-	Query string `json:"query,omitempty" jsonschema:"search query"`
+	Query   string `json:"query,omitempty" jsonschema:"search query"`
+	Mailbox string `json:"mailbox,omitempty" jsonschema:"optional mailbox user id or user principal name"`
 }
 
 type MailSearchOutput struct {
@@ -58,12 +59,14 @@ type MailSearchOutput struct {
 }
 
 type MessageIDInput struct {
-	ID string `json:"id" jsonschema:"message id"`
+	ID      string `json:"id" jsonschema:"message id"`
+	Mailbox string `json:"mailbox,omitempty" jsonschema:"optional mailbox user id or user principal name"`
 }
 
 type AttachmentIDInput struct {
 	MessageID    string `json:"message_id" jsonschema:"message id"`
 	AttachmentID string `json:"attachment_id" jsonschema:"attachment id"`
+	Mailbox      string `json:"mailbox,omitempty" jsonschema:"optional mailbox user id or user principal name"`
 }
 
 type MailFetchMetadataOutput struct {
@@ -87,6 +90,7 @@ type MailCreateDraftInput struct {
 	Subject string   `json:"subject,omitempty" jsonschema:"draft subject"`
 	Body    string   `json:"body,omitempty" jsonschema:"draft body"`
 	To      []string `json:"to,omitempty" jsonschema:"draft recipients"`
+	Mailbox string   `json:"mailbox,omitempty" jsonschema:"optional mailbox user id or user principal name"`
 }
 
 type MailCreateDraftOutput struct {
@@ -96,6 +100,7 @@ type MailCreateDraftOutput struct {
 type MailMoveToDeletedItemsInput struct {
 	IDs          []string `json:"ids" jsonschema:"message ids to move"`
 	ConfirmToken string   `json:"confirm_token" jsonschema:"confirmation token from outlook.action_dry_run"`
+	Mailbox      string   `json:"mailbox,omitempty" jsonschema:"optional mailbox user id or user principal name"`
 }
 
 type ActionResultOutput struct {
@@ -105,9 +110,10 @@ type ActionResultOutput struct {
 }
 
 type CalendarWindowInput struct {
-	Start string `json:"start" jsonschema:"inclusive start timestamp"`
-	End   string `json:"end" jsonschema:"exclusive end timestamp"`
-	Email string `json:"email,omitempty" jsonschema:"optional mailbox email for availability queries"`
+	Start   string `json:"start" jsonschema:"inclusive start timestamp"`
+	End     string `json:"end" jsonschema:"exclusive end timestamp"`
+	Email   string `json:"email,omitempty" jsonschema:"optional mailbox email for availability queries"`
+	Mailbox string `json:"mailbox,omitempty" jsonschema:"optional mailbox user id or user principal name"`
 }
 
 type CalendarListOutput struct {
@@ -272,9 +278,10 @@ func capabilitiesHandler(client transport.Transport) func(context.Context, *mcp.
 
 func mailSearchHandler(client transport.Transport) func(context.Context, *mcp.CallToolRequest, MailSearchInput) (*mcp.CallToolResult, MailSearchOutput, error) {
 	return func(ctx context.Context, _ *mcp.CallToolRequest, input MailSearchInput) (*mcp.CallToolResult, MailSearchOutput, error) {
+		payload := withMailbox(map[string]any{"query": input.Query}, input.Mailbox)
 		response := client.Execute(ctx, transport.ActionRequest{
 			Name:    "mail.search",
-			Payload: map[string]any{"query": input.Query},
+			Payload: payload,
 		})
 		if err := transportResponseError(response); err != nil {
 			return nil, MailSearchOutput{}, err
@@ -287,7 +294,7 @@ func mailSearchHandler(client transport.Transport) func(context.Context, *mcp.Ca
 
 func mailFetchMetadataHandler(client transport.Transport) func(context.Context, *mcp.CallToolRequest, MessageIDInput) (*mcp.CallToolResult, MailFetchMetadataOutput, error) {
 	return func(ctx context.Context, _ *mcp.CallToolRequest, input MessageIDInput) (*mcp.CallToolResult, MailFetchMetadataOutput, error) {
-		response := client.Execute(ctx, transport.ActionRequest{Name: "mail.fetch_metadata", Payload: map[string]any{"id": input.ID}})
+		response := client.Execute(ctx, transport.ActionRequest{Name: "mail.fetch_metadata", Payload: withMailbox(map[string]any{"id": input.ID}, input.Mailbox)})
 		if err := transportResponseError(response); err != nil {
 			return nil, MailFetchMetadataOutput{}, err
 		}
@@ -298,7 +305,7 @@ func mailFetchMetadataHandler(client transport.Transport) func(context.Context, 
 
 func mailFetchBodyHandler(client transport.Transport) func(context.Context, *mcp.CallToolRequest, MessageIDInput) (*mcp.CallToolResult, MailFetchBodyOutput, error) {
 	return func(ctx context.Context, _ *mcp.CallToolRequest, input MessageIDInput) (*mcp.CallToolResult, MailFetchBodyOutput, error) {
-		response := client.Execute(ctx, transport.ActionRequest{Name: "mail.fetch_body", Payload: map[string]any{"id": input.ID}})
+		response := client.Execute(ctx, transport.ActionRequest{Name: "mail.fetch_body", Payload: withMailbox(map[string]any{"id": input.ID}, input.Mailbox)})
 		if err := transportResponseError(response); err != nil {
 			return nil, MailFetchBodyOutput{}, err
 		}
@@ -309,7 +316,7 @@ func mailFetchBodyHandler(client transport.Transport) func(context.Context, *mcp
 
 func mailListAttachmentsHandler(client transport.Transport) func(context.Context, *mcp.CallToolRequest, MessageIDInput) (*mcp.CallToolResult, MailListAttachmentsOutput, error) {
 	return func(ctx context.Context, _ *mcp.CallToolRequest, input MessageIDInput) (*mcp.CallToolResult, MailListAttachmentsOutput, error) {
-		response := client.Execute(ctx, transport.ActionRequest{Name: "mail.list_attachments", Payload: map[string]any{"id": input.ID}})
+		response := client.Execute(ctx, transport.ActionRequest{Name: "mail.list_attachments", Payload: withMailbox(map[string]any{"id": input.ID}, input.Mailbox)})
 		if err := transportResponseError(response); err != nil {
 			return nil, MailListAttachmentsOutput{}, err
 		}
@@ -322,10 +329,10 @@ func mailFetchAttachmentHandler(client transport.Transport) func(context.Context
 	return func(ctx context.Context, _ *mcp.CallToolRequest, input AttachmentIDInput) (*mcp.CallToolResult, MailFetchAttachmentOutput, error) {
 		response := client.Execute(ctx, transport.ActionRequest{
 			Name: "mail.fetch_attachment",
-			Payload: map[string]any{
+			Payload: withMailbox(map[string]any{
 				"message_id":    input.MessageID,
 				"attachment_id": input.AttachmentID,
-			},
+			}, input.Mailbox),
 		})
 		if err := transportResponseError(response); err != nil {
 			return nil, MailFetchAttachmentOutput{}, err
@@ -338,11 +345,11 @@ func mailCreateDraftHandler(client transport.Transport) func(context.Context, *m
 	return func(ctx context.Context, _ *mcp.CallToolRequest, input MailCreateDraftInput) (*mcp.CallToolResult, MailCreateDraftOutput, error) {
 		response := client.Execute(ctx, transport.ActionRequest{
 			Name: "mail.create_draft",
-			Payload: map[string]any{
+			Payload: withMailbox(map[string]any{
 				"subject": input.Subject,
 				"body":    input.Body,
 				"to":      input.To,
-			},
+			}, input.Mailbox),
 		})
 		if err := transportResponseError(response); err != nil {
 			return nil, MailCreateDraftOutput{}, err
@@ -357,7 +364,7 @@ func mailMoveToDeletedItemsHandler(runtime *Runtime) func(context.Context, *mcp.
 		if input.ConfirmToken == "" {
 			return nil, ActionResultOutput{OK: false, Error: "confirm_token required"}, nil
 		}
-		payload := map[string]any{"ids": stringsToAny(input.IDs)}
+		payload := withMailbox(map[string]any{"ids": stringsToAny(input.IDs)}, input.Mailbox)
 		if !runtime.confirm.Consume(input.ConfirmToken, bindingFor(runtime.client, runtime.profile, "mail.move_to_deleted_items", payload, false)) {
 			return nil, ActionResultOutput{OK: false, Error: "confirmation token is invalid"}, nil
 		}
@@ -369,7 +376,7 @@ func mailMoveToDeletedItemsHandler(runtime *Runtime) func(context.Context, *mcp.
 
 func calendarListHandler(client transport.Transport) func(context.Context, *mcp.CallToolRequest, CalendarWindowInput) (*mcp.CallToolResult, CalendarListOutput, error) {
 	return func(ctx context.Context, _ *mcp.CallToolRequest, input CalendarWindowInput) (*mcp.CallToolResult, CalendarListOutput, error) {
-		response := client.Execute(ctx, transport.ActionRequest{Name: "calendar.list", Payload: map[string]any{"start": input.Start, "end": input.End}})
+		response := client.Execute(ctx, transport.ActionRequest{Name: "calendar.list", Payload: withMailbox(map[string]any{"start": input.Start, "end": input.End}, input.Mailbox)})
 		if err := transportResponseError(response); err != nil {
 			return nil, CalendarListOutput{}, err
 		}
@@ -381,7 +388,7 @@ func calendarListHandler(client transport.Transport) func(context.Context, *mcp.
 
 func calendarAvailabilityHandler(client transport.Transport) func(context.Context, *mcp.CallToolRequest, CalendarWindowInput) (*mcp.CallToolResult, CalendarAvailabilityOutput, error) {
 	return func(ctx context.Context, _ *mcp.CallToolRequest, input CalendarWindowInput) (*mcp.CallToolResult, CalendarAvailabilityOutput, error) {
-		payload := map[string]any{"start": input.Start, "end": input.End}
+		payload := withMailbox(map[string]any{"start": input.Start, "end": input.End}, input.Mailbox)
 		if strings.TrimSpace(input.Email) != "" {
 			payload["email"] = input.Email
 		}
@@ -532,6 +539,13 @@ func hasExplicitTarget(payload map[string]any) bool {
 	}
 	ids, ok := payload["ids"].([]any)
 	return ok && len(ids) == 1
+}
+
+func withMailbox(payload map[string]any, mailbox string) map[string]any {
+	if strings.TrimSpace(mailbox) != "" {
+		payload["mailbox"] = strings.TrimSpace(mailbox)
+	}
+	return payload
 }
 
 func stringsToAny(values []string) []any {
