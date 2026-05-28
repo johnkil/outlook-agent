@@ -43,6 +43,14 @@ If an explicit or environment config path is missing or invalid, `doctor`
 returns exit code `1`, `ok=false`, and a sanitized `error` mirrored under
 `config.error`.
 
+`policy explain` without arguments returns the stable safety-class list.
+`policy explain --action <name>` returns all built-in transport capability
+matches for that action name with the same policy fields exposed by MCP
+capability details: safety class, coverage level, direct/gated booleans,
+explicit target or intent requirements, unsafe requirement, and
+`execution_route`. If the action is not known in the built-in catalogs, the
+response includes an `unknown` detail with route `unsafe_direct`.
+
 ## MCP Tools
 
 Initial public tool names:

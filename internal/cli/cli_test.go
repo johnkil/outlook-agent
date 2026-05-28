@@ -173,6 +173,84 @@ func TestPolicyExplainListsSafetyClasses(t *testing.T) {
 	}
 }
 
+func TestPolicyExplainActionReportsKnownActionRoute(t *testing.T) {
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+
+	code := Run([]string{"policy", "explain", "--action", "DeleteItem"}, &stdout, &stderr)
+
+	if code != 0 {
+		t.Fatalf("expected exit code 0, got %d, stderr=%s", code, stderr.String())
+	}
+	var payload struct {
+		Command string `json:"command"`
+		Action  string `json:"action"`
+		Matches []struct {
+			Name           string `json:"name"`
+			Transport      string `json:"transport"`
+			SafetyClass    string `json:"safety_class"`
+			RequiresUnsafe bool   `json:"requires_unsafe"`
+			ExecutionRoute string `json:"execution_route"`
+		} `json:"matches"`
+	}
+	if err := json.Unmarshal(stdout.Bytes(), &payload); err != nil {
+		t.Fatalf("policy action output is not JSON: %v; output=%s", err, stdout.String())
+	}
+
+	if payload.Command != "policy explain" || payload.Action != "DeleteItem" {
+		t.Fatalf("unexpected policy action identity: %#v", payload)
+	}
+	if len(payload.Matches) != 1 {
+		t.Fatalf("expected one DeleteItem match, got %#v", payload.Matches)
+	}
+	match := payload.Matches[0]
+	if match.Name != "DeleteItem" || match.Transport != "owa" || match.SafetyClass != "destructive" {
+		t.Fatalf("unexpected DeleteItem match: %#v", match)
+	}
+	if !match.RequiresUnsafe || match.ExecutionRoute != "unsafe_dry_run_confirm" {
+		t.Fatalf("unexpected DeleteItem policy route: %#v", match)
+	}
+}
+
+func TestPolicyExplainActionReportsUnknownActionRoute(t *testing.T) {
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+
+	code := Run([]string{"policy", "explain", "--action", "TotallyUnknown"}, &stdout, &stderr)
+
+	if code != 0 {
+		t.Fatalf("expected exit code 0, got %d, stderr=%s", code, stderr.String())
+	}
+	var payload struct {
+		Command string `json:"command"`
+		Action  string `json:"action"`
+		Matches []any  `json:"matches"`
+		Unknown struct {
+			Name           string `json:"name"`
+			Transport      string `json:"transport"`
+			SafetyClass    string `json:"safety_class"`
+			RequiresUnsafe bool   `json:"requires_unsafe"`
+			ExecutionRoute string `json:"execution_route"`
+		} `json:"unknown"`
+	}
+	if err := json.Unmarshal(stdout.Bytes(), &payload); err != nil {
+		t.Fatalf("policy unknown action output is not JSON: %v; output=%s", err, stdout.String())
+	}
+
+	if payload.Command != "policy explain" || payload.Action != "TotallyUnknown" {
+		t.Fatalf("unexpected policy unknown identity: %#v", payload)
+	}
+	if len(payload.Matches) != 0 {
+		t.Fatalf("expected no known matches, got %#v", payload.Matches)
+	}
+	if payload.Unknown.Name != "TotallyUnknown" || payload.Unknown.SafetyClass != "unknown" {
+		t.Fatalf("unexpected unknown policy detail: %#v", payload.Unknown)
+	}
+	if !payload.Unknown.RequiresUnsafe || payload.Unknown.ExecutionRoute != "unsafe_direct" {
+		t.Fatalf("unexpected unknown policy route: %#v", payload.Unknown)
+	}
+}
+
 func TestOWADiscoverActionsFromFileReportsRegistryDelta(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "owa.js")
 	if err := os.WriteFile(path, []byte(`

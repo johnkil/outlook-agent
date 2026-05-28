@@ -8,11 +8,18 @@ import (
 	"os"
 	"runtime"
 	"strconv"
+	"strings"
 
+	"github.com/johnkil/outlook-agent/internal/action"
 	"github.com/johnkil/outlook-agent/internal/buildinfo"
+	"github.com/johnkil/outlook-agent/internal/capability"
 	"github.com/johnkil/outlook-agent/internal/config"
 	"github.com/johnkil/outlook-agent/internal/policy"
+	"github.com/johnkil/outlook-agent/internal/secret"
 	"github.com/johnkil/outlook-agent/internal/transport"
+	"github.com/johnkil/outlook-agent/internal/transport/ews"
+	"github.com/johnkil/outlook-agent/internal/transport/fake"
+	"github.com/johnkil/outlook-agent/internal/transport/graph"
 	"github.com/johnkil/outlook-agent/internal/transport/owa"
 )
 
@@ -64,6 +71,9 @@ func RunWithRuntime(args []string, stdout io.Writer, stderr io.Writer, runtime R
 				"command":        "policy explain",
 				"safety_classes": policy.SafetyClassNames(),
 			})
+		}
+		if len(commandArgs) == 4 && commandArgs[1] == "explain" && commandArgs[2] == "--action" {
+			return runPolicyExplainAction(stdout, commandArgs[3])
 		}
 	case "owa":
 		if len(commandArgs) >= 2 && commandArgs[1] == "discover-actions" {
@@ -146,6 +156,53 @@ func runDoctor(stdout io.Writer, options Options) int {
 		return 1
 	}
 	return writeJSON(stdout, output)
+}
+
+type policyExplainActionOutput struct {
+	OK      bool                `json:"ok"`
+	Command string              `json:"command"`
+	Action  string              `json:"action"`
+	Matches []capability.Detail `json:"matches"`
+	Unknown *capability.Detail  `json:"unknown,omitempty"`
+}
+
+func runPolicyExplainAction(stdout io.Writer, actionName string) int {
+	matches := make([]capability.Detail, 0)
+	for _, definition := range builtinActionDefinitions() {
+		if strings.EqualFold(definition.Name, actionName) {
+			matches = append(matches, capability.FromDefinition(definition))
+		}
+	}
+	output := policyExplainActionOutput{
+		OK:      true,
+		Command: "policy explain",
+		Action:  actionName,
+		Matches: matches,
+	}
+	if len(matches) == 0 {
+		unknown := capability.FromDefinition(action.Definition{
+			Name:      actionName,
+			Transport: "",
+			Class:     policy.Unknown,
+			Level:     action.LevelDiscovered,
+		})
+		output.Unknown = &unknown
+	}
+	return writeJSON(stdout, output)
+}
+
+func builtinActionDefinitions() []action.Definition {
+	clients := []transport.Transport{
+		fake.New(),
+		graph.NewTransport(graph.Config{BaseURL: "https://graph.example.test/v1.0", SecretRef: secret.Ref("keychain:graph.example.test/access-token")}, nil, nil),
+		ews.NewTransport(ews.Config{EndpointURL: "https://mail.example.test/EWS/Exchange.asmx", Username: "DOMAIN\\user", SecretRef: secret.Ref("keychain:mail.example.test/DOMAIN\\user")}, nil, nil),
+		owa.NewTransport(owa.Config{BaseURL: "https://mail.example.test", Username: "DOMAIN\\user", SecretRef: secret.Ref("keychain:mail.example.test/DOMAIN\\user")}, nil, nil),
+	}
+	definitions := make([]action.Definition, 0)
+	for _, client := range clients {
+		definitions = append(definitions, client.Capabilities(context.Background()).Actions...)
+	}
+	return definitions
 }
 
 func runAuthCheck(stdout io.Writer, options Options, runtime Runtime) int {

@@ -10,6 +10,7 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/johnkil/outlook-agent/internal/buildinfo"
+	"github.com/johnkil/outlook-agent/internal/capability"
 	"github.com/johnkil/outlook-agent/internal/confirm"
 	"github.com/johnkil/outlook-agent/internal/policy"
 	"github.com/johnkil/outlook-agent/internal/redact"
@@ -38,19 +39,7 @@ type AuthCheckOutput struct {
 
 type EmptyInput struct{}
 
-type CapabilityDetailOutput struct {
-	Name                   string `json:"name"`
-	Transport              string `json:"transport"`
-	SafetyClass            string `json:"safety_class"`
-	Level                  int    `json:"level"`
-	AllowedDirect          bool   `json:"allowed_direct"`
-	RequiresDryRun         bool   `json:"requires_dry_run"`
-	RequiresConfirmation   bool   `json:"requires_confirmation"`
-	RequiresUnsafe         bool   `json:"requires_unsafe,omitempty"`
-	RequiresExplicitTarget bool   `json:"requires_explicit_target,omitempty"`
-	RequiresExplicitIntent bool   `json:"requires_explicit_intent,omitempty"`
-	ExecutionRoute         string `json:"execution_route"`
-}
+type CapabilityDetailOutput = capability.Detail
 
 type CapabilitiesOutput struct {
 	Actions []string                 `json:"actions"`
@@ -272,49 +261,9 @@ func capabilitiesHandler(client transport.Transport) func(context.Context, *mcp.
 		details := make([]CapabilityDetailOutput, 0, len(capabilities.Actions))
 		for _, action := range capabilities.Actions {
 			actions = append(actions, action.Name)
-			decision := policy.Evaluate(policy.Request{Class: action.Class})
-			details = append(details, CapabilityDetailOutput{
-				Name:                   action.Name,
-				Transport:              action.Transport,
-				SafetyClass:            string(action.Class),
-				Level:                  int(action.Level),
-				AllowedDirect:          decision.Allowed,
-				RequiresDryRun:         decision.RequiresDryRun,
-				RequiresConfirmation:   decision.RequiresConfirmation,
-				RequiresUnsafe:         decision.RequiresUnsafe,
-				RequiresExplicitTarget: requiresExplicitTarget(action.Class),
-				RequiresExplicitIntent: requiresExplicitIntent(action.Class),
-				ExecutionRoute:         executionRoute(action.Class),
-			})
+			details = append(details, capability.FromDefinition(action))
 		}
 		return nil, CapabilitiesOutput{Actions: actions, Details: details}, nil
-	}
-}
-
-func requiresExplicitTarget(class policy.SafetyClass) bool {
-	return class == policy.ReadBodyExplicit || class == policy.ReadAttachmentExplicit
-}
-
-func requiresExplicitIntent(class policy.SafetyClass) bool {
-	return class == policy.ReversibleSingleItem
-}
-
-func executionRoute(class policy.SafetyClass) string {
-	switch class {
-	case policy.ReadMetadata, policy.DraftOnly:
-		return "direct"
-	case policy.ReadBodyExplicit, policy.ReadAttachmentExplicit:
-		return "direct_explicit_target"
-	case policy.ReversibleSingleItem:
-		return "direct_explicit_intent"
-	case policy.ReversibleBulk, policy.SendLike, policy.SettingsOrRules:
-		return "dry_run_confirm"
-	case policy.Destructive:
-		return "unsafe_dry_run_confirm"
-	case policy.Unknown:
-		return "unsafe_direct"
-	default:
-		return "unsafe_direct"
 	}
 }
 

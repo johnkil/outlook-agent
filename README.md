@@ -10,8 +10,9 @@ OpenCode, Codex, and other MCP-capable agents:
   transport, and local MCP readiness.
 - `outlook-agent auth check` verifies configured credentials without printing
   secrets.
-- `outlook-agent policy explain` shows which actions are safe, guarded, or
-  blocked.
+- `outlook-agent policy explain` and
+  `outlook-agent policy explain --action <name>` show which actions are safe,
+  guarded, or blocked.
 - `outlook-agent owa discover-actions --file <path>` or `--url <path-or-url>`
   extracts OWA service action names from temporary static/docs sources and
   compares them with the classified registry.
