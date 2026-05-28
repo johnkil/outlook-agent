@@ -100,7 +100,7 @@ The initial Graph adapter supports `GetMailFolder`, `mail.search`,
 `mail.fetch_metadata`, explicit `mail.fetch_body`, explicit
 `mail.list_attachments`, explicit `mail.fetch_attachment`,
 `mail.create_draft`, `mail.move_to_deleted_items`, `calendar.list`, and
-`calendar.availability`. It
+`calendar.availability`, plus guarded raw `GraphRequest`. It
 uses `/me/mailFolders/inbox` as its auth probe and keeps default message access
 metadata-only through `/me/mailFolders/{folder}/messages` and
 `/me/messages/{id}`. Explicit body access requests text bodies only; explicit
@@ -108,8 +108,10 @@ attachment listing returns metadata for one message without content; explicit
 attachment fetch gets one attachment by message id and attachment id. Draft
 creation saves without sending; move-to-Deleted-Items uses Graph's reversible
 message move. Calendar metadata uses `/me/calendarView` and
-`/me/calendar/getSchedule`. Token acquisition and admin consent stay outside
-the public repository.
+`/me/calendar/getSchedule`. Raw `GraphRequest` is intentionally classified as
+destructive and requires unsafe dry-run plus exact confirmation because an
+arbitrary Graph request can send, mutate, or delete data. Token acquisition and
+admin consent stay outside the public repository.
 
 ## Product Shape
 

@@ -73,6 +73,12 @@ Key tool inputs:
   `unsafe_mode=true`.
 - `outlook.action_confirm`: validates the exact confirmation token binding and
   then applies confirmed-action policy again before transport execution.
+- Raw `GraphRequest`: transport action for a relative Microsoft Graph path
+  with `method`, `path`, optional `query`, optional safe custom `headers`, and
+  optional JSON `body`. It is intentionally classified as `destructive`, so MCP
+  callers must use unsafe dry-run plus exact confirmation before execution.
+  JSON responses are returned under `json`; non-JSON text is returned under
+  `body_text` and redacted on generic/raw MCP paths.
 
 ## Safety Classes
 
@@ -139,9 +145,9 @@ Configured transports:
   `mail.fetch_metadata`, plus explicit `mail.fetch_body`, explicit
   `mail.list_attachments`, explicit `mail.fetch_attachment`,
   `mail.create_draft`, `mail.move_to_deleted_items`, `calendar.list`, and
-  `calendar.availability`; `auth check` probes `/me/mailFolders/inbox`. OAuth
-  token acquisition, admin consent, and token refresh are outside the public
-  runtime in this phase.
+  `calendar.availability`, plus raw guarded `GraphRequest`; `auth check`
+  probes `/me/mailFolders/inbox`. OAuth token acquisition, admin consent, and
+  token refresh are outside the public runtime in this phase.
 
 ## Redaction
 
@@ -151,6 +157,8 @@ Default output redacts:
 - cookies and canary values;
 - raw message bodies;
 - attachment contents except through explicit attachment tools;
+- generic raw response fields such as `body_text`, `contentBytes`, and
+  `content_base64`;
 - opaque transport ids unless needed for follow-up operations.
 
 The runtime may return stable handles that map to transport ids in memory or in

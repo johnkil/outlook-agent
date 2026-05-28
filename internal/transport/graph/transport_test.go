@@ -79,6 +79,7 @@ func TestTransportGraphCapabilitiesIncludeBodyDraftMove(t *testing.T) {
 		level action.CoverageLevel
 	}{
 		{name: "GetMailFolder", class: policy.ReadMetadata, level: action.LevelRawGuardedExecution},
+		{name: "GraphRequest", class: policy.Destructive, level: action.LevelRawGuardedExecution},
 		{name: "mail.search", class: policy.ReadMetadata, level: action.LevelHighLevelMCPTool},
 		{name: "mail.fetch_metadata", class: policy.ReadMetadata, level: action.LevelHighLevelMCPTool},
 		{name: "mail.fetch_body", class: policy.ReadBodyExplicit, level: action.LevelHighLevelMCPTool},
@@ -122,6 +123,107 @@ func TestTransportExecutesGetMailFolder(t *testing.T) {
 	folder := result.Data["folder"].(map[string]any)
 	if folder["display_name"] != "Inbox" || folder["total_count"] != float64(42) || folder["unread_count"] != float64(7) {
 		t.Fatalf("unexpected folder data: %#v", folder)
+	}
+}
+
+func TestTransportExecutesRawGraphRequest(t *testing.T) {
+	var sawBearer bool
+	var sawHeader bool
+	var sawBody bool
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		if request.Method != http.MethodPost || request.URL.Path != "/v1.0/me/sendMail" {
+			t.Fatalf("unexpected request: %s %s", request.Method, request.URL.String())
+		}
+		sawBearer = request.Header.Get("Authorization") == "Bearer token-secret"
+		sawHeader = request.Header.Get("Prefer") == `outlook.timezone="UTC"`
+		var body map[string]any
+		if err := json.NewDecoder(request.Body).Decode(&body); err != nil {
+			t.Fatalf("decode request body: %v", err)
+		}
+		message := body["message"].(map[string]any)
+		sawBody = message["subject"] == "Hello"
+		response.Header().Set("Content-Type", "application/json")
+		response.Header().Set("request-id", "request-1")
+		response.WriteHeader(http.StatusAccepted)
+		_ = json.NewEncoder(response).Encode(map[string]any{"accepted": true})
+	}))
+	defer server.Close()
+
+	client := graph.NewTransport(graph.Config{
+		BaseURL:   server.URL + "/v1.0",
+		SecretRef: secret.Ref("memory:graph"),
+	}, secret.NewMemoryStore(map[string]string{"memory:graph": "token-secret"}), server.Client())
+
+	result := client.Execute(context.Background(), transport.ActionRequest{
+		Name: "GraphRequest",
+		Payload: map[string]any{
+			"method":  "POST",
+			"path":    "/me/sendMail",
+			"headers": map[string]any{"Prefer": `outlook.timezone="UTC"`},
+			"body": map[string]any{
+				"message": map[string]any{"subject": "Hello"},
+			},
+		},
+		UnsafeMode: true,
+	})
+
+	if !result.OK {
+		t.Fatalf("expected GraphRequest ok, got %#v", result)
+	}
+	if !sawBearer || !sawHeader || !sawBody {
+		t.Fatalf("expected bearer/header/body to be sent: bearer=%v header=%v body=%v", sawBearer, sawHeader, sawBody)
+	}
+	if result.Data["status"] != 202 {
+		t.Fatalf("expected response status 202, got %#v", result.Data)
+	}
+	jsonBody := result.Data["json"].(map[string]any)
+	if jsonBody["accepted"] != true {
+		t.Fatalf("expected JSON response body, got %#v", jsonBody)
+	}
+	headers := result.Data["headers"].(map[string]any)
+	if headers["request-id"] != "request-1" {
+		t.Fatalf("expected selected response headers, got %#v", headers)
+	}
+}
+
+func TestTransportRejectsRawGraphRequestAbsoluteURL(t *testing.T) {
+	client := graph.NewTransport(graph.Config{
+		BaseURL:   "https://graph.example.test/v1.0",
+		SecretRef: secret.Ref("memory:graph"),
+	}, secret.NewMemoryStore(map[string]string{"memory:graph": "token-secret"}), nil)
+
+	result := client.Execute(context.Background(), transport.ActionRequest{
+		Name: "GraphRequest",
+		Payload: map[string]any{
+			"method": "GET",
+			"path":   "https://example.test/v1.0/me",
+		},
+		UnsafeMode: true,
+	})
+
+	if result.OK || !strings.Contains(result.Error, "relative path") {
+		t.Fatalf("expected absolute raw Graph path to be rejected, got %#v", result)
+	}
+}
+
+func TestTransportRejectsRawGraphRequestSensitiveHeader(t *testing.T) {
+	client := graph.NewTransport(graph.Config{
+		BaseURL:   "https://graph.example.test/v1.0",
+		SecretRef: secret.Ref("memory:graph"),
+	}, secret.NewMemoryStore(map[string]string{"memory:graph": "token-secret"}), nil)
+
+	result := client.Execute(context.Background(), transport.ActionRequest{
+		Name: "GraphRequest",
+		Payload: map[string]any{
+			"method":  "GET",
+			"path":    "/me",
+			"headers": map[string]any{"Authorization": "Bearer attacker"},
+		},
+		UnsafeMode: true,
+	})
+
+	if result.OK || !strings.Contains(result.Error, "header") {
+		t.Fatalf("expected sensitive raw Graph header to be rejected, got %#v", result)
 	}
 }
 

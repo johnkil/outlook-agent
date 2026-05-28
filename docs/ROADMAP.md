@@ -73,8 +73,9 @@ Status: implemented initial slice.
   `GetMailFolder`, `mail.search`, `mail.fetch_metadata`, `mail.fetch_body`,
   `mail.list_attachments`, `mail.fetch_attachment`, `mail.create_draft`,
   `mail.move_to_deleted_items`, `calendar.list`, and `calendar.availability`
-  actions implemented; OAuth acquisition, refresh, admin consent, and broader
-  rule/settings/shared-mailbox coverage remain.
+  actions implemented; guarded raw `GraphRequest` implemented as an unsafe
+  dry-run/confirm escape hatch; OAuth acquisition, refresh, admin consent, and
+  typed rule/settings/shared-mailbox shortcuts remain.
 - EWS transport where Exchange policy allows it: initial SOAP `GetFolder`
   read-metadata probe/action implemented; broader action coverage and live
   environment/auth enablement remain.

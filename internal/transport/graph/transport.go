@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -43,6 +44,7 @@ func (client *Transport) Authenticate(ctx context.Context, _ string) transport.A
 func (client *Transport) Capabilities(context.Context) transport.CapabilitySet {
 	return transport.CapabilitySet{Actions: []action.Definition{
 		{Name: "GetMailFolder", Transport: "graph", Class: policy.ReadMetadata, Level: action.LevelRawGuardedExecution},
+		{Name: "GraphRequest", Transport: "graph", Class: policy.Destructive, Level: action.LevelRawGuardedExecution},
 		{Name: "mail.search", Transport: "graph", Class: policy.ReadMetadata, Level: action.LevelHighLevelMCPTool},
 		{Name: "mail.fetch_metadata", Transport: "graph", Class: policy.ReadMetadata, Level: action.LevelHighLevelMCPTool},
 		{Name: "mail.fetch_body", Transport: "graph", Class: policy.ReadBodyExplicit, Level: action.LevelHighLevelMCPTool},
@@ -70,6 +72,20 @@ func (client *Transport) Execute(ctx context.Context, request transport.ActionRe
 			"unread_count":       folder.UnreadItemCount,
 			"child_folder_count": folder.ChildFolderCount,
 		}}}
+	case "GraphRequest":
+		data, err := client.executeRawGraphRequest(ctx, request.Payload)
+		if err != nil {
+			return transport.ActionResponse{OK: false, Error: err.Error()}
+		}
+		ok := true
+		if status, _ := data["status"].(int); status < 200 || status >= 300 {
+			ok = false
+		}
+		errorText := ""
+		if !ok {
+			errorText = fmt.Sprintf("graph returned HTTP %v", data["status"])
+		}
+		return transport.ActionResponse{OK: ok, Data: data, Error: errorText}
 	case "mail.search":
 		messages, err := client.listMessages(ctx, stringValue(request.Payload, "folder_id", "inbox"), intValue(request.Payload, "max", 150), stringValue(request.Payload, "query", ""))
 		if err != nil {
@@ -321,6 +337,33 @@ func (client *Transport) getMessageBody(ctx context.Context, id string) (message
 	return item, nil
 }
 
+func (client *Transport) executeRawGraphRequest(ctx context.Context, payload map[string]any) (map[string]any, error) {
+	method := strings.ToUpper(strings.TrimSpace(stringValue(payload, "method", http.MethodGet)))
+	if method == "" {
+		method = http.MethodGet
+	}
+	if !allowedRawGraphMethod(method) {
+		return nil, fmt.Errorf("unsupported Graph method %q", method)
+	}
+	requestURL, err := client.rawGraphRequestURL(stringValue(payload, "path", ""), payload["query"])
+	if err != nil {
+		return nil, err
+	}
+	headers, err := rawGraphHeaders(payload["headers"])
+	if err != nil {
+		return nil, err
+	}
+	var output any
+	if err := client.doRawJSONWithHeaders(ctx, method, requestURL, payload["body"], headers, &output); err != nil {
+		return nil, err
+	}
+	data, ok := output.(map[string]any)
+	if !ok {
+		return nil, fmt.Errorf("missing raw Graph response")
+	}
+	return data, nil
+}
+
 func (client *Transport) getAttachment(ctx context.Context, messageID string, attachmentID string) (attachment, error) {
 	requestURL, err := client.messageAttachmentURL(messageID, attachmentID)
 	if err != nil {
@@ -522,6 +565,72 @@ func (client *Transport) doJSONWithHeaders(ctx context.Context, method string, r
 	return nil
 }
 
+func (client *Transport) doRawJSONWithHeaders(ctx context.Context, method string, requestURL string, body any, headers map[string]string, output *any) error {
+	if err := client.config.Validate(); err != nil {
+		return err
+	}
+	if client.secrets == nil {
+		return fmt.Errorf("secret store is not configured")
+	}
+	token, err := client.secrets.Get(ctx, client.config.SecretRef)
+	if err != nil {
+		return err
+	}
+	var requestBody *bytes.Reader
+	if body == nil {
+		requestBody = bytes.NewReader(nil)
+	} else {
+		encoded, err := json.Marshal(body)
+		if err != nil {
+			return err
+		}
+		requestBody = bytes.NewReader(encoded)
+	}
+	request, err := http.NewRequestWithContext(ctx, method, requestURL, requestBody)
+	if err != nil {
+		return err
+	}
+	request.Header.Set("Authorization", "Bearer "+string(token))
+	request.Header.Set("Accept", "application/json")
+	request.Header.Set("User-Agent", "outlook-agent")
+	if body != nil {
+		request.Header.Set("Content-Type", "application/json")
+	}
+	for key, value := range headers {
+		request.Header.Set(key, value)
+	}
+
+	response, err := client.client.Do(request)
+	if err != nil {
+		return err
+	}
+	defer response.Body.Close()
+
+	data := map[string]any{
+		"status":  response.StatusCode,
+		"headers": selectedResponseHeaders(response.Header),
+	}
+	rawBody, err := io.ReadAll(response.Body)
+	if err != nil {
+		return err
+	}
+	if len(rawBody) > 0 {
+		contentType := response.Header.Get("Content-Type")
+		if strings.Contains(strings.ToLower(contentType), "json") {
+			var decoded any
+			if err := json.Unmarshal(rawBody, &decoded); err != nil {
+				return err
+			}
+			data["json"] = decoded
+		} else {
+			data["content_type"] = contentType
+			data["body_text"] = string(rawBody)
+		}
+	}
+	*output = data
+	return nil
+}
+
 func (client *Transport) mailFolderURL(folderID string) (string, error) {
 	base, err := client.config.normalizedBaseURL()
 	if err != nil {
@@ -584,6 +693,33 @@ func (client *Transport) messageAttachmentsURL(messageID string) (string, error)
 		return "", err
 	}
 	return base + "/me/messages/" + url.PathEscape(messageID) + "/attachments", nil
+}
+
+func (client *Transport) rawGraphRequestURL(path string, rawQuery any) (string, error) {
+	base, err := client.config.normalizedBaseURL()
+	if err != nil {
+		return "", err
+	}
+	path = strings.TrimSpace(path)
+	if path == "" {
+		return "", fmt.Errorf("GraphRequest requires relative path")
+	}
+	parsed, err := url.Parse(path)
+	if err != nil || parsed.IsAbs() || parsed.Host != "" || !strings.HasPrefix(path, "/") || strings.HasPrefix(path, "//") {
+		return "", fmt.Errorf("GraphRequest requires relative path")
+	}
+	requestURL, err := url.Parse(base + path)
+	if err != nil {
+		return "", err
+	}
+	values := requestURL.Query()
+	for key, value := range rawGraphQuery(rawQuery) {
+		for _, item := range value {
+			values.Add(key, item)
+		}
+	}
+	requestURL.RawQuery = values.Encode()
+	return requestURL.String(), nil
 }
 
 func (client *Transport) messagesCollectionURL() (string, error) {
@@ -766,4 +902,69 @@ func stringSlice(value any) []string {
 	default:
 		return nil
 	}
+}
+
+func allowedRawGraphMethod(method string) bool {
+	switch method {
+	case http.MethodGet, http.MethodPost, http.MethodPatch, http.MethodPut, http.MethodDelete:
+		return true
+	default:
+		return false
+	}
+}
+
+func rawGraphHeaders(value any) (map[string]string, error) {
+	raw, _ := value.(map[string]any)
+	headers := make(map[string]string, len(raw))
+	for key, item := range raw {
+		normalized := strings.ToLower(strings.TrimSpace(key))
+		switch normalized {
+		case "", "authorization", "cookie", "set-cookie", "content-type", "user-agent", "accept":
+			return nil, fmt.Errorf("GraphRequest header %q is not allowed", key)
+		}
+		text, ok := item.(string)
+		if !ok {
+			return nil, fmt.Errorf("GraphRequest header %q must be a string", key)
+		}
+		headers[key] = text
+	}
+	return headers, nil
+}
+
+func rawGraphQuery(value any) url.Values {
+	raw, _ := value.(map[string]any)
+	values := url.Values{}
+	for key, item := range raw {
+		switch typed := item.(type) {
+		case string:
+			values.Add(key, typed)
+		case int:
+			values.Add(key, strconv.Itoa(typed))
+		case float64:
+			values.Add(key, strconv.Itoa(int(typed)))
+		case bool:
+			values.Add(key, strconv.FormatBool(typed))
+		case []string:
+			for _, text := range typed {
+				values.Add(key, text)
+			}
+		case []any:
+			for _, child := range typed {
+				if text, ok := child.(string); ok {
+					values.Add(key, text)
+				}
+			}
+		}
+	}
+	return values
+}
+
+func selectedResponseHeaders(headers http.Header) map[string]any {
+	output := map[string]any{}
+	for _, key := range []string{"request-id", "client-request-id", "retry-after", "location", "content-type"} {
+		if value := headers.Get(key); value != "" {
+			output[key] = value
+		}
+	}
+	return output
 }

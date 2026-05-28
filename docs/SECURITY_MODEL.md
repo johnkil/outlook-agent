@@ -22,6 +22,8 @@
 - Generic and raw outputs are redacted before responses leave the runtime;
   explicit body or attachment tools may return the requested content only for
   the caller-supplied narrow target.
+- Generic Graph raw requests are treated as destructive by default because an
+  arbitrary Microsoft Graph method can send, mutate, or delete data.
 - Live transports must keep session material in memory unless a secret-store
   backed cache is explicitly implemented.
 

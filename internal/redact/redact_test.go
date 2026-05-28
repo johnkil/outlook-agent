@@ -38,13 +38,16 @@ func TestRedactsSensitiveKeysRecursively(t *testing.T) {
 
 func TestRedactsMessageBodiesAndAttachmentContent(t *testing.T) {
 	input := map[string]any{
-		"subject": "Quarterly planning",
-		"sender":  "person@example.com",
-		"body":    "full private message body",
+		"subject":   "Quarterly planning",
+		"sender":    "person@example.com",
+		"body":      "full private message body",
+		"body_text": "full private message body text",
 		"attachments": []any{
 			map[string]any{
-				"name":    "plan.txt",
-				"content": "private attachment content",
+				"name":           "plan.txt",
+				"content":        "private attachment content",
+				"contentBytes":   "base64-private-content",
+				"content_base64": "base64-private-content",
 			},
 		},
 	}
@@ -60,6 +63,9 @@ func TestRedactsMessageBodiesAndAttachmentContent(t *testing.T) {
 	if output["body"] != redact.Marker {
 		t.Fatalf("expected body redacted, got %#v", output["body"])
 	}
+	if output["body_text"] != redact.Marker {
+		t.Fatalf("expected body_text redacted, got %#v", output["body_text"])
+	}
 
 	attachments := output["attachments"].([]any)
 	first := attachments[0].(map[string]any)
@@ -68,5 +74,11 @@ func TestRedactsMessageBodiesAndAttachmentContent(t *testing.T) {
 	}
 	if first["content"] != redact.Marker {
 		t.Fatalf("expected attachment content redacted, got %#v", first["content"])
+	}
+	if first["contentBytes"] != redact.Marker {
+		t.Fatalf("expected attachment contentBytes redacted, got %#v", first["contentBytes"])
+	}
+	if first["content_base64"] != redact.Marker {
+		t.Fatalf("expected attachment content_base64 redacted, got %#v", first["content_base64"])
 	}
 }
