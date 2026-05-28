@@ -22,6 +22,12 @@ investigated with public-safe evidence.
 | Graph OAuth and live smoke enablement | https://github.com/johnkil/outlook-agent/issues/5 | Approved Graph app/permissions, secret-store token handling, `auth check`, and controlled read-only smoke evidence. |
 | EWS enablement and live smoke validation | https://github.com/johnkil/outlook-agent/issues/6 | Approved endpoint/auth method, secret-store credential handling, `auth check`, and controlled read-metadata smoke evidence. |
 
+## Partially Completed External Gates
+
+| Gate | GitHub issue | Completed evidence | Remaining evidence |
+| --- | --- | --- | --- |
+| organization secret scanning and repository protection | https://github.com/johnkil/outlook-agent/issues/3 | Dependabot vulnerability alerts are enabled. The main branch protection is enabled with required pull request review, stale-review dismissal, conversation resolution, disabled force pushes, and disabled branch deletion. Required status checks are intentionally not configured until issue `#2` unblocks hosted CI. | GitHub reported that secret scanning is not available for this repository. The remaining gate needs GitHub plan or organization policy enablement for secret scanning, or an approved enterprise-equivalent scanning route with alert ownership defined outside this public repository when details are private. |
+
 ## Bounded Compatibility Decisions
 
 | Decision | GitHub issue | Evidence |

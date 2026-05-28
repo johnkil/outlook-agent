@@ -121,6 +121,30 @@ func TestProductionBacklogBoundsFindFolderCompatibilityDecision(t *testing.T) {
 	}
 }
 
+func TestProductionBacklogTracksRepositoryProtectionEvidence(t *testing.T) {
+	path := filepath.Join("..", "..", "docs", "PRODUCTION_BACKLOG.md")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read production backlog: %v", err)
+	}
+	text := string(data)
+
+	for _, required := range []string{
+		"## Partially Completed External Gates",
+		"organization secret scanning and repository protection",
+		"Dependabot vulnerability alerts are enabled",
+		"main branch protection is enabled",
+		"required pull request review",
+		"conversation resolution",
+		"secret scanning is not available for this repository",
+		"GitHub plan or organization policy",
+	} {
+		if !strings.Contains(text, required) {
+			t.Fatalf("expected production backlog to contain %q", required)
+		}
+	}
+}
+
 func sectionBetween(text, startMarker, endMarker string) string {
 	start := strings.Index(text, startMarker)
 	if start < 0 {
