@@ -3,3 +3,4 @@
 /outlook-agent
 dist/
 coverage.out
+.worktrees/
