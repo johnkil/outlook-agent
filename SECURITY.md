@@ -52,6 +52,6 @@ If a secret or session artifact is exposed:
 
 ## Supported Versions
 
-Security fixes apply to the active branch and the latest published release.
-Production rollout gates and private-environment readiness evidence are tracked
-through the production backlog issues.
+Security fixes apply to the active branch and the latest published release once
+tagged release artifacts exist. Until the first release is cut, use the draft PR
+and production backlog issues as the tracking surface.
