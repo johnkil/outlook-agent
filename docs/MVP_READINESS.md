@@ -24,7 +24,8 @@ artifacts and local verification commands:
   registry and policy metadata.
 - High-level mail and calendar workflows cover search, metadata fetch, explicit
   body fetch, explicit attachment listing/fetch, draft creation, move to
-  Deleted Items, bounded calendar listing, and availability lookup.
+  Deleted Items, read-only rules/settings metadata, bounded calendar listing,
+  and availability lookup.
 - Lower-level breadth is preserved with raw guarded execution for all discovered
   OWA actions, raw GraphRequest, and raw EWSRequest.
 - Mutating, destructive, send-like, settings, and broad reversible work is
@@ -69,8 +70,9 @@ These items are useful follow-ups, but the MVP can be considered complete
 without them because the raw guarded paths preserve the lower-level capability
 surface:
 
-- Typed Graph shortcuts beyond the initial mail/calendar workflows, such as
-  rules, settings, shared mailbox helpers, or specialized admin flows.
+- Additional typed Graph shortcuts beyond the current mail/calendar,
+  read-only rules/settings, and shared/delegated mailbox target surface, such
+  as specialized admin flows.
 - Typed EWS shortcuts beyond `GetFolder` and the raw EWSRequest escape hatch.
 - Live execution of every destructive, send-like, or settings-changing raw
   action. Dry-run coverage plus exact confirmation behavior is the required

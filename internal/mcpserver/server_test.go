@@ -31,6 +31,8 @@ func TestCatalogContainsInitialTools(t *testing.T) {
 		"outlook.mail_fetch_attachment",
 		"outlook.mail_create_draft",
 		"outlook.mail_move_to_deleted_items",
+		"outlook.mail_rules_list",
+		"outlook.mailbox_settings_get",
 		"outlook.calendar_list",
 		"outlook.calendar_availability",
 		"outlook.action_dry_run",
@@ -100,6 +102,8 @@ func TestMCPClientCanListAndCallInitialTools(t *testing.T) {
 		{name: "outlook.mail_list_attachments", arguments: map[string]any{"id": "msg-1"}},
 		{name: "outlook.mail_fetch_attachment", arguments: map[string]any{"message_id": "msg-1", "attachment_id": "att-1"}},
 		{name: "outlook.mail_create_draft", arguments: map[string]any{"subject": "Draft", "body": "Hello"}},
+		{name: "outlook.mail_rules_list", arguments: map[string]any{"folder_id": "inbox"}},
+		{name: "outlook.mailbox_settings_get", arguments: map[string]any{"setting": "timeZone"}},
 		{name: "outlook.calendar_list", arguments: map[string]any{"start": "2026-05-27T00:00:00+02:00", "end": "2026-05-28T00:00:00+02:00"}},
 		{name: "outlook.calendar_availability", arguments: map[string]any{"start": "2026-05-27T09:00:00+02:00", "end": "2026-05-27T18:00:00+02:00"}},
 		{name: "outlook.raw_action", arguments: map[string]any{"action": "mail.fetch_metadata", "payload": map[string]any{"id": "msg-1"}}},
@@ -113,6 +117,68 @@ func TestMCPClientCanListAndCallInitialTools(t *testing.T) {
 				t.Fatalf("expected %s success, got error result: %#v", call.name, result)
 			}
 		})
+	}
+}
+
+func TestMCPRulesSettingsToolsForwardInputs(t *testing.T) {
+	ctx := context.Background()
+	capturing := &capturingTransport{}
+	serverTransport, clientTransport := mcp.NewInMemoryTransports()
+
+	serverSession, err := mcpserver.NewWithTransport(capturing).Connect(ctx, serverTransport, nil)
+	if err != nil {
+		t.Fatalf("connect server: %v", err)
+	}
+	defer serverSession.Close()
+	defer serverSession.Wait()
+
+	client := mcp.NewClient(&mcp.Implementation{Name: "test-client", Version: "0.0.1"}, nil)
+	clientSession, err := client.Connect(ctx, clientTransport, nil)
+	if err != nil {
+		t.Fatalf("connect client: %v", err)
+	}
+	defer clientSession.Close()
+
+	rulesResult, err := clientSession.CallTool(ctx, &mcp.CallToolParams{
+		Name: "outlook.mail_rules_list",
+		Arguments: map[string]any{
+			"folder_id": "inbox",
+			"mailbox":   "shared@example.com",
+		},
+	})
+	if err != nil {
+		t.Fatalf("call rules list: %v", err)
+	}
+	rules := decodeStructured[rulesListOutput](t, rulesResult)
+	if len(rules.Rules) != 1 {
+		t.Fatalf("expected one rule in structured output, got %#v", rules)
+	}
+	if capturing.lastRequest.Name != "mail.rules.list" {
+		t.Fatalf("expected mail.rules.list request, got %#v", capturing.lastRequest)
+	}
+	if capturing.lastRequest.Payload["folder_id"] != "inbox" || capturing.lastRequest.Payload["mailbox"] != "shared@example.com" {
+		t.Fatalf("expected folder_id and mailbox forwarded, got %#v", capturing.lastRequest.Payload)
+	}
+
+	settingsResult, err := clientSession.CallTool(ctx, &mcp.CallToolParams{
+		Name: "outlook.mailbox_settings_get",
+		Arguments: map[string]any{
+			"setting": "timeZone",
+			"mailbox": "shared@example.com",
+		},
+	})
+	if err != nil {
+		t.Fatalf("call mailbox settings get: %v", err)
+	}
+	settings := decodeStructured[mailboxSettingsGetOutput](t, settingsResult)
+	if settings.Settings == nil {
+		t.Fatalf("expected settings structured output, got %#v", settings)
+	}
+	if capturing.lastRequest.Name != "mailbox.settings.get" {
+		t.Fatalf("expected mailbox.settings.get request, got %#v", capturing.lastRequest)
+	}
+	if capturing.lastRequest.Payload["setting"] != "timeZone" || capturing.lastRequest.Payload["mailbox"] != "shared@example.com" {
+		t.Fatalf("expected setting and mailbox forwarded, got %#v", capturing.lastRequest.Payload)
 	}
 }
 
@@ -267,6 +333,8 @@ func TestMCPHighLevelToolsReturnErrorResultOnTransportFailure(t *testing.T) {
 		{name: "outlook.mail_list_attachments", arguments: map[string]any{"id": "msg-1"}},
 		{name: "outlook.mail_fetch_attachment", arguments: map[string]any{"message_id": "msg-1", "attachment_id": "att-1"}},
 		{name: "outlook.mail_create_draft", arguments: map[string]any{"subject": "Draft", "body": "Hello"}},
+		{name: "outlook.mail_rules_list", arguments: map[string]any{"folder_id": "inbox"}},
+		{name: "outlook.mailbox_settings_get", arguments: map[string]any{"setting": "timeZone"}},
 		{name: "outlook.calendar_list", arguments: map[string]any{"start": "2026-05-27T00:00:00+02:00", "end": "2026-05-28T00:00:00+02:00"}},
 		{name: "outlook.calendar_availability", arguments: map[string]any{"start": "2026-05-27T09:00:00+02:00", "end": "2026-05-27T18:00:00+02:00"}},
 	} {
@@ -400,6 +468,14 @@ type capturingTransport struct {
 	lastRequest transport.ActionRequest
 }
 
+type rulesListOutput struct {
+	Rules []any `json:"rules"`
+}
+
+type mailboxSettingsGetOutput struct {
+	Settings any `json:"settings"`
+}
+
 func (capturing *capturingTransport) Name() string {
 	return "capture"
 }
@@ -422,6 +498,8 @@ func (capturing *capturingTransport) Execute(_ context.Context, request transpor
 			"messages":    []any{},
 			"message":     map[string]any{"id": "msg-1"},
 			"moved_count": 1,
+			"rules":       []any{map[string]any{"id": "rule-1", "display_name": "Keep"}},
+			"settings":    map[string]any{"timeZone": "UTC"},
 			"windows": []any{
 				map[string]any{
 					"start":          "2026-05-27T10:00:00+02:00",

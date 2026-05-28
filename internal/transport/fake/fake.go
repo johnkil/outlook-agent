@@ -23,6 +23,8 @@ func New() *Transport {
 			{Name: "mail.fetch_attachment", Transport: "fake", Class: policy.ReadAttachmentExplicit, Level: action.LevelHighLevelMCPTool},
 			{Name: "mail.create_draft", Transport: "fake", Class: policy.DraftOnly, Level: action.LevelHighLevelMCPTool},
 			{Name: "mail.move_to_deleted_items", Transport: "fake", Class: policy.ReversibleBulk, Level: action.LevelHighLevelMCPTool},
+			{Name: "mail.rules.list", Transport: "fake", Class: policy.ReadMetadata, Level: action.LevelHighLevelMCPTool},
+			{Name: "mailbox.settings.get", Transport: "fake", Class: policy.ReadMetadata, Level: action.LevelHighLevelMCPTool},
 			{Name: "calendar.list", Transport: "fake", Class: policy.ReadMetadata, Level: action.LevelHighLevelMCPTool},
 			{Name: "calendar.availability", Transport: "fake", Class: policy.ReadMetadata, Level: action.LevelHighLevelMCPTool},
 		},
@@ -124,6 +126,40 @@ func (client *Transport) Execute(_ context.Context, request transport.ActionRequ
 			Data: map[string]any{
 				"moved_count": countIDs(request.Payload),
 				"reversible":  true,
+			},
+		}
+	case "mail.rules.list":
+		return transport.ActionResponse{
+			OK: true,
+			Data: map[string]any{
+				"rules": []any{
+					map[string]any{
+						"id":           "rule-1",
+						"display_name": "Fake planning filter",
+						"sequence":     1,
+						"is_enabled":   true,
+						"has_error":    false,
+						"is_read_only": false,
+					},
+				},
+			},
+		}
+	case "mailbox.settings.get":
+		setting := valueOrDefault(request.Payload, "setting", "")
+		settings := map[string]any{
+			"timeZone": "UTC",
+			"workingHours": map[string]any{
+				"startTime": "09:00:00.0000000",
+				"endTime":   "17:00:00.0000000",
+			},
+		}
+		if setting == "timeZone" {
+			settings = map[string]any{"timeZone": "UTC"}
+		}
+		return transport.ActionResponse{
+			OK: true,
+			Data: map[string]any{
+				"settings": settings,
 			},
 		}
 	case "calendar.list":

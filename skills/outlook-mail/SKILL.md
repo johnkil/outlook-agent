@@ -21,9 +21,12 @@ specific message or thread.
 5. List attachment metadata with `outlook.mail_list_attachments` before using
    `outlook.mail_fetch_attachment` for one explicit attachment id.
 6. Create drafts with `outlook.mail_create_draft` before any send-like flow.
-7. Treat send, delete, move, folder, category, rule, settings, and broad
+7. Inspect rule and mailbox-setting metadata with `outlook.mail_rules_list`
+   and `outlook.mailbox_settings_get` before considering any raw rule or
+   settings action.
+8. Treat send, delete, move, folder, category, rule, settings, and broad
    cleanup actions as separate explicit operations.
-8. Use `outlook.raw_action` only for a capability-discovered transport action
+9. Use `outlook.raw_action` only for a capability-discovered transport action
    that does not have a high-level tool.
 
 ## Write Safety

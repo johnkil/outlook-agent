@@ -20,6 +20,8 @@ Compatibility version `0.1` includes these tool names:
 - `outlook.mail_fetch_attachment`
 - `outlook.mail_create_draft`
 - `outlook.mail_move_to_deleted_items`
+- `outlook.mail_rules_list`
+- `outlook.mailbox_settings_get`
 - `outlook.calendar_list`
 - `outlook.calendar_availability`
 - `outlook.action_dry_run`
@@ -46,6 +48,11 @@ Compatibility version `0.1` includes the additive optional `mailbox` input on
 high-level mail and calendar tools. Transports that support delegated or shared
 mailbox targeting may use it; transports that do not support it keep their
 existing behavior or return a normal transport error.
+
+Compatibility version `0.1` also includes additive read-metadata tools for
+mailbox rules and mailbox settings: `outlook.mail_rules_list` and
+`outlook.mailbox_settings_get`. These tools expose existing safe transport
+actions without expanding the settings/rules write surface.
 
 Clients must ignore unknown output fields and unknown capability detail fields.
 Servers must keep existing fields present with compatible meanings.

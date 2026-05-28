@@ -73,6 +73,8 @@ outlook.mail_list_attachments
 outlook.mail_fetch_attachment
 outlook.mail_create_draft
 outlook.mail_move_to_deleted_items
+outlook.mail_rules_list
+outlook.mailbox_settings_get
 outlook.calendar_list
 outlook.calendar_availability
 outlook.action_dry_run
@@ -103,6 +105,12 @@ Key tool inputs:
 - `outlook.mail_fetch_attachment`: `message_id` and `attachment_id`. The tool
   is explicit-target only and returns normalized attachment metadata plus
   base64 content when the transport provides it.
+- `outlook.mail_rules_list`: optional `folder_id` and optional `mailbox`.
+  Returns read-only mailbox rule metadata when the selected transport supports
+  `mail.rules.list`.
+- `outlook.mailbox_settings_get`: optional `setting` and optional `mailbox`.
+  Returns read-only mailbox settings metadata when the selected transport
+  supports `mailbox.settings.get`.
 - `outlook.action_dry_run`: returns `ok=false`, `error`, and no
   `confirmation_token` when the requested confirmed action is not permitted in
   the selected mode. For example, destructive and unknown actions require

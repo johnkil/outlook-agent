@@ -103,6 +103,24 @@ type MailMoveToDeletedItemsInput struct {
 	Mailbox      string   `json:"mailbox,omitempty" jsonschema:"optional mailbox user id or user principal name"`
 }
 
+type MailRulesListInput struct {
+	FolderID string `json:"folder_id,omitempty" jsonschema:"optional mail folder id"`
+	Mailbox  string `json:"mailbox,omitempty" jsonschema:"optional mailbox user id or user principal name"`
+}
+
+type MailRulesListOutput struct {
+	Rules []any `json:"rules"`
+}
+
+type MailboxSettingsGetInput struct {
+	Setting string `json:"setting,omitempty" jsonschema:"optional mailbox setting name"`
+	Mailbox string `json:"mailbox,omitempty" jsonschema:"optional mailbox user id or user principal name"`
+}
+
+type MailboxSettingsGetOutput struct {
+	Settings any `json:"settings"`
+}
+
 type ActionResultOutput struct {
 	OK    bool           `json:"ok"`
 	Data  map[string]any `json:"data,omitempty"`
@@ -177,6 +195,8 @@ func Catalog() ToolCatalog {
 			{Name: "outlook.mail_fetch_attachment", Description: "Fetch a single explicit message attachment."},
 			{Name: "outlook.mail_create_draft", Description: "Create a saved draft without sending."},
 			{Name: "outlook.mail_move_to_deleted_items", Description: "Move confirmed messages to Deleted Items."},
+			{Name: "outlook.mail_rules_list", Description: "List read-only mailbox rule metadata."},
+			{Name: "outlook.mailbox_settings_get", Description: "Get read-only mailbox settings metadata."},
 			{Name: "outlook.calendar_list", Description: "List calendar events for a bounded window."},
 			{Name: "outlook.calendar_availability", Description: "List availability windows for a bounded window."},
 			{Name: "outlook.action_dry_run", Description: "Summarize a mutating or broad action before confirmation."},
@@ -247,6 +267,8 @@ func NewWithRuntime(runtime *Runtime) *mcp.Server {
 	mcp.AddTool(server, &mcp.Tool{Name: "outlook.mail_fetch_attachment", Description: "Fetch a single explicit message attachment."}, mailFetchAttachmentHandler(runtime.client))
 	mcp.AddTool(server, &mcp.Tool{Name: "outlook.mail_create_draft", Description: "Create a saved draft without sending."}, mailCreateDraftHandler(runtime.client))
 	mcp.AddTool(server, &mcp.Tool{Name: "outlook.mail_move_to_deleted_items", Description: "Move confirmed messages to Deleted Items."}, mailMoveToDeletedItemsHandler(runtime))
+	mcp.AddTool(server, &mcp.Tool{Name: "outlook.mail_rules_list", Description: "List read-only mailbox rule metadata."}, mailRulesListHandler(runtime.client))
+	mcp.AddTool(server, &mcp.Tool{Name: "outlook.mailbox_settings_get", Description: "Get read-only mailbox settings metadata."}, mailboxSettingsGetHandler(runtime.client))
 	mcp.AddTool(server, &mcp.Tool{Name: "outlook.calendar_list", Description: "List calendar events for a bounded window."}, calendarListHandler(runtime.client))
 	mcp.AddTool(server, &mcp.Tool{Name: "outlook.calendar_availability", Description: "List availability windows for a bounded window."}, calendarAvailabilityHandler(runtime.client))
 	mcp.AddTool(server, &mcp.Tool{Name: "outlook.action_dry_run", Description: "Summarize a mutating or broad action before confirmation."}, dryRunHandler(runtime))
@@ -371,6 +393,35 @@ func mailMoveToDeletedItemsHandler(runtime *Runtime) func(context.Context, *mcp.
 		response := runtime.client.Execute(ctx, transport.ActionRequest{Name: "mail.move_to_deleted_items", Payload: payload})
 		redacted := redact.Value(response.Data).(map[string]any)
 		return nil, ActionResultOutput{OK: response.OK, Data: redacted, Error: response.Error}, nil
+	}
+}
+
+func mailRulesListHandler(client transport.Transport) func(context.Context, *mcp.CallToolRequest, MailRulesListInput) (*mcp.CallToolResult, MailRulesListOutput, error) {
+	return func(ctx context.Context, _ *mcp.CallToolRequest, input MailRulesListInput) (*mcp.CallToolResult, MailRulesListOutput, error) {
+		response := client.Execute(ctx, transport.ActionRequest{
+			Name:    "mail.rules.list",
+			Payload: withMailbox(map[string]any{"folder_id": input.FolderID}, input.Mailbox),
+		})
+		if err := transportResponseError(response); err != nil {
+			return nil, MailRulesListOutput{}, err
+		}
+		redacted := redact.Value(response.Data).(map[string]any)
+		rules, _ := redacted["rules"].([]any)
+		return nil, MailRulesListOutput{Rules: rules}, nil
+	}
+}
+
+func mailboxSettingsGetHandler(client transport.Transport) func(context.Context, *mcp.CallToolRequest, MailboxSettingsGetInput) (*mcp.CallToolResult, MailboxSettingsGetOutput, error) {
+	return func(ctx context.Context, _ *mcp.CallToolRequest, input MailboxSettingsGetInput) (*mcp.CallToolResult, MailboxSettingsGetOutput, error) {
+		response := client.Execute(ctx, transport.ActionRequest{
+			Name:    "mailbox.settings.get",
+			Payload: withMailbox(map[string]any{"setting": input.Setting}, input.Mailbox),
+		})
+		if err := transportResponseError(response); err != nil {
+			return nil, MailboxSettingsGetOutput{}, err
+		}
+		redacted := redact.Value(response.Data).(map[string]any)
+		return nil, MailboxSettingsGetOutput{Settings: redacted["settings"]}, nil
 	}
 }
 
