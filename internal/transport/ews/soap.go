@@ -84,6 +84,24 @@ func BuildFindCalendarItemsRequest(config Config, password secret.Value, start s
 	return request, nil
 }
 
+func BuildGetUserAvailabilityRequest(config Config, password secret.Value, email string, start string, end string, intervalMinutes int) (*http.Request, error) {
+	endpoint, err := config.normalizedEndpointURL()
+	if err != nil {
+		return nil, err
+	}
+	body := getUserAvailabilityEnvelope(email, start, end, intervalMinutes)
+	request, err := http.NewRequest(http.MethodPost, endpoint, strings.NewReader(body))
+	if err != nil {
+		return nil, err
+	}
+	request.Header.Set("Content-Type", "text/xml; charset=utf-8")
+	request.Header.Set("Accept", "text/xml")
+	request.Header.Set("User-Agent", "outlook-agent")
+	request.Header.Set("SOAPAction", "http://schemas.microsoft.com/exchange/services/2006/messages/GetUserAvailability")
+	request.SetBasicAuth(config.Username, string(password))
+	return request, nil
+}
+
 func BuildRawEWSRequest(config Config, password secret.Value, bodyXML string, soapAction string) (*http.Request, error) {
 	endpoint, err := config.normalizedEndpointURL()
 	if err != nil {
@@ -214,6 +232,41 @@ func findCalendarItemsEnvelope(start string, end string, maxItems int) string {
 </soap:Envelope>`, maxItems, escapedStart, escapedEnd)
 }
 
+func getUserAvailabilityEnvelope(email string, start string, end string, intervalMinutes int) string {
+	if intervalMinutes <= 0 {
+		intervalMinutes = 30
+	}
+	escapedEmail := html.EscapeString(strings.TrimSpace(email))
+	escapedStart := html.EscapeString(strings.TrimSpace(start))
+	escapedEnd := html.EscapeString(strings.TrimSpace(end))
+	return fmt.Sprintf(`<?xml version="1.0" encoding="utf-8"?>
+<soap:Envelope xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/"
+  xmlns:m="http://schemas.microsoft.com/exchange/services/2006/messages"
+  xmlns:t="http://schemas.microsoft.com/exchange/services/2006/types">
+  <soap:Body>
+    <m:GetUserAvailabilityRequest>
+      <m:MailboxDataArray>
+        <t:MailboxData>
+          <t:Email>
+            <t:Address>%s</t:Address>
+          </t:Email>
+          <t:AttendeeType>Required</t:AttendeeType>
+          <t:ExcludeConflicts>false</t:ExcludeConflicts>
+        </t:MailboxData>
+      </m:MailboxDataArray>
+      <t:FreeBusyViewOptions>
+        <t:TimeWindow>
+          <t:StartTime>%s</t:StartTime>
+          <t:EndTime>%s</t:EndTime>
+        </t:TimeWindow>
+        <t:MergedFreeBusyIntervalInMinutes>%d</t:MergedFreeBusyIntervalInMinutes>
+        <t:RequestedView>DetailedMerged</t:RequestedView>
+      </t:FreeBusyViewOptions>
+    </m:GetUserAvailabilityRequest>
+  </soap:Body>
+</soap:Envelope>`, escapedEmail, escapedStart, escapedEnd, intervalMinutes)
+}
+
 type folderMetadata struct {
 	DisplayName      string
 	TotalCount       string
@@ -240,6 +293,13 @@ type calendarEvent struct {
 	Start    string
 	End      string
 	Location string
+}
+
+type availabilityWindow struct {
+	ScheduleID string
+	Start      string
+	End        string
+	BusyType   string
 }
 
 type findItemResponseEnvelope struct {
@@ -329,6 +389,35 @@ type calendarItemXML struct {
 	Location string `xml:"Location"`
 }
 
+type getUserAvailabilityResponseEnvelope struct {
+	Body struct {
+		Response struct {
+			FreeBusyResponseArray struct {
+				Responses []freeBusyResponse `xml:"FreeBusyResponse"`
+			} `xml:"FreeBusyResponseArray"`
+		} `xml:"GetUserAvailabilityResponse"`
+	} `xml:"Body"`
+}
+
+type freeBusyResponse struct {
+	ResponseMessage struct {
+		ResponseClass string `xml:"ResponseClass,attr"`
+		ResponseCode  string `xml:"ResponseCode"`
+		MessageText   string `xml:"MessageText"`
+	} `xml:"ResponseMessage"`
+	FreeBusyView struct {
+		CalendarEventArray struct {
+			Events []availabilityWindowXML `xml:"CalendarEvent"`
+		} `xml:"CalendarEventArray"`
+	} `xml:"FreeBusyView"`
+}
+
+type availabilityWindowXML struct {
+	StartTime string `xml:"StartTime"`
+	EndTime   string `xml:"EndTime"`
+	BusyType  string `xml:"BusyType"`
+}
+
 func parseFindItemResponse(reader io.Reader) ([]findItemMessage, error) {
 	data, err := io.ReadAll(reader)
 	if err != nil {
@@ -393,6 +482,42 @@ func parseFindCalendarItemsResponse(reader io.Reader) ([]calendarEvent, error) {
 		return []calendarEvent{}, nil
 	}
 	return events, nil
+}
+
+func parseGetUserAvailabilityResponse(reader io.Reader, scheduleID string) ([]availabilityWindow, error) {
+	data, err := io.ReadAll(reader)
+	if err != nil {
+		return nil, err
+	}
+	var envelope getUserAvailabilityResponseEnvelope
+	if err := xml.Unmarshal(data, &envelope); err != nil {
+		return nil, err
+	}
+	if len(envelope.Body.Response.FreeBusyResponseArray.Responses) == 0 {
+		return nil, fmt.Errorf("missing GetUserAvailability response")
+	}
+	var windows []availabilityWindow
+	for _, response := range envelope.Body.Response.FreeBusyResponseArray.Responses {
+		message := response.ResponseMessage
+		if message.ResponseClass != "" && message.ResponseClass != "Success" {
+			if strings.TrimSpace(message.MessageText) != "" {
+				return nil, fmt.Errorf("ews GetUserAvailability failed: %s", strings.TrimSpace(message.MessageText))
+			}
+			return nil, fmt.Errorf("ews GetUserAvailability failed: %s", strings.TrimSpace(message.ResponseCode))
+		}
+		for _, item := range response.FreeBusyView.CalendarEventArray.Events {
+			windows = append(windows, availabilityWindow{
+				ScheduleID: strings.TrimSpace(scheduleID),
+				Start:      strings.TrimSpace(item.StartTime),
+				End:        strings.TrimSpace(item.EndTime),
+				BusyType:   strings.TrimSpace(item.BusyType),
+			})
+		}
+	}
+	if windows == nil {
+		return []availabilityWindow{}, nil
+	}
+	return windows, nil
 }
 
 func parseGetItemResponse(reader io.Reader) (findItemMessage, error) {

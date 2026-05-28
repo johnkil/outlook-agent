@@ -103,6 +103,7 @@ Implemented high-level OWA mappings:
 | typed EWS mail search | EWS `FindItem` | implemented as metadata-only `mail.search` with unit coverage; live EWS enablement remains blocked on endpoint/auth policy |
 | typed EWS mail metadata fetch | EWS `GetItem` | implemented as metadata-only `mail.fetch_metadata` with unit coverage; live EWS enablement remains blocked on endpoint/auth policy |
 | typed EWS calendar list | EWS `FindItem` with `CalendarView` | implemented as metadata-only `calendar.list` with unit coverage; live EWS enablement remains blocked on endpoint/auth policy |
+| typed EWS calendar availability | EWS `GetUserAvailability` | implemented as metadata-only `calendar.availability` with unit coverage; live EWS enablement remains blocked on endpoint/auth policy |
 | raw EWS SOAP escape hatch | `EWSRequest` | implemented and unit-tested as a destructive raw action for caller-provided SOAP XML envelopes with a dry-run summary requiring unsafe mode plus exact confirmation; live EWS enablement remains blocked on endpoint/auth policy |
 
 Important OWA compatibility note: high-level OWA JSON payloads use ordered JSON

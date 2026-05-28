@@ -86,7 +86,7 @@ func TestTransportAuthenticatesWithGetFolderSOAP(t *testing.T) {
 	}
 }
 
-func TestTransportCapabilitiesIncludeGetFolderMailSearchFetchMetadataCalendarListAndRawRequest(t *testing.T) {
+func TestTransportCapabilitiesIncludeGetFolderMailCalendarAndRawRequest(t *testing.T) {
 	client := ews.NewTransport(ews.Config{
 		EndpointURL: "https://example.test/EWS/Exchange.asmx",
 		Username:    "DOMAIN\\user",
@@ -94,8 +94,8 @@ func TestTransportCapabilitiesIncludeGetFolderMailSearchFetchMetadataCalendarLis
 	}, secret.NewMemoryStore(map[string]string{"memory:ews": "password-secret"}), nil)
 
 	capabilities := client.Capabilities(context.Background())
-	if len(capabilities.Actions) != 5 {
-		t.Fatalf("expected five EWS actions, got %#v", capabilities.Actions)
+	if len(capabilities.Actions) != 6 {
+		t.Fatalf("expected six EWS actions, got %#v", capabilities.Actions)
 	}
 	actions := map[string]action.Definition{}
 	for _, item := range capabilities.Actions {
@@ -120,6 +120,10 @@ func TestTransportCapabilitiesIncludeGetFolderMailSearchFetchMetadataCalendarLis
 	calendarList := actions["calendar.list"]
 	if calendarList.Name != "calendar.list" || calendarList.Transport != "ews" || calendarList.Class != policy.ReadMetadata || calendarList.Level != action.LevelHighLevelMCPTool {
 		t.Fatalf("unexpected calendar.list capability: %#v", calendarList)
+	}
+	availability := actions["calendar.availability"]
+	if availability.Name != "calendar.availability" || availability.Transport != "ews" || availability.Class != policy.ReadMetadata || availability.Level != action.LevelHighLevelMCPTool {
+		t.Fatalf("unexpected calendar.availability capability: %#v", availability)
 	}
 }
 
@@ -409,6 +413,105 @@ func TestTransportRejectsCalendarListWithoutRange(t *testing.T) {
 	}
 }
 
+func TestTransportExecutesCalendarAvailabilityWithGetUserAvailability(t *testing.T) {
+	var sawAvailability bool
+	var sawAuth bool
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		if request.Method != http.MethodPost {
+			t.Fatalf("expected POST, got %s", request.Method)
+		}
+		if request.Header.Get("SOAPAction") != "http://schemas.microsoft.com/exchange/services/2006/messages/GetUserAvailability" {
+			t.Fatalf("unexpected SOAPAction: %s", request.Header.Get("SOAPAction"))
+		}
+		auth := strings.TrimPrefix(request.Header.Get("Authorization"), "Basic ")
+		decoded, err := base64.StdEncoding.DecodeString(auth)
+		if err != nil {
+			t.Fatalf("decode auth: %v", err)
+		}
+		sawAuth = string(decoded) == "DOMAIN\\user:password-secret"
+		body, err := io.ReadAll(request.Body)
+		if err != nil {
+			t.Fatalf("read body: %v", err)
+		}
+		text := string(body)
+		sawAvailability = strings.Contains(text, `<m:GetUserAvailabilityRequest>`) &&
+			strings.Contains(text, `<t:Address>alex@example.com</t:Address>`) &&
+			strings.Contains(text, `<t:AttendeeType>Required</t:AttendeeType>`) &&
+			strings.Contains(text, `<t:ExcludeConflicts>false</t:ExcludeConflicts>`) &&
+			strings.Contains(text, `<t:StartTime>2026-05-28T09:00:00</t:StartTime>`) &&
+			strings.Contains(text, `<t:EndTime>2026-05-28T18:00:00</t:EndTime>`) &&
+			strings.Contains(text, `<t:MergedFreeBusyIntervalInMinutes>30</t:MergedFreeBusyIntervalInMinutes>`) &&
+			strings.Contains(text, `<t:RequestedView>DetailedMerged</t:RequestedView>`)
+		response.Header().Set("Content-Type", "text/xml")
+		_, _ = response.Write([]byte(successfulGetUserAvailabilityResponse()))
+	}))
+	defer server.Close()
+
+	client := ews.NewTransport(ews.Config{
+		EndpointURL: server.URL + "/EWS/Exchange.asmx",
+		Username:    "DOMAIN\\user",
+		SecretRef:   secret.Ref("memory:ews"),
+	}, secret.NewMemoryStore(map[string]string{"memory:ews": "password-secret"}), server.Client())
+
+	result := client.Execute(context.Background(), transport.ActionRequest{
+		Name: "calendar.availability",
+		Payload: map[string]any{
+			"email":            "alex@example.com",
+			"start":            "2026-05-28T09:00:00",
+			"end":              "2026-05-28T18:00:00",
+			"interval_minutes": 30,
+		},
+	})
+
+	if !result.OK {
+		t.Fatalf("expected calendar.availability ok, got %#v", result)
+	}
+	if !sawAuth || !sawAvailability {
+		t.Fatalf("expected auth and GetUserAvailability SOAP request, auth=%v availability=%v", sawAuth, sawAvailability)
+	}
+	windows := result.Data["windows"].([]any)
+	if len(windows) != 2 {
+		t.Fatalf("expected two availability windows, got %#v", windows)
+	}
+	first := windows[0].(map[string]any)
+	if first["schedule_id"] != "alex@example.com" || first["free_busy_type"] != "Busy" || first["status"] != "Busy" {
+		t.Fatalf("unexpected first window status: %#v", first)
+	}
+	if first["start"] != "2026-05-28T10:00:00" || first["end"] != "2026-05-28T10:30:00" {
+		t.Fatalf("unexpected first window time fields: %#v", first)
+	}
+	if _, ok := first["subject"]; ok {
+		t.Fatalf("availability windows must not expose subjects by default: %#v", first)
+	}
+}
+
+func TestTransportRejectsCalendarAvailabilityWithoutEmailOrRange(t *testing.T) {
+	client := ews.NewTransport(ews.Config{
+		EndpointURL: "https://example.test/EWS/Exchange.asmx",
+		Username:    "DOMAIN\\user",
+		SecretRef:   secret.Ref("memory:ews"),
+	}, secret.NewMemoryStore(map[string]string{"memory:ews": "password-secret"}), nil)
+
+	missingEmail := client.Execute(context.Background(), transport.ActionRequest{
+		Name: "calendar.availability",
+		Payload: map[string]any{
+			"start": "2026-05-28T09:00:00",
+			"end":   "2026-05-28T18:00:00",
+		},
+	})
+	if missingEmail.OK || !strings.Contains(missingEmail.Error, "calendar.availability requires email") {
+		t.Fatalf("expected email error, got %#v", missingEmail)
+	}
+
+	missingRange := client.Execute(context.Background(), transport.ActionRequest{
+		Name:    "calendar.availability",
+		Payload: map[string]any{"email": "alex@example.com", "start": "2026-05-28T09:00:00"},
+	})
+	if missingRange.OK || !strings.Contains(missingRange.Error, "calendar.availability requires start and end") {
+		t.Fatalf("expected range error, got %#v", missingRange)
+	}
+}
+
 func TestTransportExecutesRawEWSRequest(t *testing.T) {
 	const requestXML = `<soap:Envelope xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/"><soap:Body><m:GetServerTimeZones xmlns:m="http://schemas.microsoft.com/exchange/services/2006/messages"/></soap:Body></soap:Envelope>`
 	const responseXML = `<soap:Envelope><soap:Body><m:GetServerTimeZonesResponse><m:ResponseMessages/></m:GetServerTimeZonesResponse></soap:Body></soap:Envelope>`
@@ -665,6 +768,43 @@ func successfulFindCalendarItemsResponse() string {
         </m:FindItemResponseMessage>
       </m:ResponseMessages>
     </m:FindItemResponse>
+  </soap:Body>
+</soap:Envelope>`
+}
+
+func successfulGetUserAvailabilityResponse() string {
+	return `<?xml version="1.0" encoding="utf-8"?>
+<soap:Envelope xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/"
+  xmlns:m="http://schemas.microsoft.com/exchange/services/2006/messages"
+  xmlns:t="http://schemas.microsoft.com/exchange/services/2006/types">
+  <soap:Body>
+    <m:GetUserAvailabilityResponse>
+      <m:FreeBusyResponseArray>
+        <m:FreeBusyResponse>
+          <m:ResponseMessage ResponseClass="Success">
+            <m:ResponseCode>NoError</m:ResponseCode>
+          </m:ResponseMessage>
+          <m:FreeBusyView>
+            <t:FreeBusyViewType>DetailedMerged</t:FreeBusyViewType>
+            <t:CalendarEventArray>
+              <t:CalendarEvent>
+                <t:StartTime>2026-05-28T10:00:00</t:StartTime>
+                <t:EndTime>2026-05-28T10:30:00</t:EndTime>
+                <t:BusyType>Busy</t:BusyType>
+                <t:CalendarEventDetails>
+                  <t:Subject>Private focus block</t:Subject>
+                </t:CalendarEventDetails>
+              </t:CalendarEvent>
+              <t:CalendarEvent>
+                <t:StartTime>2026-05-28T11:00:00</t:StartTime>
+                <t:EndTime>2026-05-28T11:30:00</t:EndTime>
+                <t:BusyType>Tentative</t:BusyType>
+              </t:CalendarEvent>
+            </t:CalendarEventArray>
+          </m:FreeBusyView>
+        </m:FreeBusyResponse>
+      </m:FreeBusyResponseArray>
+    </m:GetUserAvailabilityResponse>
   </soap:Body>
 </soap:Envelope>`
 }

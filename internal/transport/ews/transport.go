@@ -44,6 +44,7 @@ func (client *Transport) Capabilities(context.Context) transport.CapabilitySet {
 		{Name: "mail.search", Transport: "ews", Class: policy.ReadMetadata, Level: action.LevelHighLevelMCPTool},
 		{Name: "mail.fetch_metadata", Transport: "ews", Class: policy.ReadMetadata, Level: action.LevelHighLevelMCPTool},
 		{Name: "calendar.list", Transport: "ews", Class: policy.ReadMetadata, Level: action.LevelHighLevelMCPTool},
+		{Name: "calendar.availability", Transport: "ews", Class: policy.ReadMetadata, Level: action.LevelHighLevelMCPTool},
 		{Name: "EWSRequest", Transport: "ews", Class: policy.Destructive, Level: action.LevelRawGuardedExecution},
 	}}
 }
@@ -85,6 +86,12 @@ func (client *Transport) Execute(ctx context.Context, request transport.ActionRe
 			return transport.ActionResponse{OK: false, Error: err.Error()}
 		}
 		return transport.ActionResponse{OK: true, Data: map[string]any{"events": events}}
+	case "calendar.availability":
+		windows, err := client.getAvailability(ctx, request.Payload)
+		if err != nil {
+			return transport.ActionResponse{OK: false, Error: err.Error()}
+		}
+		return transport.ActionResponse{OK: true, Data: map[string]any{"windows": windows}}
 	case "EWSRequest":
 		data, err := client.executeRawEWSRequest(ctx, request.Payload)
 		if err != nil {
@@ -247,6 +254,56 @@ func (client *Transport) listCalendarEvents(ctx context.Context, start string, e
 	return events, nil
 }
 
+func (client *Transport) getAvailability(ctx context.Context, payload map[string]any) ([]any, error) {
+	email := strings.TrimSpace(stringValue(payload, "email", ""))
+	if email == "" {
+		return nil, fmt.Errorf("calendar.availability requires email")
+	}
+	start := strings.TrimSpace(stringValue(payload, "start", ""))
+	end := strings.TrimSpace(stringValue(payload, "end", ""))
+	if start == "" || end == "" {
+		return nil, fmt.Errorf("calendar.availability requires start and end")
+	}
+	if err := client.config.Validate(); err != nil {
+		return nil, err
+	}
+	if client.secrets == nil {
+		return nil, fmt.Errorf("secret store is not configured")
+	}
+	password, err := client.secrets.Get(ctx, client.config.SecretRef)
+	if err != nil {
+		return nil, err
+	}
+	request, err := BuildGetUserAvailabilityRequest(client.config, password, email, start, end, intValue(payload, "interval_minutes", 30))
+	if err != nil {
+		return nil, err
+	}
+	request = request.WithContext(ctx)
+	response, err := client.client.Do(request)
+	if err != nil {
+		return nil, err
+	}
+	defer response.Body.Close()
+	items, parseErr := parseGetUserAvailabilityResponse(response.Body, email)
+	if response.StatusCode < 200 || response.StatusCode >= 300 {
+		if parseErr != nil {
+			return nil, fmt.Errorf("ews returned HTTP %d", response.StatusCode)
+		}
+		return nil, fmt.Errorf("ews returned HTTP %d", response.StatusCode)
+	}
+	if parseErr != nil {
+		return nil, parseErr
+	}
+	windows := make([]any, 0, len(items))
+	for _, item := range items {
+		windows = append(windows, normalizeAvailabilityWindow(item))
+	}
+	if windows == nil {
+		return []any{}, nil
+	}
+	return windows, nil
+}
+
 func (client *Transport) getItem(ctx context.Context, itemID string) (findItemMessage, error) {
 	if err := client.config.Validate(); err != nil {
 		return findItemMessage{}, err
@@ -333,6 +390,16 @@ func normalizeCalendarEvent(item calendarEvent) map[string]any {
 		"start":    item.Start,
 		"end":      item.End,
 		"location": item.Location,
+	}
+}
+
+func normalizeAvailabilityWindow(item availabilityWindow) map[string]any {
+	return map[string]any{
+		"schedule_id":    item.ScheduleID,
+		"start":          item.Start,
+		"end":            item.End,
+		"status":         item.BusyType,
+		"free_busy_type": item.BusyType,
 	}
 }
 

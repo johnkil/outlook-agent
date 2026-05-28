@@ -188,9 +188,11 @@ Configured transports:
   actions are read-metadata `GetFolder`, also used by `auth check`,
   metadata-only `mail.search` through EWS `FindItem`, metadata-only
   `mail.fetch_metadata` through EWS `GetItem`, metadata-only `calendar.list`
-  through EWS `FindItem` with `CalendarView`, and raw guarded `EWSRequest` for
-  caller-provided SOAP XML envelopes. Deployments that require NTLM, Negotiate,
-  OAuth, or server-side EWS allow-listing need additional adapter/auth work.
+  through EWS `FindItem` with `CalendarView`, metadata-only
+  `calendar.availability` through EWS `GetUserAvailability`, and raw guarded
+  `EWSRequest` for caller-provided SOAP XML envelopes. Deployments that require
+  NTLM, Negotiate, OAuth, or server-side EWS allow-listing need additional
+  adapter/auth work.
 - `graph`: initial Microsoft Graph REST transport. Profiles use optional
   `settings.base_url` and `secret_ref` for either a raw bearer access token or
   a refresh-capable JSON token credential stored outside config. Refresh uses

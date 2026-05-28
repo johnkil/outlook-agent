@@ -275,6 +275,24 @@ func TestLiveEWSReadMetadataSmoke(t *testing.T) {
 	if _, ok := calendar.Data["events"].([]any); !ok {
 		t.Fatalf("expected EWS calendar event metadata list, got %#v", responseSummary(calendar.Data))
 	}
+
+	availabilityEmail := os.Getenv("OUTLOOK_AGENT_LIVE_EWS_AVAILABILITY_EMAIL")
+	if availabilityEmail != "" {
+		availability := client.Execute(ctx, transport.ActionRequest{
+			Name: "calendar.availability",
+			Payload: map[string]any{
+				"email": availabilityEmail,
+				"start": start,
+				"end":   end,
+			},
+		})
+		if !availability.OK {
+			t.Fatalf("live EWS calendar.availability failed: %s summary=%#v", availability.Error, responseSummary(availability.Data))
+		}
+		if _, ok := availability.Data["windows"].([]any); !ok {
+			t.Fatalf("expected EWS availability windows, got %#v", responseSummary(availability.Data))
+		}
+	}
 }
 
 func TestLiveOWARawFindPeopleSmoke(t *testing.T) {

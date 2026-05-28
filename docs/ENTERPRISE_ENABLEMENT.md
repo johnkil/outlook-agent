@@ -73,13 +73,18 @@ OUTLOOK_AGENT_LIVE_EWS_PROFILE=<ews-profile> \
 go test ./internal/app -run TestLiveEWSReadMetadataSmoke -count=1 -v
 ```
 
+Set `OUTLOOK_AGENT_LIVE_EWS_AVAILABILITY_EMAIL=<mailbox>` to include the
+metadata-only `calendar.availability` free/busy check in the same harness.
+
 The harness verifies `auth check` through the EWS `GetFolder` auth probe,
 executes metadata-only `GetFolder` for Inbox, and executes metadata-only
 `mail.search` through EWS `FindItem`, plus metadata-only
 `mail.fetch_metadata` through EWS `GetItem` when a message id is available,
-and metadata-only `calendar.list` through EWS `FindItem` with `CalendarView`.
-Raw EWSRequest, body, attachment, send-like, and write actions are excluded
-from this read-metadata harness.
+metadata-only `calendar.list` through EWS `FindItem` with `CalendarView`, and
+metadata-only `calendar.availability` through EWS `GetUserAvailability` when
+the optional availability mailbox is configured. Raw EWSRequest, body,
+attachment, send-like, and write actions are excluded from this read-metadata
+harness.
 
 ## Secret Store And Config
 
