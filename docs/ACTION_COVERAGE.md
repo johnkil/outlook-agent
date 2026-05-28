@@ -103,13 +103,15 @@ objects because this endpoint can reject request maps where `__type` is not the
 first field. Raw OWA payload maps are normalized recursively before encoding so
 agent-supplied `__type` fields are emitted first at each object level.
 
-`FindFolder` remains classified and available as a raw read-metadata action,
-but six live metadata-only candidate requests returned the same internal OWA
-error: a paged Inbox candidate with `IndexedPageFolderView`, a minimal Inbox
-`IdOnly` candidate, a minimal Inbox `Default`/older-version candidate, a paged
+`FindFolder` remains classified and available as a raw read-metadata action.
+It is also now a bounded compatibility decision for the tested deployment: six
+live metadata-only candidate requests returned the same internal OWA error:
+a paged Inbox candidate with `IndexedPageFolderView`, a minimal Inbox `IdOnly`
+candidate, a minimal Inbox `Default`/older-version candidate, a paged
 `msgfolderroot` candidate, the minimal Inbox `Default` candidate sent through
 `X-OWA-UrlPostData`, and an Inbox parent candidate using
 `FindFolderParentWrapper`, `ReturnParentFolder`, and `Paging` after Phase 49
-action-context discovery surfaced that wrapper identifier. Treat it as a
-payload/endpoint compatibility follow-up rather than evidence against the
-generic raw action transport.
+action-context discovery surfaced that wrapper identifier. This deployment does
+not expose a compatible metadata-only `FindFolder` shape through the tested OWA
+JSON/URLPostData routes. Treat that as deployment-specific compatibility
+evidence rather than evidence against the generic raw action transport.

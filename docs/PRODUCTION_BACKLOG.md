@@ -8,8 +8,9 @@ raw session artifacts.
 
 The public core repository owns the Go CLI/MCP runtime, safety policy, fake
 transport, generic Graph/EWS/OWA-like adapters, workflow skills, release
-artifacts, and public-safe verification. The items below are open external
-gates or compatibility follow-ups that need explicit ownership and evidence.
+artifacts, and public-safe verification. The items below separate open
+external gates from bounded compatibility decisions that have already been
+investigated with public-safe evidence.
 
 ## Open External Gates
 
@@ -20,7 +21,12 @@ gates or compatibility follow-ups that need explicit ownership and evidence.
 | enterprise distribution channel | https://github.com/johnkil/outlook-agent/issues/4 | Approved package or installer channel verifies release checksums, preserves the private config boundary, and names release/rollback owners. |
 | Graph OAuth and live smoke enablement | https://github.com/johnkil/outlook-agent/issues/5 | Approved Graph app/permissions, secret-store token handling, `auth check`, and controlled read-only smoke evidence. |
 | EWS enablement and live smoke validation | https://github.com/johnkil/outlook-agent/issues/6 | Approved endpoint/auth method, secret-store credential handling, `auth check`, and controlled read-metadata smoke evidence. |
-| FindFolder compatibility follow-up | https://github.com/johnkil/outlook-agent/issues/7 | A compatible metadata-only OWA `FindFolder` payload/route, or a bounded decision that this deployment does not expose one. |
+
+## Bounded Compatibility Decisions
+
+| Decision | GitHub issue | Evidence |
+| --- | --- | --- |
+| FindFolder compatibility | https://github.com/johnkil/outlook-agent/issues/7 | six metadata-only candidates returned the same sanitized `ErrorInternalServerError`: paged Inbox, minimal Inbox `IdOnly`, minimal Inbox `Default`/older-version, paged `msgfolderroot`, minimal Inbox `Default` through `X-OWA-UrlPostData`, and Inbox parent wrapper with `FindFolderParentWrapper`, `ReturnParentFolder`, and `Paging`. The bounded decision is that this deployment does not expose a compatible metadata-only `FindFolder` shape through the tested OWA JSON/URLPostData routes. `FindFolder` remains classified and available through the guarded raw action transport, and this result is not evidence against the generic raw action transport. |
 
 ## Tracking Policy
 
@@ -38,7 +44,9 @@ gates or compatibility follow-ups that need explicit ownership and evidence.
 
 ## Relationship To MVP
 
-`docs/MVP_READINESS.md` defines the public-core MVP boundary. The backlog above
-does not reduce the public-core requirements; it makes the remaining rollout
-ownership explicit so production readiness can be audited without storing
-enterprise-specific material in the repository.
+`docs/MVP_READINESS.md` defines the public-core MVP boundary. The open gates
+above do not reduce the public-core requirements; they make the remaining
+rollout ownership explicit so production readiness can be audited without
+storing enterprise-specific material in the repository. Bounded decisions stay
+in this document so future operators do not repeat the same live probes without
+new evidence.

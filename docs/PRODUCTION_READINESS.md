@@ -27,7 +27,7 @@ Status values:
 | MCP server | Ready | `internal/mcpserver` registers the public tools, has in-memory MCP client smoke tests, verifies capabilities -> dry-run -> confirm flow, has a versioned compatibility policy in `docs/MCP_COMPATIBILITY.md`, and `cmd/outlook-agent` has stdio command-transport smoke coverage. |
 | All discovered OWA actions | Ready for discovered set | OWA registry classifies 55 raw service actions in `docs/OWA_ACTION_REGISTRY.md`; `TestTransportCapabilitiesIncludeClassifiedOWAServiceActions` and `TestOWARawCapabilitiesExposeExecutionRoutes` cover raw capability presence, classes, and execution routes. |
 | High-level mail/calendar workflows | Ready initial set | Search, metadata fetch, explicit fixture body fetch, explicit attachment listing/fetch, draft save, move to Deleted Items, calendar list, and availability are implemented and have live smoke evidence through controlled fixtures or bounded metadata reads. |
-| Live verification | Partial | Authenticated discovery has sanitized evidence for the useful OWA app shell and 25 live-discovered actions; high-level mail search, metadata fetch, explicit fixture body fetch, explicit draft attachment listing/fetch, draft creation, reversible draft cleanup, calendar list, availability, stdio MCP availability, read-only raw `FindPeople`, read-only raw metadata actions (`GetServerTimeZones`, `GetRoomLists`, `GetFolder`, `ResolveNames`), representative MCP dry-run gates, live raw `DeleteItem` reversible confirmation against a draft fixture, and live stdio MCP dry-run coverage for all 26 mutating raw OWA catalog examples. Full live execution of every raw action is intentionally not attempted because many actions are destructive, send-like, or settings-changing. |
+| Live verification | Partial | Authenticated discovery has sanitized evidence for the useful OWA app shell and 25 live-discovered actions; high-level mail search, metadata fetch, explicit fixture body fetch, explicit draft attachment listing/fetch, draft creation, reversible draft cleanup, calendar list, availability, stdio MCP availability, read-only raw `FindPeople`, read-only raw metadata actions (`GetServerTimeZones`, `GetRoomLists`, `GetFolder`, `ResolveNames`), representative MCP dry-run gates, live raw `DeleteItem` reversible confirmation against a draft fixture, and live stdio MCP dry-run coverage for all 26 mutating raw OWA catalog examples. `FindFolder` is a bounded compatibility decision: six metadata-only candidates returned the same sanitized internal OWA error, so this deployment does not expose a compatible metadata-only `FindFolder` shape through the tested OWA JSON/URLPostData routes. Full live execution of every raw action is intentionally not attempted because many actions are destructive, send-like, or settings-changing. |
 | Public/private split | Ready | Generic examples use placeholder hosts/accounts; `opencode.jsonc` uses the fake transport; security docs and grep gates prevent committed tenant-specific values. Private enterprise values belong in ignored local config and secret stores. |
 | Security and redaction | Partial for production operations | Runtime policy classes, explicit target rules, dry-run tokens, confirmation binding, unsafe requirements, dry-run count summaries for attachment/folder/rule/config payload shapes, sanitized dry-run payload examples for all 26 mutating raw OWA actions, raw Graph/EWS response content redaction, and redaction have unit or MCP tests; CI now adds a public-safety check and dependency vulnerability scan baseline; `docs/OPERATIONS.md` documents incident response, credential revocation, organization secret scanning, and enterprise config boundaries. |
 | Workflow skills | Ready initial set | `skills/` contains mail and calendar workflow skills for triage, reply drafting, task extraction, subscription cleanup, daily brief, meeting prep, and freeing time. |
@@ -68,8 +68,8 @@ Status values:
 
 ## Remaining Gaps
 
-Tracked GitHub issues for these gates are listed in
-`docs/PRODUCTION_BACKLOG.md`.
+Tracked GitHub issues for these gates and bounded compatibility decisions are
+listed in `docs/PRODUCTION_BACKLOG.md`.
 
 - Build and release:
   - installer or package-manager distribution in the target enterprise channel.
@@ -84,9 +84,6 @@ Tracked GitHub issues for these gates are listed in
   - typed EWS high-level workflows beyond the initial `GetFolder`
     read-metadata probe/action and raw `EWSRequest` escape hatch;
   - EWS live environment/auth enablement for the tested endpoint.
-- Live validation:
-  - `FindFolder` live payload/endpoint compatibility follow-up after six
-    metadata-only candidates returned the same internal OWA error;
 
 ## Verification Commands
 
