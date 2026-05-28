@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"os"
 	"os/exec"
@@ -388,6 +389,27 @@ func TestLiveBinaryMCPStdioAttachmentFolderRuleDryRunSmoke(t *testing.T) {
 	}
 }
 
+func TestCreateTextAttachmentPayloadTargetsDraftAndContent(t *testing.T) {
+	payload := createTextAttachmentPayload("draft-1", "fixture.txt", "hello")
+
+	if payload["__type"] != "CreateAttachmentJsonRequest:#Exchange" {
+		t.Fatalf("unexpected request type: %#v", payload["__type"])
+	}
+	body := payload["Body"].(map[string]any)
+	parent := body["ParentItemId"].(map[string]any)
+	if parent["Id"] != "draft-1" {
+		t.Fatalf("expected draft parent id, got %#v", parent)
+	}
+	attachments := body["Attachments"].([]any)
+	attachment := attachments[0].(map[string]any)
+	if attachment["Name"] != "fixture.txt" || attachment["ContentType"] != "text/plain" {
+		t.Fatalf("unexpected attachment metadata: %#v", attachment)
+	}
+	if attachment["Content"] != base64.StdEncoding.EncodeToString([]byte("hello")) {
+		t.Fatalf("unexpected attachment content: %#v", attachment["Content"])
+	}
+}
+
 func TestLiveBinaryMCPStdioMutatingCatalogDryRunSmoke(t *testing.T) {
 	configPath := os.Getenv("OUTLOOK_AGENT_LIVE_CONFIG")
 	if configPath == "" {
@@ -616,6 +638,157 @@ func TestLiveBinaryMCPStdioDraftBodyFetchAndCleanupSmoke(t *testing.T) {
 	cleanupDone = true
 }
 
+func TestLiveBinaryMCPStdioAttachmentFixtureSmoke(t *testing.T) {
+	configPath := os.Getenv("OUTLOOK_AGENT_LIVE_CONFIG")
+	if configPath == "" {
+		t.Skip("OUTLOOK_AGENT_LIVE_CONFIG is not set")
+	}
+	if os.Getenv("OUTLOOK_AGENT_LIVE_MUTATION_SMOKE") != "1" {
+		t.Skip("OUTLOOK_AGENT_LIVE_MUTATION_SMOKE=1 is not set")
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+	defer cancel()
+
+	args := []string{"--config", configPath}
+	if profile := os.Getenv("OUTLOOK_AGENT_LIVE_PROFILE"); profile != "" {
+		args = append(args, "--profile", profile)
+	}
+	args = append(args, "mcp")
+
+	command := exec.CommandContext(ctx, buildBinary(t), args...)
+	client := mcp.NewClient(&mcp.Implementation{Name: "stdio-live-attachment-fixture-smoke-test", Version: "0.0.1"}, nil)
+	session, err := client.Connect(ctx, &mcp.CommandTransport{Command: command, TerminateDuration: time.Second}, nil)
+	if err != nil {
+		t.Fatalf("connect to live stdio MCP server: %v", err)
+	}
+	defer session.Close()
+
+	auth, err := session.CallTool(ctx, &mcp.CallToolParams{Name: "outlook.auth_check"})
+	if err != nil {
+		t.Fatalf("call auth_check: %v", err)
+	}
+	if auth.IsError {
+		t.Fatalf("expected auth_check success, got %#v", auth)
+	}
+	var authOutput struct {
+		OK bool `json:"ok"`
+	}
+	decodeStructuredContent(t, auth, &authOutput)
+	if !authOutput.OK {
+		t.Fatalf("expected live auth_check ok output, got %#v", authOutput)
+	}
+
+	stamp := time.Now().UTC().Format("20060102T150405.000000000Z")
+	attachmentName := "outlook-agent-attachment-smoke-" + stamp + ".txt"
+	attachmentText := "outlook-agent explicit attachment fixture " + stamp
+	createDraft, err := session.CallTool(ctx, &mcp.CallToolParams{
+		Name: "outlook.mail_create_draft",
+		Arguments: map[string]any{
+			"subject": "outlook-agent attachment smoke draft " + stamp,
+			"body":    "Created by an opt-in Outlook Agent attachment live smoke.",
+			"to":      []string{},
+		},
+	})
+	if err != nil {
+		t.Fatalf("call mail_create_draft: %v", err)
+	}
+	if createDraft.IsError {
+		t.Fatalf("expected mail_create_draft success envelope, got %#v", createDraft)
+	}
+	var draftOutput struct {
+		Draft any `json:"draft"`
+	}
+	decodeStructuredContent(t, createDraft, &draftOutput)
+	draftID := messageIDFromToolValue(draftOutput.Draft)
+	if draftID == "" {
+		t.Fatalf("expected draft id in sanitized output, got %#v", draftOutput.Draft)
+	}
+	cleanupDone := false
+	defer func() {
+		if !cleanupDone {
+			cleanupDraftFixture(t, ctx, session, draftID)
+		}
+	}()
+
+	createAttachmentPayload := createTextAttachmentPayload(draftID, attachmentName, attachmentText)
+	dryRun := callDryRun(t, ctx, session, map[string]any{
+		"action":  "CreateAttachment",
+		"payload": createAttachmentPayload,
+	})
+	if !dryRun.OK || dryRun.ConfirmationToken == "" || dryRun.Count != 1 || !dryRun.Reversible || dryRun.RequiresUnsafe {
+		t.Fatalf("expected reversible CreateAttachment dry-run token: %#v", dryRun)
+	}
+
+	confirm, err := session.CallTool(ctx, &mcp.CallToolParams{
+		Name: "outlook.action_confirm",
+		Arguments: map[string]any{
+			"action":        "CreateAttachment",
+			"payload":       createAttachmentPayload,
+			"confirm_token": dryRun.ConfirmationToken,
+		},
+	})
+	if err != nil {
+		t.Fatalf("call CreateAttachment action_confirm: %v", err)
+	}
+	if confirm.IsError {
+		t.Fatalf("expected CreateAttachment confirm success envelope, got %#v", confirm)
+	}
+	var confirmOutput struct {
+		OK    bool   `json:"ok"`
+		Error string `json:"error"`
+	}
+	decodeStructuredContent(t, confirm, &confirmOutput)
+	if !confirmOutput.OK {
+		t.Fatalf("expected CreateAttachment confirm ok, got %#v", confirmOutput)
+	}
+
+	listAttachments, err := session.CallTool(ctx, &mcp.CallToolParams{
+		Name:      "outlook.mail_list_attachments",
+		Arguments: map[string]any{"id": draftID},
+	})
+	if err != nil {
+		t.Fatalf("call mail_list_attachments: %v", err)
+	}
+	if listAttachments.IsError {
+		t.Fatalf("expected mail_list_attachments success envelope, got %#v", listAttachments)
+	}
+	var listOutput struct {
+		Attachments []any `json:"attachments"`
+	}
+	decodeStructuredContent(t, listAttachments, &listOutput)
+	attachmentID := findAttachmentIDByName(listOutput.Attachments, attachmentName)
+	if attachmentID == "" {
+		t.Fatalf("expected fixture attachment %q in %#v", attachmentName, listOutput.Attachments)
+	}
+
+	fetchAttachment, err := session.CallTool(ctx, &mcp.CallToolParams{
+		Name: "outlook.mail_fetch_attachment",
+		Arguments: map[string]any{
+			"message_id":    draftID,
+			"attachment_id": attachmentID,
+		},
+	})
+	if err != nil {
+		t.Fatalf("call mail_fetch_attachment: %v", err)
+	}
+	if fetchAttachment.IsError {
+		t.Fatalf("expected mail_fetch_attachment success envelope, got error: %s", toolResultText(fetchAttachment))
+	}
+	var fetchOutput struct {
+		Attachment any `json:"attachment"`
+	}
+	decodeStructuredContent(t, fetchAttachment, &fetchOutput)
+	attachment, _ := fetchOutput.Attachment.(map[string]any)
+	expectedContent := base64.StdEncoding.EncodeToString([]byte(attachmentText))
+	if attachment["id"] != attachmentID || attachment["name"] != attachmentName || attachment["content_base64"] != expectedContent {
+		t.Fatalf("unexpected fetched attachment: %#v", attachment)
+	}
+
+	cleanupDraftFixture(t, ctx, session, draftID)
+	cleanupDone = true
+}
+
 func TestLiveBinaryMCPStdioRawReversibleConfirmCleanupSmoke(t *testing.T) {
 	configPath := os.Getenv("OUTLOOK_AGENT_LIVE_CONFIG")
 	if configPath == "" {
@@ -779,6 +952,58 @@ func messageIDFromToolValue(value any) string {
 func bodyTextFromToolValue(value any) string {
 	body, _ := value.(string)
 	return body
+}
+
+func toolResultText(result *mcp.CallToolResult) string {
+	if result == nil {
+		return ""
+	}
+	parts := make([]string, 0, len(result.Content))
+	for _, content := range result.Content {
+		text, ok := content.(*mcp.TextContent)
+		if ok {
+			parts = append(parts, text.Text)
+		}
+	}
+	return strings.Join(parts, "\n")
+}
+
+func createTextAttachmentPayload(parentID string, name string, content string) map[string]any {
+	return map[string]any{
+		"__type": "CreateAttachmentJsonRequest:#Exchange",
+		"Header": map[string]any{
+			"__type":               "JsonRequestHeaders:#Exchange",
+			"RequestServerVersion": "Exchange2013",
+		},
+		"Body": map[string]any{
+			"__type": "CreateAttachmentRequest:#Exchange",
+			"ParentItemId": map[string]any{
+				"__type": "ItemId:#Exchange",
+				"Id":     parentID,
+			},
+			"Attachments": []any{
+				map[string]any{
+					"__type":      "FileAttachment:#Exchange",
+					"Name":        name,
+					"ContentType": "text/plain",
+					"IsInline":    false,
+					"Content":     base64.StdEncoding.EncodeToString([]byte(content)),
+				},
+			},
+		},
+	}
+}
+
+func findAttachmentIDByName(attachments []any, name string) string {
+	for _, value := range attachments {
+		attachment, _ := value.(map[string]any)
+		if attachment == nil || attachment["name"] != name {
+			continue
+		}
+		id, _ := attachment["id"].(string)
+		return id
+	}
+	return ""
 }
 
 func cleanupDraftFixture(t *testing.T, ctx context.Context, session *mcp.ClientSession, draftID string) {

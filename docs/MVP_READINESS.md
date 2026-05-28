@@ -52,8 +52,8 @@ production-ready, but they are intentionally outside the public core repository:
   device installer, or internally signed binary publication flow.
 - Private config examples, default profiles, certificate setup, and internal
   adapter packaging.
-- Live mailbox validation against controlled enterprise fixtures for attachment
-  listing/fetching and any organization-specific destructive/send-like action.
+- Live mailbox validation against controlled enterprise fixtures for any
+  organization-specific destructive/send-like action.
 
 Use `docs/ENTERPRISE_ENABLEMENT.md` as the public-safe checklist for turning
 these gates into an enterprise rollout plan.

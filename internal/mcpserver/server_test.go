@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/johnkil/outlook-agent/internal/mcpserver"
@@ -154,6 +155,52 @@ func TestMCPToolCalendarAvailabilityForwardsEmail(t *testing.T) {
 	}
 }
 
+func TestMCPHighLevelToolsReturnErrorResultOnTransportFailure(t *testing.T) {
+	ctx := context.Background()
+	serverTransport, clientTransport := mcp.NewInMemoryTransports()
+
+	serverSession, err := mcpserver.NewWithTransport(&failingTransport{}).Connect(ctx, serverTransport, nil)
+	if err != nil {
+		t.Fatalf("connect server: %v", err)
+	}
+	defer serverSession.Close()
+	defer serverSession.Wait()
+
+	client := mcp.NewClient(&mcp.Implementation{Name: "test-client", Version: "0.0.1"}, nil)
+	clientSession, err := client.Connect(ctx, clientTransport, nil)
+	if err != nil {
+		t.Fatalf("connect client: %v", err)
+	}
+	defer clientSession.Close()
+
+	for _, call := range []struct {
+		name      string
+		arguments map[string]any
+	}{
+		{name: "outlook.mail_search", arguments: map[string]any{"query": "x"}},
+		{name: "outlook.mail_fetch_metadata", arguments: map[string]any{"id": "msg-1"}},
+		{name: "outlook.mail_fetch_body", arguments: map[string]any{"id": "msg-1"}},
+		{name: "outlook.mail_list_attachments", arguments: map[string]any{"id": "msg-1"}},
+		{name: "outlook.mail_fetch_attachment", arguments: map[string]any{"message_id": "msg-1", "attachment_id": "att-1"}},
+		{name: "outlook.mail_create_draft", arguments: map[string]any{"subject": "Draft", "body": "Hello"}},
+		{name: "outlook.calendar_list", arguments: map[string]any{"start": "2026-05-27T00:00:00+02:00", "end": "2026-05-28T00:00:00+02:00"}},
+		{name: "outlook.calendar_availability", arguments: map[string]any{"start": "2026-05-27T09:00:00+02:00", "end": "2026-05-27T18:00:00+02:00"}},
+	} {
+		t.Run(call.name, func(t *testing.T) {
+			result, err := clientSession.CallTool(ctx, &mcp.CallToolParams{Name: call.name, Arguments: call.arguments})
+			if err != nil {
+				t.Fatalf("call %s: %v", call.name, err)
+			}
+			if !result.IsError {
+				t.Fatalf("expected %s to return tool error result, got %#v", call.name, result)
+			}
+			if len(result.Content) == 0 || !strings.Contains(result.Content[0].(*mcp.TextContent).Text, "transport failed") {
+				t.Fatalf("expected transport error content, got %#v", result.Content)
+			}
+		})
+	}
+}
+
 func TestMCPAgentFlowDiscoversPolicyGateAndConfirmsBulkAction(t *testing.T) {
 	ctx := context.Background()
 	serverTransport, clientTransport := mcp.NewInMemoryTransports()
@@ -295,5 +342,27 @@ func (capturing *capturingTransport) Execute(_ context.Context, request transpor
 }
 
 func (capturing *capturingTransport) DryRun(context.Context, transport.ActionRequest) transport.DryRunSummary {
+	return transport.DryRunSummary{}
+}
+
+type failingTransport struct{}
+
+func (failing *failingTransport) Name() string {
+	return "failing"
+}
+
+func (failing *failingTransport) Authenticate(context.Context, string) transport.AuthResult {
+	return transport.AuthResult{OK: true}
+}
+
+func (failing *failingTransport) Capabilities(context.Context) transport.CapabilitySet {
+	return transport.CapabilitySet{}
+}
+
+func (failing *failingTransport) Execute(context.Context, transport.ActionRequest) transport.ActionResponse {
+	return transport.ActionResponse{OK: false, Data: map[string]any{}, Error: "transport failed"}
+}
+
+func (failing *failingTransport) DryRun(context.Context, transport.ActionRequest) transport.DryRunSummary {
 	return transport.DryRunSummary{}
 }

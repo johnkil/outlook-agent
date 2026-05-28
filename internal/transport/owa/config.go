@@ -50,6 +50,17 @@ func (config Config) ServiceURL(action string) (string, error) {
 	return base + "/owa/service.svc?" + values.Encode(), nil
 }
 
+func (config Config) FileAttachmentURL(id string, canary string) (string, error) {
+	base, err := config.normalizedBaseURL()
+	if err != nil {
+		return "", err
+	}
+	values := url.Values{}
+	values.Set("id", id)
+	values.Set("X-OWA-CANARY", canary)
+	return base + "/owa/service.svc/s/GetFileAttachment?" + values.Encode(), nil
+}
+
 func (config Config) DestinationURL() (string, error) {
 	base, err := config.normalizedBaseURL()
 	if err != nil {

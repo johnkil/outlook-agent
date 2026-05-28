@@ -2,6 +2,11 @@ package owa
 
 import (
 	"context"
+	"encoding/base64"
+	"fmt"
+	"io"
+	"mime"
+	"net/http"
 	"strings"
 
 	"github.com/johnkil/outlook-agent/internal/transport"
@@ -73,11 +78,11 @@ func (client *Transport) executeHighLevel(ctx context.Context, request transport
 		if messageID == "" || attachmentID == "" {
 			return transport.ActionResponse{OK: false, Error: "mail.fetch_attachment requires message_id and attachment_id"}, true
 		}
-		response := client.executeService(ctx, "GetAttachment", client.buildGetAttachmentRequest(attachmentID), false)
-		if !response.OK {
-			return response, true
+		attachment, err := client.downloadFileAttachment(ctx, attachmentID)
+		if err != nil {
+			return transport.ActionResponse{OK: false, Error: err.Error()}, true
 		}
-		return transport.ActionResponse{OK: true, Data: map[string]any{"attachment": firstAny(normalizeAttachments(extractAttachments(response.Data)))}}, true
+		return transport.ActionResponse{OK: true, Data: map[string]any{"attachment": attachment}}, true
 	case "mail.create_draft":
 		response := client.executeService(ctx, "CreateItem", client.buildCreateDraftRequest(request.Payload), false)
 		if !response.OK {
@@ -98,6 +103,62 @@ func (client *Transport) executeHighLevel(ctx context.Context, request transport
 	default:
 		return transport.ActionResponse{}, false
 	}
+}
+
+func (client *Transport) downloadFileAttachment(ctx context.Context, attachmentID string) (map[string]any, error) {
+	session, err := client.login(ctx)
+	if err != nil {
+		return nil, err
+	}
+	downloadURL, err := client.config.FileAttachmentURL(attachmentID, session.Canary)
+	if err != nil {
+		return nil, err
+	}
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, downloadURL, nil)
+	if err != nil {
+		return nil, err
+	}
+	request.Header.Set("X-OWA-CANARY", session.Canary)
+	request.Header.Set("X-Requested-With", "XMLHttpRequest")
+	request.Header.Set("User-Agent", "Mozilla/5.0")
+
+	response, err := session.Client.Do(request)
+	if err != nil {
+		return nil, err
+	}
+	defer response.Body.Close()
+
+	if response.StatusCode < 200 || response.StatusCode >= 300 {
+		return nil, fmt.Errorf("owa attachment download returned HTTP %d", response.StatusCode)
+	}
+	body, err := io.ReadAll(response.Body)
+	if err != nil {
+		return nil, err
+	}
+	contentType := response.Header.Get("Content-Type")
+	if mediaType, _, err := mime.ParseMediaType(contentType); err == nil {
+		contentType = mediaType
+	}
+	name := filenameFromContentDisposition(response.Header.Get("Content-Disposition"))
+	if name == "" {
+		name = attachmentID
+	}
+	return map[string]any{
+		"id":             attachmentID,
+		"name":           name,
+		"content_type":   contentType,
+		"size":           len(body),
+		"is_inline":      false,
+		"content_base64": base64.StdEncoding.EncodeToString(body),
+	}, nil
+}
+
+func filenameFromContentDisposition(value string) string {
+	_, params, err := mime.ParseMediaType(value)
+	if err != nil {
+		return ""
+	}
+	return params["filename"]
 }
 
 func (client *Transport) buildFindInboxItemsRequest(maxItems int) any {
@@ -235,24 +296,6 @@ func (client *Transport) buildListAttachmentsRequest(id string) any {
 			)),
 			field("ItemIds", []any{
 				object(field("__type", "ItemId:#Exchange"), field("Id", id)),
-			}),
-		)),
-	)
-}
-
-func (client *Transport) buildGetAttachmentRequest(id string) any {
-	return object(
-		field("__type", "GetAttachmentJsonRequest:#Exchange"),
-		field("Header", client.requestHeaderPayload("Exchange2013")),
-		field("Body", object(
-			field("__type", "GetAttachmentRequest:#Exchange"),
-			field("AttachmentShape", object(
-				field("__type", "AttachmentResponseShape:#Exchange"),
-				field("IncludeMimeContent", false),
-				field("BodyType", "Text"),
-			)),
-			field("AttachmentIds", []any{
-				object(field("__type", "AttachmentId:#Exchange"), field("Id", id)),
 			}),
 		)),
 	)
@@ -426,18 +469,6 @@ func normalizeMailItems(items []any) []any {
 	return output
 }
 
-func normalizeAttachments(items []any) []any {
-	output := make([]any, 0, len(items))
-	for _, item := range items {
-		itemMap, ok := item.(map[string]any)
-		if !ok {
-			continue
-		}
-		output = append(output, normalizeAttachment(itemMap))
-	}
-	return output
-}
-
 func normalizeAttachmentMetadata(items []any) []any {
 	output := make([]any, 0, len(items))
 	for _, item := range items {
@@ -455,22 +486,6 @@ func normalizeAttachmentMetadata(items []any) []any {
 		})
 	}
 	return output
-}
-
-func normalizeAttachment(item map[string]any) map[string]any {
-	id := attachmentID(item)
-	contentBase64 := stringValue(item, "Content")
-	if contentBase64 == "" {
-		contentBase64 = stringValue(item, "ContentBytes")
-	}
-	return map[string]any{
-		"id":             id["id"],
-		"name":           stringValue(item, "Name"),
-		"content_type":   stringValue(item, "ContentType"),
-		"size":           intValue(item, "Size", 0),
-		"is_inline":      boolValue(item, "IsInline"),
-		"content_base64": contentBase64,
-	}
 }
 
 func normalizeCalendarItems(items []any) []any {
@@ -612,6 +627,8 @@ func anySlice(value any) []any {
 			output[index] = value
 		}
 		return output
+	case map[string]any:
+		return []any{typed}
 	default:
 		return nil
 	}

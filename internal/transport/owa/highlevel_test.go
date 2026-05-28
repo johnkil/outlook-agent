@@ -527,28 +527,70 @@ func TestHighLevelMailListAttachmentsCallsGetItemForExplicitMessage(t *testing.T
 	}
 }
 
-func TestHighLevelMailFetchAttachmentCallsGetAttachmentForExplicitTarget(t *testing.T) {
+func TestHighLevelMailListAttachmentsNormalizesSingularAttachmentResponse(t *testing.T) {
 	var calls []recordedServiceCall
 	server := newOWAServiceServer(t, &calls, map[string]any{
 		"Body": map[string]any{
 			"ResponseMessages": map[string]any{
 				"Items": []any{
 					map[string]any{
-						"Attachments": []any{
-							map[string]any{
-								"AttachmentId": map[string]any{"Id": "att-1"},
-								"Name":         "notes.txt",
-								"ContentType":  "text/plain",
-								"Size":         12,
-								"IsInline":     false,
-								"Content":      "SGVsbG8=",
-							},
+						"Attachments": map[string]any{
+							"AttachmentId": map[string]any{"Id": "att-1"},
+							"Name":         "notes.txt",
+							"ContentType":  "text/plain",
+							"Size":         12,
+							"IsInline":     false,
+							"Content":      "SGVsbG8=",
 						},
 					},
 				},
 			},
 		},
 	})
+	defer server.Close()
+	client := newTestTransport(server)
+
+	response := client.Execute(context.Background(), transport.ActionRequest{
+		Name:    "mail.list_attachments",
+		Payload: map[string]any{"id": "msg-1"},
+	})
+
+	if !response.OK {
+		t.Fatalf("expected mail.list_attachments ok: %#v", response)
+	}
+	if calls[0].Action != "GetItem" {
+		t.Fatalf("expected GetItem, got %q", calls[0].Action)
+	}
+	attachments := response.Data["attachments"].([]any)
+	attachment := attachments[0].(map[string]any)
+	if attachment["id"] != "att-1" || attachment["name"] != "notes.txt" || attachment["size"] != 12 {
+		t.Fatalf("unexpected singular attachment response: %#v", attachment)
+	}
+	if _, ok := attachment["content_base64"]; ok {
+		t.Fatalf("list attachments must not return content: %#v", attachment)
+	}
+}
+
+func TestHighLevelMailFetchAttachmentDownloadsFileAttachmentByID(t *testing.T) {
+	var downloadPath string
+	var downloadID string
+	var downloadCanary string
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		switch request.URL.Path {
+		case "/owa/auth.owa":
+			http.SetCookie(response, &http.Cookie{Name: "X-OWA-CANARY", Value: "canary-secret"})
+			response.WriteHeader(http.StatusOK)
+		case "/owa/service.svc/s/GetFileAttachment":
+			downloadPath = request.URL.Path
+			downloadID = request.URL.Query().Get("id")
+			downloadCanary = request.URL.Query().Get("X-OWA-CANARY")
+			response.Header().Set("Content-Type", "text/plain")
+			response.Header().Set("Content-Disposition", `attachment; filename="notes.txt"`)
+			_, _ = response.Write([]byte("Hello"))
+		default:
+			t.Fatalf("unexpected path: %s", request.URL.Path)
+		}
+	}))
 	defer server.Close()
 	client := newTestTransport(server)
 
@@ -563,24 +605,15 @@ func TestHighLevelMailFetchAttachmentCallsGetAttachmentForExplicitTarget(t *test
 	if !response.OK {
 		t.Fatalf("expected mail.fetch_attachment ok: %#v", response)
 	}
-	if calls[0].Action != "GetAttachment" {
-		t.Fatalf("expected GetAttachment, got %q", calls[0].Action)
-	}
-	body := calls[0].Body["Body"].(map[string]any)
-	attachmentShape := body["AttachmentShape"].(map[string]any)
-	if attachmentShape["BodyType"] != "Text" {
-		t.Fatalf("expected text attachment body shape, got %#v", attachmentShape)
-	}
-	attachmentIDs := body["AttachmentIds"].([]any)
-	if attachmentIDs[0].(map[string]any)["Id"] != "att-1" {
-		t.Fatalf("expected explicit attachment id, got %#v", attachmentIDs)
+	if downloadPath != "/owa/service.svc/s/GetFileAttachment" || downloadID != "att-1" || downloadCanary != "canary-secret" {
+		t.Fatalf("unexpected download request path=%q id=%q canary=%q", downloadPath, downloadID, downloadCanary)
 	}
 	attachment := response.Data["attachment"].(map[string]any)
 	if attachment["id"] != "att-1" || attachment["name"] != "notes.txt" || attachment["content_type"] != "text/plain" {
-		t.Fatalf("unexpected attachment metadata: %#v", attachment)
+		t.Fatalf("unexpected downloaded attachment metadata: %#v", attachment)
 	}
-	if attachment["size"] != 12 || attachment["is_inline"] != false || attachment["content_base64"] != "SGVsbG8=" {
-		t.Fatalf("unexpected attachment content fields: %#v", attachment)
+	if attachment["size"] != 5 || attachment["content_base64"] != "SGVsbG8=" {
+		t.Fatalf("unexpected downloaded attachment content: %#v", attachment)
 	}
 }
 

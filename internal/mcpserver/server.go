@@ -323,6 +323,9 @@ func mailSearchHandler(client transport.Transport) func(context.Context, *mcp.Ca
 			Name:    "mail.search",
 			Payload: map[string]any{"query": input.Query},
 		})
+		if err := transportResponseError(response); err != nil {
+			return nil, MailSearchOutput{}, err
+		}
 		redacted := redact.Value(response.Data).(map[string]any)
 		messages, _ := redacted["messages"].([]any)
 		return nil, MailSearchOutput{Messages: messages}, nil
@@ -332,6 +335,9 @@ func mailSearchHandler(client transport.Transport) func(context.Context, *mcp.Ca
 func mailFetchMetadataHandler(client transport.Transport) func(context.Context, *mcp.CallToolRequest, MessageIDInput) (*mcp.CallToolResult, MailFetchMetadataOutput, error) {
 	return func(ctx context.Context, _ *mcp.CallToolRequest, input MessageIDInput) (*mcp.CallToolResult, MailFetchMetadataOutput, error) {
 		response := client.Execute(ctx, transport.ActionRequest{Name: "mail.fetch_metadata", Payload: map[string]any{"id": input.ID}})
+		if err := transportResponseError(response); err != nil {
+			return nil, MailFetchMetadataOutput{}, err
+		}
 		redacted := redact.Value(response.Data).(map[string]any)
 		return nil, MailFetchMetadataOutput{Message: redacted["message"]}, nil
 	}
@@ -340,6 +346,9 @@ func mailFetchMetadataHandler(client transport.Transport) func(context.Context, 
 func mailFetchBodyHandler(client transport.Transport) func(context.Context, *mcp.CallToolRequest, MessageIDInput) (*mcp.CallToolResult, MailFetchBodyOutput, error) {
 	return func(ctx context.Context, _ *mcp.CallToolRequest, input MessageIDInput) (*mcp.CallToolResult, MailFetchBodyOutput, error) {
 		response := client.Execute(ctx, transport.ActionRequest{Name: "mail.fetch_body", Payload: map[string]any{"id": input.ID}})
+		if err := transportResponseError(response); err != nil {
+			return nil, MailFetchBodyOutput{}, err
+		}
 		body, _ := response.Data["body_text"].(string)
 		return nil, MailFetchBodyOutput{ID: response.Data["id"], BodyText: body}, nil
 	}
@@ -348,6 +357,9 @@ func mailFetchBodyHandler(client transport.Transport) func(context.Context, *mcp
 func mailListAttachmentsHandler(client transport.Transport) func(context.Context, *mcp.CallToolRequest, MessageIDInput) (*mcp.CallToolResult, MailListAttachmentsOutput, error) {
 	return func(ctx context.Context, _ *mcp.CallToolRequest, input MessageIDInput) (*mcp.CallToolResult, MailListAttachmentsOutput, error) {
 		response := client.Execute(ctx, transport.ActionRequest{Name: "mail.list_attachments", Payload: map[string]any{"id": input.ID}})
+		if err := transportResponseError(response); err != nil {
+			return nil, MailListAttachmentsOutput{}, err
+		}
 		attachments, _ := response.Data["attachments"].([]any)
 		return nil, MailListAttachmentsOutput{Attachments: attachments}, nil
 	}
@@ -362,6 +374,9 @@ func mailFetchAttachmentHandler(client transport.Transport) func(context.Context
 				"attachment_id": input.AttachmentID,
 			},
 		})
+		if err := transportResponseError(response); err != nil {
+			return nil, MailFetchAttachmentOutput{}, err
+		}
 		return nil, MailFetchAttachmentOutput{Attachment: response.Data["attachment"]}, nil
 	}
 }
@@ -376,6 +391,9 @@ func mailCreateDraftHandler(client transport.Transport) func(context.Context, *m
 				"to":      input.To,
 			},
 		})
+		if err := transportResponseError(response); err != nil {
+			return nil, MailCreateDraftOutput{}, err
+		}
 		redacted := redact.Value(response.Data).(map[string]any)
 		return nil, MailCreateDraftOutput{Draft: redacted["draft"]}, nil
 	}
@@ -399,6 +417,9 @@ func mailMoveToDeletedItemsHandler(runtime *Runtime) func(context.Context, *mcp.
 func calendarListHandler(client transport.Transport) func(context.Context, *mcp.CallToolRequest, CalendarWindowInput) (*mcp.CallToolResult, CalendarListOutput, error) {
 	return func(ctx context.Context, _ *mcp.CallToolRequest, input CalendarWindowInput) (*mcp.CallToolResult, CalendarListOutput, error) {
 		response := client.Execute(ctx, transport.ActionRequest{Name: "calendar.list", Payload: map[string]any{"start": input.Start, "end": input.End}})
+		if err := transportResponseError(response); err != nil {
+			return nil, CalendarListOutput{}, err
+		}
 		redacted := redact.Value(response.Data).(map[string]any)
 		events, _ := redacted["events"].([]any)
 		return nil, CalendarListOutput{Events: events}, nil
@@ -412,9 +433,23 @@ func calendarAvailabilityHandler(client transport.Transport) func(context.Contex
 			payload["email"] = input.Email
 		}
 		response := client.Execute(ctx, transport.ActionRequest{Name: "calendar.availability", Payload: payload})
+		if err := transportResponseError(response); err != nil {
+			return nil, CalendarAvailabilityOutput{}, err
+		}
 		windows, _ := response.Data["windows"].([]any)
 		return nil, CalendarAvailabilityOutput{Windows: windows}, nil
 	}
+}
+
+func transportResponseError(response transport.ActionResponse) error {
+	if response.OK {
+		return nil
+	}
+	message := strings.TrimSpace(response.Error)
+	if message == "" {
+		message = "transport action failed"
+	}
+	return errors.New(message)
 }
 
 func dryRunHandler(runtime *Runtime) func(context.Context, *mcp.CallToolRequest, DryRunInput) (*mcp.CallToolResult, DryRunOutput, error) {
