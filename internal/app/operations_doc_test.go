@@ -61,3 +61,30 @@ func TestEnterpriseEnablementPlaybookDocumentsExternalGates(t *testing.T) {
 		}
 	}
 }
+
+func TestSecurityPolicyDocumentsReportingAndBoundaries(t *testing.T) {
+	path := filepath.Join("..", "..", "SECURITY.md")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read security policy: %v", err)
+	}
+	text := string(data)
+
+	for _, required := range []string{
+		"# Security Policy",
+		"## Reporting A Vulnerability",
+		"## Accidental Secret Exposure",
+		"docs/SECURITY_MODEL.md",
+		"docs/OPERATIONS.md",
+		"Do not include",
+		"tenant endpoints",
+		"OAuth tokens",
+		"cookies",
+		"canary values",
+		"raw mailbox content",
+	} {
+		if !strings.Contains(text, required) {
+			t.Fatalf("expected security policy to contain %q", required)
+		}
+	}
+}

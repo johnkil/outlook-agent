@@ -145,6 +145,7 @@ admin consent stay outside the public repository.
 - [Action Coverage](docs/ACTION_COVERAGE.md)
 - [OWA Action Registry](docs/OWA_ACTION_REGISTRY.md)
 - [Security Model](docs/SECURITY_MODEL.md)
+- [Security Policy](SECURITY.md)
 - [Roadmap](docs/ROADMAP.md)
 - [OpenCode Integration](docs/OPENCODE.md)
 - [Production Readiness Audit](docs/PRODUCTION_READINESS.md)
