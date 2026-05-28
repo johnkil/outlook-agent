@@ -77,7 +77,7 @@ if [[ -n "${OUTLOOK_AGENT_OPENCODE_LIVE_DIR:-}" ]]; then
       --model "$model" \
       --format json \
       --title outlook-agent-action-coverage-smoke \
-      'Use outlook-agent MCP only. Run a safe action-coverage smoke: call outlook.auth_check, outlook.capabilities, and outlook.action_dry_run for raw DeleteItem with payload {"Body":{"ItemIds":[{"Id":"dry-run-item"}],"DeleteType":"HardDelete"}} first with unsafe_mode false and then with unsafe_mode true. Do not call outlook.action_confirm. Do not execute any delete, move, send, body-read, or attachment-content action. Final answer must contain only sanitized booleans and counts.' \
+      'Use outlook-agent MCP only. Run a safe action-coverage smoke: call outlook.auth_check, outlook.capabilities, and outlook.action_dry_run for action "DeleteItem" with payload {"Body":{"ItemIds":[{"Id":"dry-run-item"}],"DeleteType":"HardDelete"}} first with unsafe_mode false and then with unsafe_mode true. Do not call outlook.action_confirm. Do not execute any delete, move, send, body-read, or attachment-content action. Final answer must contain only sanitized booleans and counts.' \
       > "$opencode_jsonl"
   )
   jq -s -e '
@@ -118,7 +118,7 @@ if [[ -n "${OUTLOOK_AGENT_OPENCODE_LIVE_DIR:-}" ]]; then
         | (part) as $part
         | select($part.tool == "outlook-agent_outlook_action_dry_run")
         | select($part.state.status == "completed")
-        | select($part.state.input.action == "raw.DeleteItem")
+        | select($part.state.input.action == "DeleteItem")
         | select($part.state.input.payload.Body.DeleteType == "HardDelete")
         | select($part.state.input.payload.Body.ItemIds[0].Id == "dry-run-item")
         | select($part.state.input.unsafe_mode == $unsafe)

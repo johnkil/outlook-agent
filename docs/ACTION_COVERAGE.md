@@ -79,7 +79,7 @@ level 5: workflow skill guidance
   dry-run-guard behavior without confirmation execution, and rejects extra
   Outlook MCP tool calls outside the smoke's explicit allowlist. The Opencode
   smoke also asserts both `unsafe_mode=false` and `unsafe_mode=true` dry-runs
-  target the same destructive `raw.DeleteItem` / `HardDelete` fixture.
+  target the same destructive `DeleteItem` / `HardDelete` fixture.
 - MCP callers should inspect `outlook.capabilities.details` before choosing
   `outlook.raw_action`; the details array exposes each action's transport,
   safety class, coverage level, and direct policy gates from the runtime
