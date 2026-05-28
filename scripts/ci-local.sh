@@ -14,7 +14,7 @@ trap cleanup EXIT
 
 gofmt_input="$(
   find . \
-    \( -path "./.git" -o -path "./.cache" -o -path "./dist" \) -prune -o \
+    \( -path "./.git" -o -path "./.cache" -o -path "./.worktrees" -o -path "./dist" \) -prune -o \
     -type f -name "*.go" -print | sort
 )"
 if [[ -n "$gofmt_input" ]]; then

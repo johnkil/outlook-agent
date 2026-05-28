@@ -60,6 +60,26 @@ level 5: workflow skill guidance
 - Live MCP dry-run smoke verifies representative reversible, destructive,
   send-like, and settings/rules OWA raw actions after authentication without
   calling confirmation or executing any action.
+- `outlook-agent policy coverage` emits the complete built-in action matrix
+  with one `live_check_level` per action. This is the source of truth for
+  deciding how far automation may go:
+  - `live_readonly`: safe to execute against live metadata endpoints.
+  - `manual_explicit_target`: requires a specific user-approved item,
+    attachment, or message before live execution.
+  - `live_safe_execute`: safe only for non-sending reversible fixtures such as
+    saved drafts.
+  - `live_dry_run`: verify summary and confirmation-token behavior, then stop
+    unless a disposable fixture and explicit confirmation are present.
+  - `live_guard_only`: verify policy blocking or dry-run gating only; do not
+    execute the action in automated live smoke.
+- `scripts/action-coverage-smoke.sh` verifies the matrix shape and safety-route
+  invariants for every registered action. With `OUTLOOK_AGENT_LIVE_CONFIG`, it
+  also verifies live auth. With `OUTLOOK_AGENT_OPENCODE_LIVE_DIR`, it runs a
+  sanitized Opencode MCP smoke for auth, capabilities, and destructive
+  dry-run-guard behavior without confirmation execution, and rejects extra
+  Outlook MCP tool calls outside the smoke's explicit allowlist. The Opencode
+  smoke also asserts both `unsafe_mode=false` and `unsafe_mode=true` dry-runs
+  target the same destructive `DeleteItem` / `HardDelete` fixture.
 - MCP callers should inspect `outlook.capabilities.details` before choosing
   `outlook.raw_action`; the details array exposes each action's transport,
   safety class, coverage level, and direct policy gates from the runtime

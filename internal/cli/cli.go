@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"runtime"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -104,6 +105,9 @@ func RunWithRuntime(args []string, stdout io.Writer, stderr io.Writer, runtime R
 				"command":        "policy explain",
 				"safety_classes": policy.SafetyClassNames(),
 			})
+		}
+		if len(commandArgs) == 2 && commandArgs[1] == "coverage" {
+			return runPolicyCoverage(stdout)
 		}
 		if len(commandArgs) == 4 && commandArgs[1] == "explain" && commandArgs[2] == "--action" {
 			return runPolicyExplainAction(stdout, commandArgs[3])
@@ -227,6 +231,35 @@ type policyExplainActionOutput struct {
 	Unknown *capability.Detail  `json:"unknown,omitempty"`
 }
 
+type policyCoverageOutput struct {
+	OK      bool                  `json:"ok"`
+	Command string                `json:"command"`
+	Actions []policyCoverageRow   `json:"actions"`
+	Summary policyCoverageSummary `json:"summary"`
+}
+
+type policyCoverageRow struct {
+	Action                 string `json:"action"`
+	Transport              string `json:"transport"`
+	SafetyClass            string `json:"safety_class"`
+	Level                  int    `json:"level"`
+	AllowedDirect          bool   `json:"allowed_direct"`
+	RequiresDryRun         bool   `json:"requires_dry_run"`
+	RequiresConfirmation   bool   `json:"requires_confirmation"`
+	RequiresUnsafe         bool   `json:"requires_unsafe,omitempty"`
+	RequiresExplicitTarget bool   `json:"requires_explicit_target,omitempty"`
+	RequiresExplicitIntent bool   `json:"requires_explicit_intent,omitempty"`
+	ExecutionRoute         string `json:"execution_route"`
+	LiveCheckLevel         string `json:"live_check_level"`
+}
+
+type policyCoverageSummary struct {
+	Total            int            `json:"total"`
+	ByTransport      map[string]int `json:"by_transport"`
+	BySafetyClass    map[string]int `json:"by_safety_class"`
+	ByLiveCheckLevel map[string]int `json:"by_live_check_level"`
+}
+
 func runPolicyExplainAction(stdout io.Writer, actionName string) int {
 	matches := make([]capability.Detail, 0)
 	for _, definition := range builtinActionDefinitions() {
@@ -250,6 +283,67 @@ func runPolicyExplainAction(stdout io.Writer, actionName string) int {
 		output.Unknown = &unknown
 	}
 	return writeJSON(stdout, output)
+}
+
+func runPolicyCoverage(stdout io.Writer) int {
+	definitions := builtinActionDefinitions()
+	sort.Slice(definitions, func(left int, right int) bool {
+		if definitions[left].Transport == definitions[right].Transport {
+			return strings.ToLower(definitions[left].Name) < strings.ToLower(definitions[right].Name)
+		}
+		return definitions[left].Transport < definitions[right].Transport
+	})
+	rows := make([]policyCoverageRow, 0, len(definitions))
+	summary := policyCoverageSummary{
+		ByTransport:      map[string]int{},
+		BySafetyClass:    map[string]int{},
+		ByLiveCheckLevel: map[string]int{},
+	}
+	for _, definition := range definitions {
+		detail := capability.FromDefinition(definition)
+		liveCheckLevel := liveCheckLevelFor(definition.Class)
+		rows = append(rows, policyCoverageRow{
+			Action:                 definition.Name,
+			Transport:              definition.Transport,
+			SafetyClass:            detail.SafetyClass,
+			Level:                  detail.Level,
+			AllowedDirect:          detail.AllowedDirect,
+			RequiresDryRun:         detail.RequiresDryRun,
+			RequiresConfirmation:   detail.RequiresConfirmation,
+			RequiresUnsafe:         detail.RequiresUnsafe,
+			RequiresExplicitTarget: detail.RequiresExplicitTarget,
+			RequiresExplicitIntent: detail.RequiresExplicitIntent,
+			ExecutionRoute:         detail.ExecutionRoute,
+			LiveCheckLevel:         liveCheckLevel,
+		})
+		summary.Total++
+		summary.ByTransport[definition.Transport]++
+		summary.BySafetyClass[string(definition.Class)]++
+		summary.ByLiveCheckLevel[liveCheckLevel]++
+	}
+	return writeJSON(stdout, policyCoverageOutput{
+		OK:      true,
+		Command: "policy coverage",
+		Actions: rows,
+		Summary: summary,
+	})
+}
+
+func liveCheckLevelFor(class policy.SafetyClass) string {
+	switch class {
+	case policy.ReadMetadata:
+		return "live_readonly"
+	case policy.ReadBodyExplicit, policy.ReadAttachmentExplicit:
+		return "manual_explicit_target"
+	case policy.DraftOnly:
+		return "live_safe_execute"
+	case policy.ReversibleSingleItem, policy.ReversibleBulk:
+		return "live_dry_run"
+	case policy.Destructive, policy.SendLike, policy.SettingsOrRules, policy.Unknown:
+		return "live_guard_only"
+	default:
+		return "live_guard_only"
+	}
 }
 
 func builtinActionDefinitions() []action.Definition {

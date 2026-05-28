@@ -17,6 +17,7 @@ outlook-agent doctor [--json]
 outlook-agent --config <path> auth check [--profile <name>]
 outlook-agent --config <path> auth graph-device-code [--profile <name>]
 outlook-agent policy explain [--action <name>]
+outlook-agent policy coverage
 outlook-agent setup opencode --print [--binary <path>] [--config <path>]
 outlook-agent owa discover-actions --file <path>
 outlook-agent --config <path> owa discover-actions --url <path-or-url> [--include-linked-scripts] [--follow-navigation-hints] [--diagnostics] [--max-sources <positive-int>]
@@ -71,6 +72,13 @@ capability details: safety class, coverage level, direct/gated booleans,
 explicit target or intent requirements, unsafe requirement, and
 `execution_route`. If the action is not known in the built-in catalogs, the
 response includes an `unknown` detail with route `unsafe_direct`.
+
+`policy coverage` returns the complete built-in action coverage matrix across
+configured transport catalogs. Each row includes action name, transport, safety
+class, coverage level, policy gates, execution route, and a `live_check_level`
+that tells smoke runners how far they may verify the action safely:
+`live_readonly`, `manual_explicit_target`, `live_safe_execute`, `live_dry_run`,
+or `live_guard_only`.
 
 ## MCP Tools
 

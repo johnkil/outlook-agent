@@ -459,6 +459,73 @@ func TestPolicyExplainActionReportsUnknownActionRoute(t *testing.T) {
 	}
 }
 
+func TestPolicyCoverageReportsActionMatrix(t *testing.T) {
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+
+	code := Run([]string{"policy", "coverage"}, &stdout, &stderr)
+
+	if code != 0 {
+		t.Fatalf("expected exit code 0, got %d, stderr=%s", code, stderr.String())
+	}
+	var payload struct {
+		Command string                  `json:"command"`
+		Actions []coverageActionFixture `json:"actions"`
+		Summary struct {
+			Total int `json:"total"`
+		} `json:"summary"`
+	}
+	if err := json.Unmarshal(stdout.Bytes(), &payload); err != nil {
+		t.Fatalf("policy coverage output is not JSON: %v; output=%s", err, stdout.String())
+	}
+
+	if payload.Command != "policy coverage" {
+		t.Fatalf("expected command policy coverage, got %q", payload.Command)
+	}
+	if payload.Summary.Total != len(payload.Actions) || payload.Summary.Total == 0 {
+		t.Fatalf("unexpected action summary: total=%d actions=%d", payload.Summary.Total, len(payload.Actions))
+	}
+
+	deleteItem := findCoverageAction(payload.Actions, "owa", "DeleteItem")
+	if deleteItem == nil {
+		t.Fatalf("expected OWA DeleteItem coverage row in %#v", payload.Actions)
+	}
+	if deleteItem.SafetyClass != "destructive" || deleteItem.ExecutionRoute != "unsafe_dry_run_confirm" || deleteItem.LiveCheckLevel != "live_guard_only" {
+		t.Fatalf("unexpected DeleteItem coverage row: %#v", deleteItem)
+	}
+	if !deleteItem.RequiresUnsafe || !deleteItem.RequiresDryRun {
+		t.Fatalf("expected DeleteItem to require unsafe dry-run, got %#v", deleteItem)
+	}
+
+	mailSearch := findCoverageAction(payload.Actions, "owa", "mail.search")
+	if mailSearch == nil {
+		t.Fatalf("expected OWA mail.search coverage row in %#v", payload.Actions)
+	}
+	if !mailSearch.AllowedDirect || mailSearch.LiveCheckLevel != "live_readonly" {
+		t.Fatalf("unexpected mail.search coverage row: %#v", mailSearch)
+	}
+}
+
+type coverageActionFixture struct {
+	Action         string `json:"action"`
+	Transport      string `json:"transport"`
+	SafetyClass    string `json:"safety_class"`
+	ExecutionRoute string `json:"execution_route"`
+	LiveCheckLevel string `json:"live_check_level"`
+	RequiresUnsafe bool   `json:"requires_unsafe"`
+	RequiresDryRun bool   `json:"requires_dry_run"`
+	AllowedDirect  bool   `json:"allowed_direct"`
+}
+
+func findCoverageAction(actions []coverageActionFixture, transportName string, actionName string) *coverageActionFixture {
+	for index := range actions {
+		if actions[index].Transport == transportName && actions[index].Action == actionName {
+			return &actions[index]
+		}
+	}
+	return nil
+}
+
 func TestOWADiscoverActionsFromFileReportsRegistryDelta(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "owa.js")
 	if err := os.WriteFile(path, []byte(`
