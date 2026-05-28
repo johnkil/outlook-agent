@@ -143,7 +143,7 @@ bash scripts/public-safety-check.sh
 
 Also run the parent workspace private-marker grep and temporary artifact check.
 
-- [ ] **Step 3: Comment on issue and commit**
+- [x] **Step 3: Comment on issue and commit**
 
 Comment on issue `#5` that refresh-capable token-cache handling is implemented
 and tested, while app registration/admin consent/live token evidence remains
