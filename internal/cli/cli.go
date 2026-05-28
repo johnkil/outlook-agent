@@ -75,7 +75,12 @@ func RunWithRuntime(args []string, stdout io.Writer, stderr io.Writer, runtime R
 		return writeHelp(stdout)
 	}
 	if setupArgs, ok := setupOpencodeArgsFromRaw(args); ok {
-		return runSetupOpencode(setupArgs, stdout, stderr)
+		options, _, err := parseOptionsBeforeCommand(args)
+		if err != nil {
+			fmt.Fprintln(stderr, err)
+			return 1
+		}
+		return runSetupOpencode(setupArgs, options, stdout, stderr)
 	}
 
 	options, commandArgs, err := parseOptions(args)
@@ -648,11 +653,14 @@ type setupOpencodeArgs struct {
 	ConfigPath string
 }
 
-func runSetupOpencode(args []string, stdout io.Writer, stderr io.Writer) int {
+func runSetupOpencode(args []string, options Options, stdout io.Writer, stderr io.Writer) int {
 	settings, err := parseSetupOpencodeArgs(args)
 	if err != nil {
 		fmt.Fprintln(stderr, err)
 		return 1
+	}
+	if settings.ConfigPath == "" {
+		settings.ConfigPath = options.ConfigPath
 	}
 	command := []string{settings.Binary}
 	if settings.ConfigPath != "" {
@@ -698,6 +706,30 @@ func parseSetupOpencodeArgs(args []string) (setupOpencodeArgs, error) {
 		return setupOpencodeArgs{}, fmt.Errorf("setup opencode requires --print")
 	}
 	return settings, nil
+}
+
+func parseOptionsBeforeCommand(args []string) (Options, []string, error) {
+	var options Options
+	commandIndex := firstCommandIndex(args)
+	for index := 0; index < commandIndex; index++ {
+		switch args[index] {
+		case "--config":
+			index++
+			if index >= commandIndex {
+				return Options{}, nil, fmt.Errorf("--config requires a value")
+			}
+			options.ConfigPath = args[index]
+		case "--profile":
+			index++
+			if index >= commandIndex {
+				return Options{}, nil, fmt.Errorf("--profile requires a value")
+			}
+			options.Profile = args[index]
+		default:
+			return Options{}, nil, fmt.Errorf("unknown command: %s", args[index])
+		}
+	}
+	return options, args[commandIndex:], nil
 }
 
 func writeJSON(stdout io.Writer, payload any) int {

@@ -312,6 +312,29 @@ func TestSetupOpencodeKeepsLocalConfigAfterGlobalConfig(t *testing.T) {
 	}
 }
 
+func TestSetupOpencodeUsesLeadingGlobalConfigWhenNoLocalConfig(t *testing.T) {
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+
+	code := Run([]string{"--config", ".local/outlook-agent.json", "setup", "opencode", "--print"}, &stdout, &stderr)
+
+	if code != 0 {
+		t.Fatalf("expected exit code 0, got %d, stderr=%s", code, stderr.String())
+	}
+	var payload struct {
+		MCP map[string]struct {
+			Command []string `json:"command"`
+		} `json:"mcp"`
+	}
+	if err := json.Unmarshal(stdout.Bytes(), &payload); err != nil {
+		t.Fatalf("setup output is not JSON: %v; output=%s", err, stdout.String())
+	}
+	expectedCommand := []string{"outlook-agent", "--config", ".local/outlook-agent.json", "mcp"}
+	if !stringSlicesEqual(payload.MCP["outlook-agent"].Command, expectedCommand) {
+		t.Fatalf("expected leading global config command %#v, got %#v", expectedCommand, payload.MCP["outlook-agent"].Command)
+	}
+}
+
 func TestSetupOpencodeDoesNotMatchGlobalConfigValue(t *testing.T) {
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer
