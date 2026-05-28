@@ -10,6 +10,7 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/johnkil/outlook-agent/internal/action"
 	"github.com/johnkil/outlook-agent/internal/policy"
@@ -269,6 +270,23 @@ type graphErrorResponse struct {
 	} `json:"error"`
 }
 
+type tokenCredential struct {
+	TokenType    string `json:"token_type,omitempty"`
+	AccessToken  string `json:"access_token"`
+	RefreshToken string `json:"refresh_token,omitempty"`
+	ExpiresAt    string `json:"expires_at,omitempty"`
+	Scope        string `json:"scope,omitempty"`
+}
+
+type tokenRefreshResponse struct {
+	TokenType    string `json:"token_type"`
+	AccessToken  string `json:"access_token"`
+	RefreshToken string `json:"refresh_token"`
+	ExpiresIn    int    `json:"expires_in"`
+	Scope        string `json:"scope"`
+	ErrorCode    string `json:"error"`
+}
+
 const messageMetadataSelect = "id,subject,from,receivedDateTime,importance,isRead,hasAttachments"
 const messageBodySelect = "id,body"
 const eventMetadataSelect = "id,subject,start,end,location"
@@ -517,10 +535,7 @@ func (client *Transport) doJSONWithHeaders(ctx context.Context, method string, r
 	if err := client.config.Validate(); err != nil {
 		return err
 	}
-	if client.secrets == nil {
-		return fmt.Errorf("secret store is not configured")
-	}
-	token, err := client.secrets.Get(ctx, client.config.SecretRef)
+	token, err := client.bearerToken(ctx)
 	if err != nil {
 		return err
 	}
@@ -538,7 +553,7 @@ func (client *Transport) doJSONWithHeaders(ctx context.Context, method string, r
 	if err != nil {
 		return err
 	}
-	request.Header.Set("Authorization", "Bearer "+string(token))
+	request.Header.Set("Authorization", "Bearer "+token)
 	request.Header.Set("Accept", "application/json")
 	request.Header.Set("User-Agent", "outlook-agent")
 	if body != nil {
@@ -572,10 +587,7 @@ func (client *Transport) doRawJSONWithHeaders(ctx context.Context, method string
 	if err := client.config.Validate(); err != nil {
 		return err
 	}
-	if client.secrets == nil {
-		return fmt.Errorf("secret store is not configured")
-	}
-	token, err := client.secrets.Get(ctx, client.config.SecretRef)
+	token, err := client.bearerToken(ctx)
 	if err != nil {
 		return err
 	}
@@ -593,7 +605,7 @@ func (client *Transport) doRawJSONWithHeaders(ctx context.Context, method string
 	if err != nil {
 		return err
 	}
-	request.Header.Set("Authorization", "Bearer "+string(token))
+	request.Header.Set("Authorization", "Bearer "+token)
 	request.Header.Set("Accept", "application/json")
 	request.Header.Set("User-Agent", "outlook-agent")
 	if body != nil {
@@ -632,6 +644,125 @@ func (client *Transport) doRawJSONWithHeaders(ctx context.Context, method string
 	}
 	*output = data
 	return nil
+}
+
+func (client *Transport) bearerToken(ctx context.Context) (string, error) {
+	if client.secrets == nil {
+		return "", fmt.Errorf("secret store is not configured")
+	}
+	value, err := client.secrets.Get(ctx, client.config.SecretRef)
+	if err != nil {
+		return "", err
+	}
+	raw := strings.TrimSpace(string(value))
+	if raw == "" {
+		return "", fmt.Errorf("graph access token is empty")
+	}
+	if !strings.HasPrefix(raw, "{") {
+		return raw, nil
+	}
+	var credential tokenCredential
+	if err := json.Unmarshal([]byte(raw), &credential); err != nil {
+		return "", fmt.Errorf("graph token credential: %w", err)
+	}
+	if strings.TrimSpace(credential.AccessToken) == "" {
+		return "", fmt.Errorf("graph token credential missing access_token")
+	}
+	if !credential.expired(time.Now().UTC()) {
+		return credential.AccessToken, nil
+	}
+	refreshed, err := client.refreshTokenCredential(ctx, credential)
+	if err != nil {
+		return "", err
+	}
+	if writable, ok := client.secrets.(secret.WritableStore); ok {
+		encoded, err := json.Marshal(refreshed)
+		if err != nil {
+			return "", err
+		}
+		if err := writable.Put(ctx, client.config.SecretRef, secret.Value(encoded)); err != nil {
+			return "", err
+		}
+	}
+	return refreshed.AccessToken, nil
+}
+
+func (credential tokenCredential) expired(now time.Time) bool {
+	if strings.TrimSpace(credential.ExpiresAt) == "" {
+		return false
+	}
+	expiresAt, err := time.Parse(time.RFC3339, credential.ExpiresAt)
+	if err != nil {
+		return true
+	}
+	return !expiresAt.After(now.Add(5 * time.Minute))
+}
+
+func (client *Transport) refreshTokenCredential(ctx context.Context, credential tokenCredential) (tokenCredential, error) {
+	if strings.TrimSpace(credential.RefreshToken) == "" {
+		return tokenCredential{}, fmt.Errorf("graph token credential expired and missing refresh_token")
+	}
+	if strings.TrimSpace(client.config.OAuth.ClientID) == "" {
+		return tokenCredential{}, fmt.Errorf("graph oauth refresh requires client_id")
+	}
+	tokenURL, err := client.config.OAuth.tokenURL()
+	if err != nil {
+		return tokenCredential{}, err
+	}
+	form := url.Values{}
+	form.Set("grant_type", "refresh_token")
+	form.Set("client_id", client.config.OAuth.ClientID)
+	form.Set("refresh_token", credential.RefreshToken)
+	if scope := strings.Join(client.config.OAuth.Scopes, " "); scope != "" {
+		form.Set("scope", scope)
+	}
+	request, err := http.NewRequestWithContext(ctx, http.MethodPost, tokenURL, strings.NewReader(form.Encode()))
+	if err != nil {
+		return tokenCredential{}, err
+	}
+	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	request.Header.Set("Accept", "application/json")
+	request.Header.Set("User-Agent", "outlook-agent")
+
+	response, err := client.client.Do(request)
+	if err != nil {
+		return tokenCredential{}, err
+	}
+	defer response.Body.Close()
+
+	var refreshed tokenRefreshResponse
+	if err := json.NewDecoder(response.Body).Decode(&refreshed); err != nil {
+		return tokenCredential{}, err
+	}
+	if response.StatusCode < 200 || response.StatusCode >= 300 {
+		if refreshed.ErrorCode != "" {
+			return tokenCredential{}, fmt.Errorf("graph oauth refresh returned HTTP %d: %s", response.StatusCode, refreshed.ErrorCode)
+		}
+		return tokenCredential{}, fmt.Errorf("graph oauth refresh returned HTTP %d", response.StatusCode)
+	}
+	if strings.TrimSpace(refreshed.AccessToken) == "" {
+		return tokenCredential{}, fmt.Errorf("graph oauth refresh response missing access_token")
+	}
+	if refreshed.TokenType == "" {
+		refreshed.TokenType = "Bearer"
+	}
+	if refreshed.RefreshToken == "" {
+		refreshed.RefreshToken = credential.RefreshToken
+	}
+	if refreshed.Scope == "" {
+		refreshed.Scope = credential.Scope
+	}
+	expiresIn := refreshed.ExpiresIn
+	if expiresIn <= 0 {
+		expiresIn = 3600
+	}
+	return tokenCredential{
+		TokenType:    refreshed.TokenType,
+		AccessToken:  refreshed.AccessToken,
+		RefreshToken: refreshed.RefreshToken,
+		ExpiresAt:    time.Now().UTC().Add(time.Duration(expiresIn) * time.Second).Format(time.RFC3339),
+		Scope:        refreshed.Scope,
+	}, nil
 }
 
 func (client *Transport) mailFolderURL(folderID string) (string, error) {

@@ -83,8 +83,9 @@ mailbox data. Some Exchange deployments require NTLM, Negotiate, OAuth, or
 policy allow-list configuration; the built-in probe records failure categories
 without printing secrets.
 
-For a Microsoft Graph profile, store a delegated or application access token in
-the secret store and reference it from config:
+For a Microsoft Graph profile, store a delegated or application access token,
+or a refresh-capable JSON token credential, in the secret store and reference it
+from config:
 
 ```json
 {
@@ -94,12 +95,40 @@ the secret store and reference it from config:
       "transport": "graph",
       "secret_ref": "keychain:graph.microsoft.com/access-token",
       "settings": {
-        "base_url": "https://graph.microsoft.com/v1.0"
+        "base_url": "https://graph.microsoft.com/v1.0",
+        "tenant": "organizations",
+        "client_id": "00000000-0000-0000-0000-000000000000",
+        "scopes": ["offline_access", "Mail.Read", "Calendars.Read"]
       }
     }
   }
 }
 ```
+
+`settings.client_id`, `settings.tenant`, and `settings.scopes` are used only
+when the referenced secret contains a JSON token credential whose access token
+has expired. `settings.scopes` may be a JSON array or a space-separated string.
+`settings.token_url` is also supported for advanced operators and tests; normal
+tenant profiles derive the Microsoft identity platform token URL from
+`settings.tenant`.
+
+The JSON token credential shape belongs in the referenced secret store only,
+never in the profile file:
+
+```json
+{
+  "token_type": "Bearer",
+  "access_token": "<access-token>",
+  "refresh_token": "<refresh-token>",
+  "expires_at": "2026-01-02T15:04:05Z",
+  "scope": "offline_access Mail.Read Calendars.Read"
+}
+```
+
+If `expires_at` is expired, the transport refreshes the access token with
+`refresh_token` and writes the updated JSON back when the selected secret-store
+backend supports writes. Inline `access_token` and `refresh_token` values remain
+rejected in config files.
 
 The initial Graph adapter supports `GetMailFolder`, `mail.search`,
 `mail.fetch_metadata`, explicit `mail.fetch_body`, explicit

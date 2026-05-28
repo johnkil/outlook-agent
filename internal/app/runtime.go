@@ -3,6 +3,7 @@ package app
 import (
 	"fmt"
 	"net/http"
+	"strings"
 
 	"github.com/johnkil/outlook-agent/internal/config"
 	"github.com/johnkil/outlook-agent/internal/secret"
@@ -120,6 +121,12 @@ func buildGraphTransport(profile config.Profile, options Options) (transport.Tra
 	config := graph.Config{
 		BaseURL:   stringSetting(profile.Settings, "base_url"),
 		SecretRef: secret.Ref(profile.SecretRef),
+		OAuth: graph.OAuthConfig{
+			Tenant:   stringSetting(profile.Settings, "tenant"),
+			ClientID: stringSetting(profile.Settings, "client_id"),
+			Scopes:   stringSliceSetting(profile.Settings, "scopes"),
+			TokenURL: stringSetting(profile.Settings, "token_url"),
+		},
 	}
 	if err := config.Validate(); err != nil {
 		return nil, err
@@ -133,4 +140,42 @@ func stringSetting(settings map[string]any, key string) string {
 	}
 	value, _ := settings[key].(string)
 	return value
+}
+
+func stringSliceSetting(settings map[string]any, key string) []string {
+	if settings == nil {
+		return nil
+	}
+	switch value := settings[key].(type) {
+	case string:
+		return strings.Fields(value)
+	case []string:
+		return compactStrings(value)
+	case []any:
+		values := make([]string, 0, len(value))
+		for _, item := range value {
+			text, ok := item.(string)
+			if !ok {
+				continue
+			}
+			text = strings.TrimSpace(text)
+			if text != "" {
+				values = append(values, text)
+			}
+		}
+		return values
+	default:
+		return nil
+	}
+}
+
+func compactStrings(values []string) []string {
+	compacted := make([]string, 0, len(values))
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value != "" {
+			compacted = append(compacted, value)
+		}
+	}
+	return compacted
 }

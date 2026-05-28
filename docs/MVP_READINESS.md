@@ -41,8 +41,11 @@ artifacts and local verification commands:
 These items are required before an enterprise deployment can be called
 production-ready, but they are intentionally outside the public core repository:
 
-- Microsoft Graph OAuth application registration, tenant/admin consent, token
-  acquisition, token refresh, and permission governance.
+- Microsoft Graph OAuth application registration, tenant/admin consent, initial
+  token acquisition/storage, live refresh validation, and permission
+  governance. The public runtime can refresh an expired JSON token credential,
+  but an enterprise rollout still owns the approved app, grant, and live smoke
+  evidence.
 - EWS endpoint availability, Exchange auth method enablement, and any
   server-side allow-listing or tenant policy changes.
 - Enterprise secret scanning and repository protection owned by the GitHub

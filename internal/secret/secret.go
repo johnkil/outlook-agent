@@ -19,6 +19,11 @@ type Store interface {
 	Get(ctx context.Context, ref Ref) (Value, error)
 }
 
+type WritableStore interface {
+	Store
+	Put(ctx context.Context, ref Ref, value Value) error
+}
+
 type MemoryStore struct {
 	values map[Ref]Value
 }
@@ -40,6 +45,17 @@ func (store *MemoryStore) Get(_ context.Context, ref Ref) (Value, error) {
 		return "", fmt.Errorf("%w: %s", ErrNotFound, ref)
 	}
 	return value, nil
+}
+
+func (store *MemoryStore) Put(_ context.Context, ref Ref, value Value) error {
+	if err := ValidateRef(ref); err != nil {
+		return err
+	}
+	if store.values == nil {
+		store.values = map[Ref]Value{}
+	}
+	store.values[ref] = value
+	return nil
 }
 
 func ValidateRef(ref Ref) error {

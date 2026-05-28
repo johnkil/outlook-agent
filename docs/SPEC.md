@@ -171,14 +171,18 @@ Configured transports:
   require NTLM, Negotiate, OAuth, or server-side EWS allow-listing need
   additional adapter/auth work.
 - `graph`: initial Microsoft Graph REST transport. Profiles use optional
-  `settings.base_url` and `secret_ref` for a bearer access token. Supported
-  read-metadata actions are `GetMailFolder`, `mail.search`, and
-  `mail.fetch_metadata`, plus explicit `mail.fetch_body`, explicit
-  `mail.list_attachments`, explicit `mail.fetch_attachment`,
-  `mail.create_draft`, `mail.move_to_deleted_items`, `calendar.list`, and
-  `calendar.availability`, plus raw guarded `GraphRequest`; `auth check`
-  probes `/me/mailFolders/inbox`. OAuth token acquisition, admin consent, and
-  token refresh are outside the public runtime in this phase.
+  `settings.base_url` and `secret_ref` for either a raw bearer access token or
+  a refresh-capable JSON token credential stored outside config. Refresh uses
+  `settings.client_id`, optional `settings.tenant`, `settings.scopes` as a JSON
+  array or space-separated string, and optional `settings.token_url` for
+  advanced operators and tests. Supported read-metadata actions are
+  `GetMailFolder`, `mail.search`, and `mail.fetch_metadata`, plus explicit
+  `mail.fetch_body`, explicit `mail.list_attachments`, explicit
+  `mail.fetch_attachment`, `mail.create_draft`,
+  `mail.move_to_deleted_items`, `calendar.list`, and `calendar.availability`,
+  plus raw guarded `GraphRequest`; `auth check` probes
+  `/me/mailFolders/inbox`. Token acquisition and admin consent remain external
+  to the public runtime in this phase.
 
 ## Redaction
 

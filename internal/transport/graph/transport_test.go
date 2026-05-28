@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/johnkil/outlook-agent/internal/action"
 	"github.com/johnkil/outlook-agent/internal/policy"
@@ -743,6 +744,90 @@ func TestTransportReportsHTTPErrorWithoutToken(t *testing.T) {
 	}
 	if !strings.Contains(auth.Error, "InvalidAuthenticationToken") {
 		t.Fatalf("expected sanitized Graph error code, got %s", auth.Error)
+	}
+}
+
+func TestTransportRefreshesExpiredOAuthTokenSecret(t *testing.T) {
+	var sawRefresh bool
+	var sawFreshBearer bool
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		switch request.URL.Path {
+		case "/oauth/token":
+			if err := request.ParseForm(); err != nil {
+				t.Fatalf("parse token form: %v", err)
+			}
+			if request.Form.Get("grant_type") != "refresh_token" {
+				t.Fatalf("unexpected grant_type: %q", request.Form.Get("grant_type"))
+			}
+			if request.Form.Get("client_id") != "client-id" {
+				t.Fatalf("unexpected client_id: %q", request.Form.Get("client_id"))
+			}
+			if request.Form.Get("refresh_token") != "refresh-secret" {
+				t.Fatalf("unexpected refresh_token")
+			}
+			if request.Form.Get("scope") != "offline_access Mail.Read Mail.ReadWrite Calendars.Read" {
+				t.Fatalf("unexpected scope: %q", request.Form.Get("scope"))
+			}
+			sawRefresh = true
+			response.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(response).Encode(map[string]any{
+				"token_type":    "Bearer",
+				"access_token":  "fresh-token",
+				"refresh_token": "new-refresh",
+				"expires_in":    3600,
+				"scope":         "offline_access Mail.Read Mail.ReadWrite Calendars.Read",
+			})
+		case "/v1.0/me/mailFolders/inbox":
+			sawFreshBearer = request.Header.Get("Authorization") == "Bearer fresh-token"
+			response.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(response).Encode(graphFolderResponse())
+		default:
+			t.Fatalf("unexpected path: %s", request.URL.Path)
+		}
+	}))
+	defer server.Close()
+
+	store := secret.NewMemoryStore(map[string]string{
+		"memory:graph": `{
+			"token_type": "Bearer",
+			"access_token": "expired-token",
+			"refresh_token": "refresh-secret",
+			"expires_at": "2000-01-01T00:00:00Z",
+			"scope": "offline_access Mail.Read"
+		}`,
+	})
+	client := graph.NewTransport(graph.Config{
+		BaseURL:   server.URL + "/v1.0",
+		SecretRef: secret.Ref("memory:graph"),
+		OAuth: graph.OAuthConfig{
+			ClientID: "client-id",
+			TokenURL: server.URL + "/oauth/token",
+			Scopes:   []string{"offline_access", "Mail.Read", "Mail.ReadWrite", "Calendars.Read"},
+		},
+	}, store, server.Client())
+
+	auth := client.Authenticate(context.Background(), "work")
+	if !auth.OK {
+		t.Fatalf("expected refreshed auth ok, got %#v", auth)
+	}
+	if !sawRefresh || !sawFreshBearer {
+		t.Fatalf("expected refresh and fresh bearer usage, refresh=%v bearer=%v", sawRefresh, sawFreshBearer)
+	}
+
+	updated, err := store.Get(context.Background(), secret.Ref("memory:graph"))
+	if err != nil {
+		t.Fatalf("get updated token secret: %v", err)
+	}
+	var credential map[string]any
+	if err := json.Unmarshal([]byte(updated), &credential); err != nil {
+		t.Fatalf("decode updated credential: %v", err)
+	}
+	if credential["access_token"] != "fresh-token" || credential["refresh_token"] != "new-refresh" {
+		t.Fatalf("expected refreshed credential to be persisted, got %#v", credential)
+	}
+	expiresAt, _ := time.Parse(time.RFC3339, credential["expires_at"].(string))
+	if !expiresAt.After(time.Now().UTC()) {
+		t.Fatalf("expected future expires_at, got %s", expiresAt.Format(time.RFC3339))
 	}
 }
 

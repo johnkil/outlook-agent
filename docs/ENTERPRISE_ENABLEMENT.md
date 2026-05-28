@@ -20,10 +20,14 @@ Operator checklist:
 4. Store access tokens or refresh-token material only in an approved secret
    store. Do not put tokens in profile files, shell history, issue comments, or
    release artifacts.
-5. Configure a Graph profile with a placeholder-safe shape matching
-   `docs/SPEC.md`.
-6. Run `outlook-agent --config <private-config> auth check`.
-7. Run read-only Graph smoke checks before any draft, move, send-like, or raw
+5. Configure a Graph profile with `secret_ref`, `settings.client_id`,
+   `settings.tenant`, and `settings.scopes` matching `docs/SPEC.md`. Use
+   `settings.token_url` only for an approved non-default token endpoint or a
+   test fixture.
+6. When refresh is required, store the JSON token credential in the referenced
+   secret-store entry; keep `access_token` and `refresh_token` out of config.
+7. Run `outlook-agent --config <private-config> auth check`.
+8. Run read-only Graph smoke checks before any draft, move, send-like, or raw
    GraphRequest workflow.
 
 ## EWS Enablement

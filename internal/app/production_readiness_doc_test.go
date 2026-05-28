@@ -145,6 +145,45 @@ func TestProductionBacklogTracksRepositoryProtectionEvidence(t *testing.T) {
 	}
 }
 
+func TestDocsTrackGraphOAuthTokenCacheEvidence(t *testing.T) {
+	documents := map[string][]string{
+		filepath.Join("..", "..", "README.md"): {
+			"JSON token credential",
+			"`settings.client_id`",
+			"`settings.scopes`",
+			"`refresh_token`",
+		},
+		filepath.Join("..", "..", "docs", "SPEC.md"): {
+			"refresh-capable JSON token credential",
+			"`settings.token_url`",
+			"Token acquisition and admin consent remain external",
+		},
+		filepath.Join("..", "..", "docs", "PRODUCTION_BACKLOG.md"): {
+			"Graph OAuth and live smoke enablement",
+			"refresh-capable token-cache handling",
+			"app registration, admin consent, live token storage, `auth check`, and controlled read-only smoke evidence",
+		},
+		filepath.Join("..", "..", "docs", "PRODUCTION_READINESS.md"): {
+			"refresh-capable JSON token credential",
+			"token refresh is unit-tested",
+			"live Graph probing remains blocked",
+		},
+	}
+
+	for path, required := range documents {
+		data, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatalf("read %s: %v", path, err)
+		}
+		text := string(data)
+		for _, marker := range required {
+			if !strings.Contains(text, marker) {
+				t.Fatalf("expected %s to contain %q", path, marker)
+			}
+		}
+	}
+}
+
 func sectionBetween(text, startMarker, endMarker string) string {
 	start := strings.Index(text, startMarker)
 	if start < 0 {

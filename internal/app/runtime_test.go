@@ -237,6 +237,86 @@ func TestBuildTransportCreatesGraphProfile(t *testing.T) {
 	}
 }
 
+func TestBuildTransportCreatesGraphProfileWithOAuthRefreshSettings(t *testing.T) {
+	var sawRefresh bool
+	var sawFreshBearer bool
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		switch request.URL.Path {
+		case "/oauth/token":
+			if err := request.ParseForm(); err != nil {
+				t.Fatalf("parse token form: %v", err)
+			}
+			if request.Form.Get("client_id") != "client-id" {
+				t.Fatalf("unexpected client_id: %q", request.Form.Get("client_id"))
+			}
+			if request.Form.Get("scope") != "offline_access Mail.Read Calendars.Read" {
+				t.Fatalf("unexpected scope: %q", request.Form.Get("scope"))
+			}
+			sawRefresh = true
+			response.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(response).Encode(map[string]any{
+				"token_type":    "Bearer",
+				"access_token":  "fresh-token",
+				"refresh_token": "new-refresh",
+				"expires_in":    3600,
+			})
+		case "/v1.0/me/mailFolders/inbox":
+			sawFreshBearer = request.Header.Get("Authorization") == "Bearer fresh-token"
+			response.Header().Set("Content-Type", "application/json")
+			_, _ = response.Write([]byte(`{
+				"id": "inbox",
+				"displayName": "Inbox",
+				"totalItemCount": 1,
+				"unreadItemCount": 0,
+				"childFolderCount": 2
+			}`))
+		default:
+			t.Fatalf("unexpected path: %s", request.URL.Path)
+		}
+	}))
+	defer server.Close()
+
+	path := writeConfig(t, fmt.Sprintf(`{
+		"default_profile": "work",
+		"profiles": {
+			"work": {
+				"transport": "graph",
+				"secret_ref": "memory:graph-token",
+				"settings": {
+					"base_url": %q,
+					"client_id": "client-id",
+					"token_url": %q,
+					"scopes": ["offline_access", "Mail.Read", "Calendars.Read"]
+				}
+			}
+		}
+	}`, server.URL+"/v1.0", server.URL+"/oauth/token"))
+
+	client, _, err := app.BuildTransport(app.Options{
+		ConfigPath: path,
+		Secrets: secret.NewMemoryStore(map[string]string{
+			"memory:graph-token": `{
+				"token_type": "Bearer",
+				"access_token": "expired-token",
+				"refresh_token": "refresh-secret",
+				"expires_at": "2000-01-01T00:00:00Z"
+			}`,
+		}),
+		HTTPClient: server.Client(),
+	})
+	if err != nil {
+		t.Fatalf("build transport: %v", err)
+	}
+
+	auth := client.Authenticate(context.Background(), "work")
+	if !auth.OK {
+		t.Fatalf("expected auth success after refresh, got %#v", auth)
+	}
+	if !sawRefresh || !sawFreshBearer {
+		t.Fatalf("expected refresh and fresh bearer usage, refresh=%v bearer=%v", sawRefresh, sawFreshBearer)
+	}
+}
+
 func TestBuildTransportMapsOWAMailboxEmail(t *testing.T) {
 	var availabilityRequest map[string]any
 	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
