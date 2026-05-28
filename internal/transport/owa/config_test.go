@@ -15,6 +15,8 @@ func TestConfigValidationRequiresConnectionInputs(t *testing.T) {
 		{name: "missing base url", config: owa.Config{Username: "user", SecretRef: "keychain:svc/account"}},
 		{name: "missing username", config: owa.Config{BaseURL: "https://example.test", SecretRef: "keychain:svc/account"}},
 		{name: "missing secret ref", config: owa.Config{BaseURL: "https://example.test", Username: "user"}},
+		{name: "http base url", config: owa.Config{BaseURL: "http://mail.example.test", Username: "user", SecretRef: "keychain:svc/account"}},
+		{name: "base url userinfo", config: owa.Config{BaseURL: "https://user:pass@mail.example.test", Username: "user", SecretRef: "keychain:svc/account"}},
 	}
 
 	for _, tt := range tests {

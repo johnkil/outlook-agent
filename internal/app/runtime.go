@@ -91,7 +91,7 @@ func BuildTransportResult(options Options) (TransportResult, error) {
 func buildOWATransport(profile config.Profile, options Options) (transport.Transport, error) {
 	secrets := options.Secrets
 	if secrets == nil {
-		secrets = secret.NewKeychainStore()
+		secrets = secret.NewStoreForRef(secret.Ref(profile.SecretRef))
 	}
 	config := owa.Config{
 		BaseURL:      stringSetting(profile.Settings, "base_url"),
@@ -109,7 +109,7 @@ func buildOWATransport(profile config.Profile, options Options) (transport.Trans
 func buildEWSTransport(profile config.Profile, options Options) (transport.Transport, error) {
 	secrets := options.Secrets
 	if secrets == nil {
-		secrets = secret.NewKeychainStore()
+		secrets = secret.NewStoreForRef(secret.Ref(profile.SecretRef))
 	}
 	config := ews.Config{
 		EndpointURL: stringSetting(profile.Settings, "endpoint_url"),
@@ -125,7 +125,7 @@ func buildEWSTransport(profile config.Profile, options Options) (transport.Trans
 func buildGraphTransport(profile config.Profile, options Options) (transport.Transport, error) {
 	secrets := options.Secrets
 	if secrets == nil {
-		secrets = secret.NewKeychainStore()
+		secrets = secret.NewStoreForRef(secret.Ref(profile.SecretRef))
 	}
 	config := graphConfigFromProfile(profile)
 	if err := config.Validate(); err != nil {
@@ -152,7 +152,7 @@ func EnrollGraphDeviceCode(ctx context.Context, options Options, onChallenge fun
 	}
 	secrets := options.Secrets
 	if secrets == nil {
-		secrets = secret.NewKeychainStore()
+		secrets = secret.NewStoreForRef(secret.Ref(profile.SecretRef))
 	}
 	writable, ok := secrets.(secret.WritableStore)
 	if !ok {

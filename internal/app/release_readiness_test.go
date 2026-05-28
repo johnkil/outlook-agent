@@ -23,9 +23,12 @@ func TestReleaseReadinessArtifactsExist(t *testing.T) {
 			"-path \"./.cache\"",
 			"gofmt -l",
 			"go test -count=1 ./...",
+			"go test -race ./...",
+			"go vet ./...",
 			"go build",
+			"honnef.co/go/tools/cmd/staticcheck@v0.7.0",
 			"scripts/public-safety-check.sh",
-			"govulncheck",
+			"golang.org/x/vuln/cmd/govulncheck@v1.3.0",
 		},
 		filepath.Join("..", "..", "scripts", "release-smoke.sh"): {
 			"TMPDIR",
@@ -55,7 +58,10 @@ func TestReleaseReadinessArtifactsExist(t *testing.T) {
 		},
 		filepath.Join("..", "..", ".github", "workflows", "ci.yml"): {
 			"go test -count=1 ./...",
-			"govulncheck",
+			"go test -race ./...",
+			"go vet ./...",
+			"honnef.co/go/tools/cmd/staticcheck@v0.7.0",
+			"golang.org/x/vuln/cmd/govulncheck@v1.3.0",
 			"scripts/public-safety-check.sh",
 		},
 		filepath.Join("..", "..", ".github", "workflows", "release.yml"): {

@@ -61,6 +61,44 @@ func TestActionConfirmConsumesTokenAndExecutesExactAction(t *testing.T) {
 	}
 }
 
+func TestActionConfirmRequiresExternalApprovalWhenConfigured(t *testing.T) {
+	runtime := NewRuntime(fake.New())
+	runtime.approvalToken = "human-approved"
+
+	_, dryRun, err := dryRunHandler(runtime)(context.Background(), nil, DryRunInput{
+		Action:  "mail.move_to_deleted_items",
+		Payload: map[string]any{"ids": []any{"msg-1"}},
+	})
+	if err != nil {
+		t.Fatalf("dry-run handler: %v", err)
+	}
+
+	_, missingApproval, err := actionConfirmHandler(runtime)(context.Background(), nil, ActionConfirmInput{
+		ConfirmToken: dryRun.ConfirmationToken,
+		Action:       "mail.move_to_deleted_items",
+		Payload:      map[string]any{"ids": []any{"msg-1"}},
+	})
+	if err != nil {
+		t.Fatalf("confirm handler: %v", err)
+	}
+	if missingApproval.OK || missingApproval.Error != "external approval token required" {
+		t.Fatalf("expected external approval gate to reject missing token, got %#v", missingApproval)
+	}
+
+	_, output, err := actionConfirmHandler(runtime)(context.Background(), nil, ActionConfirmInput{
+		ConfirmToken:  dryRun.ConfirmationToken,
+		ApprovalToken: "human-approved",
+		Action:        "mail.move_to_deleted_items",
+		Payload:       map[string]any{"ids": []any{"msg-1"}},
+	})
+	if err != nil {
+		t.Fatalf("confirm handler: %v", err)
+	}
+	if !output.OK {
+		t.Fatalf("expected externally approved action to execute: %#v", output)
+	}
+}
+
 func TestActionConfirmRejectsChangedPayload(t *testing.T) {
 	runtime := NewRuntime(fake.New())
 
@@ -255,6 +293,31 @@ func TestActionConfirmAllowsRawDeleteItemMoveToDeletedItemsWithoutUnsafe(t *test
 	}
 }
 
+func TestActionResultFromResponsePreservesFailureData(t *testing.T) {
+	output := actionResultFromResponse(transport.ActionResponse{
+		OK:    false,
+		Error: "some messages failed to move to Deleted Items",
+		Data: map[string]any{
+			"moved_count": 1,
+			"succeeded":   []any{"msg-1"},
+			"failed":      []any{map[string]any{"id": "msg-2", "error": "not found"}},
+		},
+	})
+
+	if output.OK || output.Error != "some messages failed to move to Deleted Items" {
+		t.Fatalf("expected failed action result, got %#v", output)
+	}
+	if output.Data == nil || output.Data["moved_count"] != 1 {
+		t.Fatalf("expected failure data to be preserved, got %#v", output.Data)
+	}
+	if succeeded, _ := output.Data["succeeded"].([]any); len(succeeded) != 1 || succeeded[0] != "msg-1" {
+		t.Fatalf("expected succeeded ids in failure data, got %#v", output.Data["succeeded"])
+	}
+	if failed, _ := output.Data["failed"].([]any); len(failed) != 1 {
+		t.Fatalf("expected failed ids in failure data, got %#v", output.Data["failed"])
+	}
+}
+
 func TestActionConfirmReturnsTransportFailureWithoutData(t *testing.T) {
 	client := newFailingResponseTransport(action.Definition{Name: "mail.move_to_deleted_items", Transport: "test", Class: policy.ReversibleBulk, Level: action.LevelHighLevelMCPTool})
 	runtime := NewRuntime(client)
@@ -437,6 +500,29 @@ func TestRawActionAllowsSafeMetadataAction(t *testing.T) {
 	}
 	if !output.OK {
 		t.Fatalf("expected safe raw action to execute: %#v", output)
+	}
+}
+
+func TestRawActionDoesNotExecuteUnknownActionDirectlyWithUnsafe(t *testing.T) {
+	client := newRecordingTransport(action.Definition{Name: "known.action", Transport: "test", Class: policy.ReadMetadata, Level: action.LevelRawGuardedExecution})
+	runtime := NewRuntime(client)
+
+	_, output, err := rawActionHandler(runtime)(context.Background(), nil, RawActionInput{
+		Action:     "unknown.action",
+		Payload:    map[string]any{"id": "msg-1"},
+		UnsafeMode: true,
+	})
+	if err != nil {
+		t.Fatalf("raw action handler: %v", err)
+	}
+	if output.OK {
+		t.Fatalf("expected unknown unsafe raw action to be gated, got %#v", output)
+	}
+	if client.executed {
+		t.Fatal("unknown unsafe raw action must not execute directly")
+	}
+	if output.Error == "" {
+		t.Fatalf("expected policy error for unknown unsafe raw action: %#v", output)
 	}
 }
 

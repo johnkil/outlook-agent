@@ -25,6 +25,8 @@ func TestConfigValidateRejectsMissingFields(t *testing.T) {
 		{name: "missing endpoint", config: ews.Config{Username: "DOMAIN\\user", SecretRef: secret.Ref("memory:ews")}, want: "endpoint url is required"},
 		{name: "missing username", config: ews.Config{EndpointURL: "https://example.test/EWS/Exchange.asmx", SecretRef: secret.Ref("memory:ews")}, want: "username is required"},
 		{name: "missing secret", config: ews.Config{EndpointURL: "https://example.test/EWS/Exchange.asmx", Username: "DOMAIN\\user"}, want: "secret ref"},
+		{name: "http endpoint", config: ews.Config{EndpointURL: "http://mail.example.test/EWS/Exchange.asmx", Username: "DOMAIN\\user", SecretRef: secret.Ref("memory:ews")}, want: "endpoint url must use https"},
+		{name: "endpoint userinfo", config: ews.Config{EndpointURL: "https://user:pass@mail.example.test/EWS/Exchange.asmx", Username: "DOMAIN\\user", SecretRef: secret.Ref("memory:ews")}, want: "endpoint url must not include userinfo"},
 	}
 
 	for _, tt := range tests {
@@ -211,6 +213,9 @@ func TestTransportExecutesMailSearchWithFindItem(t *testing.T) {
 		t.Fatalf("expected auth and FindItem SOAP request, auth=%v findItem=%v", sawAuth, sawFindItem)
 	}
 	messages := result.Data["messages"].([]any)
+	if result.Data["returned"] != 2 || result.Data["limit"] != 5 || result.Data["truncated"] != false {
+		t.Fatalf("expected search window metadata, got %#v", result.Data)
+	}
 	if len(messages) != 2 {
 		t.Fatalf("expected two messages, got %#v", messages)
 	}
@@ -251,6 +256,37 @@ func TestTransportMailSearchFiltersByQuery(t *testing.T) {
 	message := messages[0].(map[string]any)
 	if message["subject"] != "Budget update" {
 		t.Fatalf("unexpected filtered message: %#v", message)
+	}
+}
+
+func TestTransportMailSearchTruncationUsesUnfilteredEWSPage(t *testing.T) {
+	responseXML := strings.Replace(successfulFindItemResponse(), `IncludesLastItemInRange="true"`, `IncludesLastItemInRange="false"`, 1)
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		response.Header().Set("Content-Type", "text/xml")
+		_, _ = response.Write([]byte(responseXML))
+	}))
+	defer server.Close()
+
+	client := ews.NewTransport(ews.Config{
+		EndpointURL: server.URL,
+		Username:    "DOMAIN\\user",
+		SecretRef:   secret.Ref("memory:ews"),
+	}, secret.NewMemoryStore(map[string]string{"memory:ews": "password-secret"}), server.Client())
+
+	result := client.Execute(context.Background(), transport.ActionRequest{
+		Name:    "mail.search",
+		Payload: map[string]any{"query": "quarterly", "max": 2},
+	})
+
+	if !result.OK {
+		t.Fatalf("expected mail.search ok, got %#v", result)
+	}
+	messages := result.Data["messages"].([]any)
+	if len(messages) != 1 {
+		t.Fatalf("expected one filtered message, got %#v", messages)
+	}
+	if result.Data["returned"] != 1 || result.Data["limit"] != 2 || result.Data["truncated"] != true {
+		t.Fatalf("expected truncation from unfiltered EWS page, got %#v", result.Data)
 	}
 }
 
@@ -641,6 +677,31 @@ func TestTransportExecutesRawEWSRequest(t *testing.T) {
 	headers := result.Data["headers"].(map[string]any)
 	if headers["request-id"] != "ews-request-id" || headers["content-type"] != "text/xml" {
 		t.Fatalf("unexpected selected response headers: %#v", headers)
+	}
+}
+
+func TestTransportRejectsOversizedRawEWSResponse(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		response.Header().Set("Content-Type", "text/xml")
+		_, _ = response.Write([]byte(strings.Repeat("x", transport.MaxResponseBytes+1)))
+	}))
+	defer server.Close()
+
+	client := ews.NewTransport(ews.Config{
+		EndpointURL: server.URL + "/EWS/Exchange.asmx",
+		Username:    "DOMAIN\\user",
+		SecretRef:   secret.Ref("memory:ews"),
+	}, secret.NewMemoryStore(map[string]string{"memory:ews": "password-secret"}), server.Client())
+
+	result := client.Execute(context.Background(), transport.ActionRequest{
+		Name: "EWSRequest",
+		Payload: map[string]any{
+			"body_xml": `<soap:Envelope xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/"><soap:Body/></soap:Envelope>`,
+		},
+	})
+
+	if result.OK || !strings.Contains(result.Error, "response too large") {
+		t.Fatalf("expected oversized raw EWS response to be rejected, got %#v", result)
 	}
 }
 

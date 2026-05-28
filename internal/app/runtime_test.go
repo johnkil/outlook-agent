@@ -115,6 +115,44 @@ func TestBuildTransportCreatesOWAProfile(t *testing.T) {
 	}
 }
 
+func TestBuildTransportSelectsFileSecretStoreFromRef(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		if request.URL.Path != "/owa/auth.owa" {
+			t.Fatalf("unexpected path: %s", request.URL.Path)
+		}
+		http.SetCookie(response, &http.Cookie{Name: "X-OWA-CANARY", Value: "canary-secret"})
+		response.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
+	secretPath := filepath.Join(t.TempDir(), "owa-password")
+	if err := os.WriteFile(secretPath, []byte("password-secret"), 0o600); err != nil {
+		t.Fatalf("write file secret: %v", err)
+	}
+	path := writeConfig(t, fmt.Sprintf(`{
+		"default_profile": "work",
+		"profiles": {
+			"work": {
+				"transport": "owa",
+				"secret_ref": %q,
+				"settings": {
+					"base_url": %q,
+					"username": "DOMAIN\\user"
+				}
+			}
+		}
+	}`, "file:"+secretPath, server.URL))
+
+	client, _, err := app.BuildTransport(app.Options{ConfigPath: path})
+	if err != nil {
+		t.Fatalf("build transport: %v", err)
+	}
+	auth := client.Authenticate(context.Background(), "work")
+	if !auth.OK {
+		t.Fatalf("expected auth success with file secret store, got %#v", auth)
+	}
+}
+
 func TestBuildTransportCreatesEWSProfile(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
 		if request.URL.Path != "/EWS/Exchange.asmx" {

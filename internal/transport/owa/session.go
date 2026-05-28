@@ -35,7 +35,7 @@ func Login(ctx context.Context, client *http.Client, config Config, password sec
 		return Session{}, err
 	}
 	if client == nil {
-		client = http.DefaultClient
+		client = defaultHTTPClient()
 	}
 	sessionClient := *client
 	sessionClient.Jar = jar

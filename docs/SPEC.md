@@ -41,7 +41,7 @@ includes:
   `explicit`;
 - `profile`: selected profile name after applying config defaults and
   `--profile`;
-- `secret_store`: keychain readiness metadata for the current platform;
+- `secret_store`: readiness metadata for the configured secret-store backend;
 - `transports`: supported transport names;
 - `mcp_stdio`: whether the local MCP server mode is compiled in;
 - `next_steps`: sanitized, actionable onboarding guidance for common states.
@@ -64,6 +64,10 @@ stderr, polls the Microsoft identity platform token endpoint, stores the
 resulting JSON token credential behind the profile `secret_ref`, and writes only
 sanitized metadata to stdout. It must not print `device_code`, `access_token`,
 or `refresh_token`.
+
+Supported secret references are `keychain:service/account` for macOS Keychain
+and explicit `file:/absolute/path` for cross-platform local or CI/dev use. File
+secrets must be user-only readable/writable (`0600` on Unix-like systems).
 
 `policy explain` without arguments returns the stable safety-class list.
 `policy explain --action <name>` returns all built-in transport capability
@@ -124,6 +128,9 @@ Key tool inputs:
 - High-level mail and calendar tools accept optional `mailbox` for transports
   that support delegated or shared mailbox targeting. Graph uses that value as
   `/users/{id|userPrincipalName}`; when omitted, Graph uses `/me`.
+- `outlook.mail_search` returns normalized metadata plus bounded-window fields
+  `returned`, `limit`, and `truncated`. Graph also returns `next_link` when
+  Microsoft Graph provides `@odata.nextLink`.
 - `outlook.calendar_availability`: `start`, `end`, and optional `email`.
   When `email` is omitted, OWA profiles use `settings.mailbox_email` if
   configured.
@@ -136,9 +143,13 @@ Key tool inputs:
   Returns read-only mailbox rule metadata when the selected transport supports
   `mail.rules.list`.
 - `outlook.mail_rule_set_enabled`: `rule_id`, `enabled`, `confirm_token`,
-  optional `folder_id`, and optional `mailbox`. The action maps to
+  optional `approval_token`, optional `folder_id`, and optional `mailbox`. The
+  action maps to
   `mail.rules.set_enabled`, is classified as `settings_or_rules`, and requires
   a matching `outlook.action_dry_run` confirmation token before execution.
+- `outlook.mail_move_to_deleted_items`: `ids`, `confirm_token`, optional
+  `approval_token`, and optional `mailbox`. Responses include `succeeded` and
+  `failed` partial-result fields in addition to `moved_count`.
 - `outlook.mailbox_settings_get`: optional `setting` and optional `mailbox`.
   Returns read-only mailbox settings metadata when the selected transport
   supports `mailbox.settings.get`.
@@ -147,7 +158,10 @@ Key tool inputs:
   the selected mode. For example, destructive and unknown actions require
   `unsafe_mode=true`.
 - `outlook.action_confirm`: validates the exact confirmation token binding and
-  then applies confirmed-action policy again before transport execution.
+  then applies confirmed-action policy again before transport execution. When
+  the host sets `OUTLOOK_AGENT_APPROVAL_TOKEN`, confirm tools also require an
+  `approval_token` supplied out-of-band by the host after user approval; dry-run
+  output does not reveal that token.
 - Raw `GraphRequest`: transport action for a relative Microsoft Graph path
   with `method`, `path`, optional `query`, optional safe custom `headers`, and
   optional JSON `body`. It is intentionally classified as `destructive`, so MCP
@@ -261,7 +275,7 @@ Default output redacts:
 
 - secrets and tokens;
 - cookies and canary values;
-- raw message bodies;
+- raw message bodies, previews, and snippets;
 - attachment contents except through explicit attachment tools;
 - generic raw response fields such as `body_text`, `xml_text`, `contentBytes`,
   and `content_base64`;

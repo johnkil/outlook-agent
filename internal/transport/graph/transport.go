@@ -5,11 +5,11 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
 	"net/url"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/johnkil/outlook-agent/internal/action"
@@ -19,14 +19,16 @@ import (
 )
 
 type Transport struct {
-	config  Config
-	secrets secret.Store
-	client  *http.Client
+	config      Config
+	secrets     secret.Store
+	client      *http.Client
+	tokenMu     sync.Mutex
+	tokenCached tokenCredential
 }
 
 func NewTransport(config Config, secrets secret.Store, client *http.Client) *Transport {
 	if client == nil {
-		client = http.DefaultClient
+		client = transport.DefaultHTTPClient()
 	}
 	return &Transport{config: config, secrets: secrets, client: client}
 }
@@ -92,11 +94,21 @@ func (client *Transport) Execute(ctx context.Context, request transport.ActionRe
 		}
 		return transport.ActionResponse{OK: ok, Data: data, Error: errorText}
 	case "mail.search":
-		messages, err := client.listMessages(ctx, mailbox, stringValue(request.Payload, "folder_id", "inbox"), intValue(request.Payload, "max", 150), stringValue(request.Payload, "query", ""))
+		limit := intValue(request.Payload, "max", 150)
+		result, err := client.listMessages(ctx, mailbox, stringValue(request.Payload, "folder_id", "inbox"), limit, stringValue(request.Payload, "query", ""))
 		if err != nil {
 			return transport.ActionResponse{OK: false, Error: err.Error()}
 		}
-		return transport.ActionResponse{OK: true, Data: map[string]any{"messages": messages}}
+		data := map[string]any{
+			"messages":  result.Messages,
+			"returned":  len(result.Messages),
+			"limit":     limit,
+			"truncated": result.NextLink != "",
+		}
+		if result.NextLink != "" {
+			data["next_link"] = result.NextLink
+		}
+		return transport.ActionResponse{OK: true, Data: data}
 	case "mail.fetch_metadata":
 		messageID := strings.TrimSpace(stringValue(request.Payload, "id", ""))
 		if messageID == "" {
@@ -149,10 +161,17 @@ func (client *Transport) Execute(ctx context.Context, request transport.ActionRe
 		if len(ids) == 0 {
 			return transport.ActionResponse{OK: false, Error: "mail.move_to_deleted_items requires ids"}
 		}
-		if err := client.moveMessagesToDeletedItems(ctx, mailbox, ids); err != nil {
-			return transport.ActionResponse{OK: false, Error: err.Error()}
+		result := client.moveMessagesToDeletedItems(ctx, mailbox, ids)
+		data := map[string]any{
+			"moved_count": len(result.Succeeded),
+			"reversible":  true,
+			"succeeded":   result.Succeeded,
+			"failed":      result.Failed,
 		}
-		return transport.ActionResponse{OK: true, Data: map[string]any{"moved_count": len(ids), "reversible": true}}
+		if len(result.Failed) > 0 {
+			return transport.ActionResponse{OK: false, Data: data, Error: "some messages failed to move to Deleted Items"}
+		}
+		return transport.ActionResponse{OK: true, Data: data}
 	case "mail.rules.list":
 		rules, err := client.listMessageRules(ctx, mailbox, stringValue(request.Payload, "folder_id", "inbox"))
 		if err != nil {
@@ -210,7 +229,18 @@ type mailFolder struct {
 }
 
 type messageList struct {
-	Value []message `json:"value"`
+	NextLink string    `json:"@odata.nextLink"`
+	Value    []message `json:"value"`
+}
+
+type messageSearchResult struct {
+	Messages []any
+	NextLink string
+}
+
+type bulkMoveResult struct {
+	Succeeded []string
+	Failed    []map[string]any
 }
 
 type message struct {
@@ -346,14 +376,14 @@ func (client *Transport) getMailFolder(ctx context.Context, mailbox string, fold
 	return folder, nil
 }
 
-func (client *Transport) listMessages(ctx context.Context, mailbox string, folderID string, maxItems int, query string) ([]any, error) {
+func (client *Transport) listMessages(ctx context.Context, mailbox string, folderID string, maxItems int, query string) (messageSearchResult, error) {
 	requestURL, err := client.messagesURL(mailbox, folderID, maxItems)
 	if err != nil {
-		return nil, err
+		return messageSearchResult{}, err
 	}
 	var response messageList
 	if err := client.getJSON(ctx, requestURL, &response); err != nil {
-		return nil, err
+		return messageSearchResult{}, err
 	}
 	messages := make([]any, 0, len(response.Value))
 	for _, item := range response.Value {
@@ -363,9 +393,9 @@ func (client *Transport) listMessages(ctx context.Context, mailbox string, folde
 		}
 	}
 	if messages == nil {
-		return []any{}, nil
+		messages = []any{}
 	}
-	return messages, nil
+	return messageSearchResult{Messages: messages, NextLink: response.NextLink}, nil
 }
 
 func (client *Transport) getMessage(ctx context.Context, mailbox string, id string) (message, error) {
@@ -484,18 +514,22 @@ func (client *Transport) createDraft(ctx context.Context, mailbox string, payloa
 	return draft, nil
 }
 
-func (client *Transport) moveMessagesToDeletedItems(ctx context.Context, mailbox string, ids []string) error {
+func (client *Transport) moveMessagesToDeletedItems(ctx context.Context, mailbox string, ids []string) bulkMoveResult {
+	result := bulkMoveResult{Succeeded: []string{}, Failed: []map[string]any{}}
 	for _, id := range ids {
 		requestURL, err := client.messageMoveURL(mailbox, id)
 		if err != nil {
-			return err
+			result.Failed = append(result.Failed, map[string]any{"id": id, "error": err.Error()})
+			continue
 		}
 		var moved message
 		if err := client.doJSON(ctx, http.MethodPost, requestURL, map[string]any{"destinationId": "deleteditems"}, &moved); err != nil {
-			return err
+			result.Failed = append(result.Failed, map[string]any{"id": id, "error": err.Error()})
+			continue
 		}
+		result.Succeeded = append(result.Succeeded, id)
 	}
-	return nil
+	return result
 }
 
 func (client *Transport) listMessageRules(ctx context.Context, mailbox string, folderID string) ([]any, error) {
@@ -723,7 +757,7 @@ func (client *Transport) doRawJSONWithHeaders(ctx context.Context, method string
 		"status":  response.StatusCode,
 		"headers": selectedResponseHeaders(response.Header),
 	}
-	rawBody, err := io.ReadAll(response.Body)
+	rawBody, err := transport.ReadLimited(response.Body, transport.MaxResponseBytes)
 	if err != nil {
 		return err
 	}
@@ -748,6 +782,12 @@ func (client *Transport) bearerToken(ctx context.Context) (string, error) {
 	if client.secrets == nil {
 		return "", fmt.Errorf("secret store is not configured")
 	}
+	client.tokenMu.Lock()
+	defer client.tokenMu.Unlock()
+	now := time.Now().UTC()
+	if strings.TrimSpace(client.tokenCached.AccessToken) != "" && !client.tokenCached.expired(now) {
+		return client.tokenCached.AccessToken, nil
+	}
 	value, err := client.secrets.Get(ctx, client.config.SecretRef)
 	if err != nil {
 		return "", err
@@ -766,7 +806,8 @@ func (client *Transport) bearerToken(ctx context.Context) (string, error) {
 	if strings.TrimSpace(credential.AccessToken) == "" {
 		return "", fmt.Errorf("graph token credential missing access_token")
 	}
-	if !credential.expired(time.Now().UTC()) {
+	if !credential.expired(now) {
+		client.tokenCached = credential
 		return credential.AccessToken, nil
 	}
 	refreshed, err := client.refreshTokenCredential(ctx, credential)
@@ -782,6 +823,7 @@ func (client *Transport) bearerToken(ctx context.Context) (string, error) {
 			return "", err
 		}
 	}
+	client.tokenCached = refreshed
 	return refreshed.AccessToken, nil
 }
 

@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/johnkil/outlook-agent/internal/secret"
+	"github.com/johnkil/outlook-agent/internal/transport"
 )
 
 const (
@@ -56,7 +57,7 @@ func EnrollDeviceCode(ctx context.Context, config Config, secrets secret.Writabl
 		return DeviceCodeEnrollment{}, fmt.Errorf("graph device-code enrollment requires scopes")
 	}
 	if client == nil {
-		client = http.DefaultClient
+		client = transport.DefaultHTTPClient()
 	}
 
 	challenge, err := requestDeviceCode(ctx, config.OAuth, client)

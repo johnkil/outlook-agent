@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync"
 )
 
 const Redacted = "[REDACTED]"
@@ -25,6 +26,7 @@ type WritableStore interface {
 }
 
 type MemoryStore struct {
+	mu     sync.RWMutex
 	values map[Ref]Value
 }
 
@@ -40,6 +42,8 @@ func (store *MemoryStore) Get(_ context.Context, ref Ref) (Value, error) {
 	if err := ValidateRef(ref); err != nil {
 		return "", err
 	}
+	store.mu.RLock()
+	defer store.mu.RUnlock()
 	value, ok := store.values[ref]
 	if !ok {
 		return "", fmt.Errorf("%w: %s", ErrNotFound, ref)
@@ -51,6 +55,8 @@ func (store *MemoryStore) Put(_ context.Context, ref Ref, value Value) error {
 	if err := ValidateRef(ref); err != nil {
 		return err
 	}
+	store.mu.Lock()
+	defer store.mu.Unlock()
 	if store.values == nil {
 		store.values = map[Ref]Value{}
 	}

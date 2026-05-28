@@ -15,10 +15,17 @@ var sensitiveKeyParts = []string{
 var privateContentKeys = map[string]struct{}{
 	"body":           {},
 	"body_text":      {},
+	"bodypreview":    {},
 	"content":        {},
 	"contentbytes":   {},
 	"content_bytes":  {},
 	"content_base64": {},
+	"htmlbody":       {},
+	"messagebody":    {},
+	"preview":        {},
+	"snippet":        {},
+	"textbody":       {},
+	"text_body":      {},
 	"xml_text":       {},
 }
 

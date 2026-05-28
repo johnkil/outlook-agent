@@ -1,10 +1,11 @@
 # Outlook Agent
 
-Outlook Agent is a Go CLI and MCP server for safe agent access to Outlook-like
-mail and calendar systems.
+Outlook Agent is a local safety-gated Go CLI and MCP server for agent access to
+Outlook-like mail and calendar systems.
 
-The project goal is to provide one production runtime that can be used by
-OpenCode, Codex, and other MCP-capable agents:
+The current release is an MVP runtime with a production-hardening roadmap. It
+is designed to be usable from OpenCode, Codex, and other MCP-capable agents
+while keeping enterprise rollout gates explicit:
 
 - `outlook-agent doctor` checks version, config discovery, secret-store,
   transport, and local MCP readiness.
@@ -54,6 +55,10 @@ outlook-agent --config .local/outlook-agent.json mcp
 The config references a secret-store key only; it must not contain passwords,
 tokens, cookies, or canary values.
 
+On macOS, `keychain:service/account` uses the system Keychain. Cross-platform
+or CI/dev profiles can explicitly opt into `file:/absolute/path` secrets; file
+secrets must be user-only readable and writable (`0600` on Unix-like systems).
+
 `settings.mailbox_email` is the default mailbox used by
 `calendar.availability` when the request does not pass an explicit `email`.
 
@@ -80,6 +85,11 @@ Add the printed local MCP config to OpenCode, then use the checked-in
 The agent should prefer high-level MCP tools, fetch bodies or attachments only
 for explicit targets, and use dry-run plus exact confirmation for write-like
 actions.
+
+For host-mediated human approval, start the MCP server with
+`OUTLOOK_AGENT_APPROVAL_TOKEN` set to a host-generated secret and pass
+`approval_token` to confirm tools only after the user approves the reviewed
+dry-run summary. The dry-run response never returns this approval token.
 
 For an EWS profile, use an explicit SOAP endpoint and a secret-store reference:
 

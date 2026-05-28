@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"sync"
 
 	"github.com/johnkil/outlook-agent/internal/secret"
 	"github.com/johnkil/outlook-agent/internal/transport"
@@ -14,6 +15,7 @@ type Transport struct {
 	config  Config
 	secrets secret.Store
 	client  *http.Client
+	mu      sync.Mutex
 	session *Session
 }
 
@@ -25,14 +27,15 @@ func NewTransport(config Config, secrets secret.Store, client *http.Client) *Tra
 }
 
 func defaultHTTPClient() *http.Client {
-	transport, ok := http.DefaultTransport.(*http.Transport)
+	defaultClient := transport.DefaultHTTPClient()
+	httpTransport, ok := defaultClient.Transport.(*http.Transport)
 	if !ok {
-		return http.DefaultClient
+		return defaultClient
 	}
-	cloned := transport.Clone()
+	cloned := httpTransport.Clone()
 	cloned.ForceAttemptHTTP2 = false
 	cloned.DisableKeepAlives = true
-	return &http.Client{Transport: cloned}
+	return &http.Client{Transport: cloned, Timeout: transport.DefaultHTTPTimeout}
 }
 
 func (client *Transport) Name() string {
@@ -101,6 +104,8 @@ func (client *Transport) DryRun(_ context.Context, request transport.ActionReque
 }
 
 func (client *Transport) login(ctx context.Context) (Session, error) {
+	client.mu.Lock()
+	defer client.mu.Unlock()
 	if client.session != nil {
 		return *client.session, nil
 	}

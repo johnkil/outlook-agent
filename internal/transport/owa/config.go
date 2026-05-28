@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/johnkil/outlook-agent/internal/secret"
+	"github.com/johnkil/outlook-agent/internal/transport"
 )
 
 type Config struct {
@@ -71,12 +72,9 @@ func (config Config) DestinationURL() (string, error) {
 
 func (config Config) normalizedBaseURL() (string, error) {
 	trimmed := strings.TrimRight(strings.TrimSpace(config.BaseURL), "/")
-	parsed, err := url.Parse(trimmed)
+	parsed, err := transport.ValidateServiceURL("base url", trimmed)
 	if err != nil {
 		return "", err
-	}
-	if parsed.Scheme == "" || parsed.Host == "" {
-		return "", fmt.Errorf("base url must be absolute")
 	}
 	return strings.TrimRight(parsed.String(), "/"), nil
 }

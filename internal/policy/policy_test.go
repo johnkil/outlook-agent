@@ -89,8 +89,11 @@ func TestUnknownBlockedUnlessUnsafeIsExplicit(t *testing.T) {
 	}
 
 	withUnsafe := policy.Evaluate(policy.Request{Class: policy.Unknown, UnsafeMode: true})
-	if !withUnsafe.Allowed {
-		t.Fatalf("expected unknown action with unsafe mode to be allowed: %#v", withUnsafe)
+	if withUnsafe.Allowed {
+		t.Fatalf("expected unknown action with unsafe mode to remain gated: %#v", withUnsafe)
+	}
+	if !withUnsafe.RequiresUnsafe || !withUnsafe.RequiresDryRun || !withUnsafe.RequiresConfirmation {
+		t.Fatalf("expected unknown action with unsafe mode to require unsafe dry-run confirmation: %#v", withUnsafe)
 	}
 }
 

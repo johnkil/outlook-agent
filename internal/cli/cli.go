@@ -195,6 +195,7 @@ func runDoctor(stdout io.Writer, options Options) int {
 	if profile == "" {
 		profile = loaded.DefaultProfile
 	}
+	secretStore := doctorSecretStore(profile, loaded)
 	output := doctorOutput{
 		OK:      err == nil,
 		Command: "doctor",
@@ -205,12 +206,9 @@ func runDoctor(stdout io.Writer, options Options) int {
 			Kind:  source.Kind,
 			Path:  source.Path,
 		},
-		SecretStore: doctorSecretStoreOutput{
-			Kind:      "keychain",
-			Available: runtime.GOOS == "darwin",
-		},
-		MCPStdio:   true,
-		Transports: []string{"fake", "graph", "ews", "owa"},
+		SecretStore: secretStore,
+		MCPStdio:    true,
+		Transports:  []string{"fake", "graph", "ews", "owa"},
 	}
 	if err != nil {
 		output.Error = err.Error()
@@ -221,6 +219,14 @@ func runDoctor(stdout io.Writer, options Options) int {
 	}
 	output.NextSteps = doctorNextSteps(output)
 	return writeJSON(stdout, output)
+}
+
+func doctorSecretStore(profile string, loaded config.Config) doctorSecretStoreOutput {
+	configuredProfile, ok := loaded.Profiles[profile]
+	if ok && strings.HasPrefix(configuredProfile.SecretRef, "file:") {
+		return doctorSecretStoreOutput{Kind: "file", Available: true}
+	}
+	return doctorSecretStoreOutput{Kind: "keychain", Available: runtime.GOOS == "darwin"}
 }
 
 type policyExplainActionOutput struct {
