@@ -66,15 +66,15 @@ func (client *Transport) Execute(ctx context.Context, request transport.ActionRe
 		}}}
 	case "mail.search":
 		limit := intValue(request.Payload, "max", 150)
-		messages, err := client.findItems(ctx, stringValue(request.Payload, "folder_id", "inbox"), limit, stringValue(request.Payload, "query", ""))
+		result, err := client.findItems(ctx, stringValue(request.Payload, "folder_id", "inbox"), limit, stringValue(request.Payload, "query", ""))
 		if err != nil {
 			return transport.ActionResponse{OK: false, Error: err.Error()}
 		}
 		return transport.ActionResponse{OK: true, Data: map[string]any{
-			"messages":  messages,
-			"returned":  len(messages),
+			"messages":  result.Messages,
+			"returned":  len(result.Messages),
 			"limit":     limit,
-			"truncated": len(messages) >= limit,
+			"truncated": result.Truncated,
 		}}
 	case "mail.fetch_metadata":
 		messageID := strings.TrimSpace(stringValue(request.Payload, "id", ""))
@@ -180,48 +180,57 @@ func (client *Transport) executeRawEWSRequest(ctx context.Context, payload map[s
 	return data, nil
 }
 
-func (client *Transport) findItems(ctx context.Context, folderID string, maxItems int, query string) ([]any, error) {
+type findItemsResult struct {
+	Messages  []any
+	Truncated bool
+}
+
+func (client *Transport) findItems(ctx context.Context, folderID string, maxItems int, query string) (findItemsResult, error) {
 	if err := client.config.Validate(); err != nil {
-		return nil, err
+		return findItemsResult{}, err
 	}
 	if client.secrets == nil {
-		return nil, fmt.Errorf("secret store is not configured")
+		return findItemsResult{}, fmt.Errorf("secret store is not configured")
 	}
 	password, err := client.secrets.Get(ctx, client.config.SecretRef)
 	if err != nil {
-		return nil, err
+		return findItemsResult{}, err
 	}
 	request, err := BuildFindItemRequest(client.config, password, folderID, maxItems)
 	if err != nil {
-		return nil, err
+		return findItemsResult{}, err
 	}
 	request = request.WithContext(ctx)
 	response, err := client.client.Do(request)
 	if err != nil {
-		return nil, err
+		return findItemsResult{}, err
 	}
 	defer response.Body.Close()
-	items, parseErr := parseFindItemResponse(response.Body)
+	page, parseErr := parseFindItemPageResponse(response.Body)
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
 		if parseErr != nil {
-			return nil, fmt.Errorf("ews returned HTTP %d", response.StatusCode)
+			return findItemsResult{}, fmt.Errorf("ews returned HTTP %d", response.StatusCode)
 		}
-		return nil, fmt.Errorf("ews returned HTTP %d", response.StatusCode)
+		return findItemsResult{}, fmt.Errorf("ews returned HTTP %d", response.StatusCode)
 	}
 	if parseErr != nil {
-		return nil, parseErr
+		return findItemsResult{}, parseErr
 	}
-	messages := make([]any, 0, len(items))
-	for _, item := range items {
+	truncated := len(page.Messages) >= maxItems
+	if page.IncludesLastItemInRange != nil {
+		truncated = !*page.IncludesLastItemInRange
+	}
+	messages := make([]any, 0, len(page.Messages))
+	for _, item := range page.Messages {
 		normalized := normalizeFindItemMessage(item)
 		if matchesQuery(normalized, query) {
 			messages = append(messages, normalized)
 		}
 	}
 	if messages == nil {
-		return []any{}, nil
+		messages = []any{}
 	}
-	return messages, nil
+	return findItemsResult{Messages: messages, Truncated: truncated}, nil
 }
 
 func (client *Transport) listCalendarEvents(ctx context.Context, start string, end string, maxItems int) ([]any, error) {

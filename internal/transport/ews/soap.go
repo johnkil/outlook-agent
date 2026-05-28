@@ -359,7 +359,8 @@ type findItemResponseMessage struct {
 	ResponseCode  string `xml:"ResponseCode"`
 	MessageText   string `xml:"MessageText"`
 	RootFolder    struct {
-		Items struct {
+		IncludesLastItemInRange string `xml:"IncludesLastItemInRange,attr"`
+		Items                   struct {
 			Messages []findItemMessageXML `xml:"Message"`
 		} `xml:"Items"`
 	} `xml:"RootFolder"`
@@ -461,34 +462,55 @@ type availabilityWindowXML struct {
 	BusyType  string `xml:"BusyType"`
 }
 
-func parseFindItemResponse(reader io.Reader) ([]findItemMessage, error) {
+type findItemPage struct {
+	Messages                []findItemMessage
+	IncludesLastItemInRange *bool
+}
+
+func parseFindItemPageResponse(reader io.Reader) (findItemPage, error) {
 	data, err := io.ReadAll(reader)
 	if err != nil {
-		return nil, err
+		return findItemPage{}, err
 	}
 	var envelope findItemResponseEnvelope
 	if err := xml.Unmarshal(data, &envelope); err != nil {
-		return nil, err
+		return findItemPage{}, err
 	}
 	if len(envelope.Body.Response.ResponseMessages.Messages) == 0 {
-		return nil, fmt.Errorf("missing FindItem response")
+		return findItemPage{}, fmt.Errorf("missing FindItem response")
 	}
 	var messages []findItemMessage
+	var includesLast *bool
 	for _, response := range envelope.Body.Response.ResponseMessages.Messages {
 		if response.ResponseClass != "" && response.ResponseClass != "Success" {
 			if strings.TrimSpace(response.MessageText) != "" {
-				return nil, fmt.Errorf("ews FindItem failed: %s", strings.TrimSpace(response.MessageText))
+				return findItemPage{}, fmt.Errorf("ews FindItem failed: %s", strings.TrimSpace(response.MessageText))
 			}
-			return nil, fmt.Errorf("ews FindItem failed: %s", strings.TrimSpace(response.ResponseCode))
+			return findItemPage{}, fmt.Errorf("ews FindItem failed: %s", strings.TrimSpace(response.ResponseCode))
+		}
+		if parsed, ok := parseEWSBool(response.RootFolder.IncludesLastItemInRange); ok {
+			value := parsed
+			includesLast = &value
 		}
 		for _, item := range response.RootFolder.Items.Messages {
 			messages = append(messages, messageFromXML(item))
 		}
 	}
 	if messages == nil {
-		return []findItemMessage{}, nil
+		messages = []findItemMessage{}
 	}
-	return messages, nil
+	return findItemPage{Messages: messages, IncludesLastItemInRange: includesLast}, nil
+}
+
+func parseEWSBool(value string) (bool, bool) {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "true", "1":
+		return true, true
+	case "false", "0":
+		return false, true
+	default:
+		return false, false
+	}
 }
 
 func parseFindCalendarItemsResponse(reader io.Reader) ([]calendarEvent, error) {

@@ -259,6 +259,37 @@ func TestTransportMailSearchFiltersByQuery(t *testing.T) {
 	}
 }
 
+func TestTransportMailSearchTruncationUsesUnfilteredEWSPage(t *testing.T) {
+	responseXML := strings.Replace(successfulFindItemResponse(), `IncludesLastItemInRange="true"`, `IncludesLastItemInRange="false"`, 1)
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		response.Header().Set("Content-Type", "text/xml")
+		_, _ = response.Write([]byte(responseXML))
+	}))
+	defer server.Close()
+
+	client := ews.NewTransport(ews.Config{
+		EndpointURL: server.URL,
+		Username:    "DOMAIN\\user",
+		SecretRef:   secret.Ref("memory:ews"),
+	}, secret.NewMemoryStore(map[string]string{"memory:ews": "password-secret"}), server.Client())
+
+	result := client.Execute(context.Background(), transport.ActionRequest{
+		Name:    "mail.search",
+		Payload: map[string]any{"query": "quarterly", "max": 2},
+	})
+
+	if !result.OK {
+		t.Fatalf("expected mail.search ok, got %#v", result)
+	}
+	messages := result.Data["messages"].([]any)
+	if len(messages) != 1 {
+		t.Fatalf("expected one filtered message, got %#v", messages)
+	}
+	if result.Data["returned"] != 1 || result.Data["limit"] != 2 || result.Data["truncated"] != true {
+		t.Fatalf("expected truncation from unfiltered EWS page, got %#v", result.Data)
+	}
+}
+
 func TestTransportExecutesMailFetchMetadataWithGetItem(t *testing.T) {
 	var sawGetItem bool
 	var sawAuth bool
