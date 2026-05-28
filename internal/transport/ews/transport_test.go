@@ -86,7 +86,7 @@ func TestTransportAuthenticatesWithGetFolderSOAP(t *testing.T) {
 	}
 }
 
-func TestTransportCapabilitiesIncludeGetFolderRawRequestAndMailSearch(t *testing.T) {
+func TestTransportCapabilitiesIncludeGetFolderRawRequestMailSearchAndFetchMetadata(t *testing.T) {
 	client := ews.NewTransport(ews.Config{
 		EndpointURL: "https://example.test/EWS/Exchange.asmx",
 		Username:    "DOMAIN\\user",
@@ -94,8 +94,8 @@ func TestTransportCapabilitiesIncludeGetFolderRawRequestAndMailSearch(t *testing
 	}, secret.NewMemoryStore(map[string]string{"memory:ews": "password-secret"}), nil)
 
 	capabilities := client.Capabilities(context.Background())
-	if len(capabilities.Actions) != 3 {
-		t.Fatalf("expected three EWS actions, got %#v", capabilities.Actions)
+	if len(capabilities.Actions) != 4 {
+		t.Fatalf("expected four EWS actions, got %#v", capabilities.Actions)
 	}
 	actions := map[string]action.Definition{}
 	for _, item := range capabilities.Actions {
@@ -112,6 +112,10 @@ func TestTransportCapabilitiesIncludeGetFolderRawRequestAndMailSearch(t *testing
 	search := actions["mail.search"]
 	if search.Name != "mail.search" || search.Transport != "ews" || search.Class != policy.ReadMetadata || search.Level != action.LevelHighLevelMCPTool {
 		t.Fatalf("unexpected mail.search capability: %#v", search)
+	}
+	fetchMetadata := actions["mail.fetch_metadata"]
+	if fetchMetadata.Name != "mail.fetch_metadata" || fetchMetadata.Transport != "ews" || fetchMetadata.Class != policy.ReadMetadata || fetchMetadata.Level != action.LevelHighLevelMCPTool {
+		t.Fatalf("unexpected mail.fetch_metadata capability: %#v", fetchMetadata)
 	}
 }
 
@@ -235,6 +239,84 @@ func TestTransportMailSearchFiltersByQuery(t *testing.T) {
 	message := messages[0].(map[string]any)
 	if message["subject"] != "Budget update" {
 		t.Fatalf("unexpected filtered message: %#v", message)
+	}
+}
+
+func TestTransportExecutesMailFetchMetadataWithGetItem(t *testing.T) {
+	var sawGetItem bool
+	var sawAuth bool
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		if request.Method != http.MethodPost {
+			t.Fatalf("expected POST, got %s", request.Method)
+		}
+		if request.Header.Get("SOAPAction") != "http://schemas.microsoft.com/exchange/services/2006/messages/GetItem" {
+			t.Fatalf("unexpected SOAPAction: %s", request.Header.Get("SOAPAction"))
+		}
+		auth := strings.TrimPrefix(request.Header.Get("Authorization"), "Basic ")
+		decoded, err := base64.StdEncoding.DecodeString(auth)
+		if err != nil {
+			t.Fatalf("decode auth: %v", err)
+		}
+		sawAuth = string(decoded) == "DOMAIN\\user:password-secret"
+		body, err := io.ReadAll(request.Body)
+		if err != nil {
+			t.Fatalf("read body: %v", err)
+		}
+		text := string(body)
+		sawGetItem = strings.Contains(text, `<m:GetItem>`) &&
+			strings.Contains(text, `<t:BaseShape>IdOnly</t:BaseShape>`) &&
+			strings.Contains(text, `<t:FieldURI FieldURI="item:Subject"/>`) &&
+			strings.Contains(text, `<t:FieldURI FieldURI="message:From"/>`) &&
+			strings.Contains(text, `<t:FieldURI FieldURI="item:DateTimeReceived"/>`) &&
+			strings.Contains(text, `<t:FieldURI FieldURI="message:IsRead"/>`) &&
+			strings.Contains(text, `<t:FieldURI FieldURI="item:HasAttachments"/>`) &&
+			strings.Contains(text, `<m:ItemIds>`) &&
+			strings.Contains(text, `<t:ItemId Id="message-1"/>`)
+		response.Header().Set("Content-Type", "text/xml")
+		_, _ = response.Write([]byte(successfulGetItemResponse()))
+	}))
+	defer server.Close()
+
+	client := ews.NewTransport(ews.Config{
+		EndpointURL: server.URL + "/EWS/Exchange.asmx",
+		Username:    "DOMAIN\\user",
+		SecretRef:   secret.Ref("memory:ews"),
+	}, secret.NewMemoryStore(map[string]string{"memory:ews": "password-secret"}), server.Client())
+
+	result := client.Execute(context.Background(), transport.ActionRequest{
+		Name:    "mail.fetch_metadata",
+		Payload: map[string]any{"id": "message-1"},
+	})
+
+	if !result.OK {
+		t.Fatalf("expected mail.fetch_metadata ok, got %#v", result)
+	}
+	if !sawAuth || !sawGetItem {
+		t.Fatalf("expected auth and GetItem SOAP request, auth=%v getItem=%v", sawAuth, sawGetItem)
+	}
+	message := result.Data["message"].(map[string]any)
+	if message["id"] != "message-1" || message["subject"] != "Quarterly planning" || message["sender"] != "Alex Example <alex@example.com>" {
+		t.Fatalf("unexpected message: %#v", message)
+	}
+	if message["received_at"] != "2026-05-28T07:15:00Z" || message["is_read"] != false || message["has_attachments"] != true {
+		t.Fatalf("unexpected message metadata: %#v", message)
+	}
+}
+
+func TestTransportRejectsMailFetchMetadataWithoutID(t *testing.T) {
+	client := ews.NewTransport(ews.Config{
+		EndpointURL: "https://example.test/EWS/Exchange.asmx",
+		Username:    "DOMAIN\\user",
+		SecretRef:   secret.Ref("memory:ews"),
+	}, secret.NewMemoryStore(map[string]string{"memory:ews": "password-secret"}), nil)
+
+	result := client.Execute(context.Background(), transport.ActionRequest{
+		Name:    "mail.fetch_metadata",
+		Payload: map[string]any{},
+	})
+
+	if result.OK || !strings.Contains(result.Error, "mail.fetch_metadata requires id") {
+		t.Fatalf("expected id error, got %#v", result)
 	}
 }
 
@@ -427,6 +509,38 @@ func successfulFindItemResponse() string {
         </m:FindItemResponseMessage>
       </m:ResponseMessages>
     </m:FindItemResponse>
+  </soap:Body>
+</soap:Envelope>`
+}
+
+func successfulGetItemResponse() string {
+	return `<?xml version="1.0" encoding="utf-8"?>
+<soap:Envelope xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/"
+  xmlns:m="http://schemas.microsoft.com/exchange/services/2006/messages"
+  xmlns:t="http://schemas.microsoft.com/exchange/services/2006/types">
+  <soap:Body>
+    <m:GetItemResponse>
+      <m:ResponseMessages>
+        <m:GetItemResponseMessage ResponseClass="Success">
+          <m:ResponseCode>NoError</m:ResponseCode>
+          <m:Items>
+            <t:Message>
+              <t:ItemId Id="message-1" ChangeKey="ck-1"/>
+              <t:Subject>Quarterly planning</t:Subject>
+              <t:DateTimeReceived>2026-05-28T07:15:00Z</t:DateTimeReceived>
+              <t:From>
+                <t:Mailbox>
+                  <t:Name>Alex Example</t:Name>
+                  <t:EmailAddress>alex@example.com</t:EmailAddress>
+                </t:Mailbox>
+              </t:From>
+              <t:IsRead>false</t:IsRead>
+              <t:HasAttachments>true</t:HasAttachments>
+            </t:Message>
+          </m:Items>
+        </m:GetItemResponseMessage>
+      </m:ResponseMessages>
+    </m:GetItemResponse>
   </soap:Body>
 </soap:Envelope>`
 }

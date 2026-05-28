@@ -79,8 +79,9 @@ Status: implemented initial slice.
   dry-run/confirm escape hatch; admin consent and live token storage validation
   remain.
 - EWS transport where Exchange policy allows it: initial SOAP `GetFolder`
-  read-metadata probe/action and typed metadata-only `mail.search` via
-  `FindItem` implemented; guarded raw `EWSRequest` implemented as an unsafe
+  read-metadata probe/action, typed metadata-only `mail.search` via
+  `FindItem`, and typed metadata-only `mail.fetch_metadata` via `GetItem`
+  implemented; guarded raw `EWSRequest` implemented as an unsafe
   dry-run/confirm escape hatch; additional typed high-level EWS workflows and
   live environment/auth enablement remain.
 - OWA-like REST transport interface: implemented initial generic adapter with

@@ -76,8 +76,9 @@ For an EWS profile, use an explicit SOAP endpoint and a secret-store reference:
 ```
 
 The initial EWS adapter supports a read-metadata `GetFolder` probe/action,
-typed metadata-only `mail.search` through EWS `FindItem`, plus guarded raw
-`EWSRequest` for caller-provided SOAP XML envelopes. `EWSRequest` is
+typed metadata-only `mail.search` through EWS `FindItem`, typed metadata-only
+`mail.fetch_metadata` through EWS `GetItem`, plus guarded raw `EWSRequest` for
+caller-provided SOAP XML envelopes. `EWSRequest` is
 intentionally classified as destructive and requires unsafe dry-run plus exact
 confirmation because arbitrary EWS SOAP can send, mutate, or delete mailbox
 data. Some Exchange deployments require NTLM, Negotiate, OAuth, or policy

@@ -48,7 +48,10 @@ production-ready, but they are intentionally outside the public core repository:
   refresh an expired JSON token credential, but an enterprise rollout still
   owns the approved app, grant, and live smoke evidence.
 - EWS endpoint availability, Exchange auth method enablement, and any
-  server-side allow-listing or tenant policy changes.
+  server-side allow-listing or tenant policy changes. The public EWS adapter
+  already has metadata-only `GetFolder`, `mail.search`, and
+  `mail.fetch_metadata` coverage, but private live evidence still belongs to
+  the enterprise rollout.
 - Enterprise secret scanning and repository protection owned by the GitHub
   organization or repository administrators.
   This includes enterprise secret scanning policy, alert routing, and owners.

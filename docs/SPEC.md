@@ -186,9 +186,10 @@ Configured transports:
 - `ews`: initial Exchange Web Services SOAP transport. Profiles use
   `settings.endpoint_url`, `settings.username`, and `secret_ref`. Supported
   actions are read-metadata `GetFolder`, also used by `auth check`,
-  metadata-only `mail.search` through EWS `FindItem`, and raw guarded
-  `EWSRequest` for caller-provided SOAP XML envelopes. Deployments that require
-  NTLM, Negotiate, OAuth, or server-side EWS allow-listing need additional
+  metadata-only `mail.search` through EWS `FindItem`, metadata-only
+  `mail.fetch_metadata` through EWS `GetItem`, and raw guarded `EWSRequest`
+  for caller-provided SOAP XML envelopes. Deployments that require NTLM,
+  Negotiate, OAuth, or server-side EWS allow-listing need additional
   adapter/auth work.
 - `graph`: initial Microsoft Graph REST transport. Profiles use optional
   `settings.base_url` and `secret_ref` for either a raw bearer access token or

@@ -247,6 +247,19 @@ func TestLiveEWSReadMetadataSmoke(t *testing.T) {
 	if _, ok := search.Data["messages"].([]any); !ok {
 		t.Fatalf("expected EWS message metadata list, got %#v", responseSummary(search.Data))
 	}
+	if messageID := firstLiveMessageID(search.Data); messageID != "" {
+		metadata := client.Execute(ctx, transport.ActionRequest{
+			Name:    "mail.fetch_metadata",
+			Payload: map[string]any{"id": messageID},
+		})
+		if !metadata.OK {
+			t.Fatalf("live EWS mail.fetch_metadata failed: %s summary=%#v", metadata.Error, responseSummary(metadata.Data))
+		}
+		message, ok := metadata.Data["message"].(map[string]any)
+		if !ok || message["id"] == "" {
+			t.Fatalf("expected EWS message metadata, got %#v", responseSummary(metadata.Data))
+		}
+	}
 }
 
 func TestLiveOWARawFindPeopleSmoke(t *testing.T) {

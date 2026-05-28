@@ -48,6 +48,24 @@ func BuildFindItemRequest(config Config, password secret.Value, folderID string,
 	return request, nil
 }
 
+func BuildGetItemRequest(config Config, password secret.Value, itemID string) (*http.Request, error) {
+	endpoint, err := config.normalizedEndpointURL()
+	if err != nil {
+		return nil, err
+	}
+	body := getItemEnvelope(itemID)
+	request, err := http.NewRequest(http.MethodPost, endpoint, strings.NewReader(body))
+	if err != nil {
+		return nil, err
+	}
+	request.Header.Set("Content-Type", "text/xml; charset=utf-8")
+	request.Header.Set("Accept", "text/xml")
+	request.Header.Set("User-Agent", "outlook-agent")
+	request.Header.Set("SOAPAction", "http://schemas.microsoft.com/exchange/services/2006/messages/GetItem")
+	request.SetBasicAuth(config.Username, string(password))
+	return request, nil
+}
+
 func BuildRawEWSRequest(config Config, password secret.Value, bodyXML string, soapAction string) (*http.Request, error) {
 	endpoint, err := config.normalizedEndpointURL()
 	if err != nil {
@@ -122,6 +140,32 @@ func findItemEnvelope(folderID string, maxItems int) string {
 </soap:Envelope>`, maxItems, escapedFolderID)
 }
 
+func getItemEnvelope(itemID string) string {
+	escapedItemID := html.EscapeString(strings.TrimSpace(itemID))
+	return fmt.Sprintf(`<?xml version="1.0" encoding="utf-8"?>
+<soap:Envelope xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/"
+  xmlns:m="http://schemas.microsoft.com/exchange/services/2006/messages"
+  xmlns:t="http://schemas.microsoft.com/exchange/services/2006/types">
+  <soap:Body>
+    <m:GetItem>
+      <m:ItemShape>
+        <t:BaseShape>IdOnly</t:BaseShape>
+        <t:AdditionalProperties>
+          <t:FieldURI FieldURI="item:Subject"/>
+          <t:FieldURI FieldURI="message:From"/>
+          <t:FieldURI FieldURI="item:DateTimeReceived"/>
+          <t:FieldURI FieldURI="message:IsRead"/>
+          <t:FieldURI FieldURI="item:HasAttachments"/>
+        </t:AdditionalProperties>
+      </m:ItemShape>
+      <m:ItemIds>
+        <t:ItemId Id="%s"/>
+      </m:ItemIds>
+    </m:GetItem>
+  </soap:Body>
+</soap:Envelope>`, escapedItemID)
+}
+
 type folderMetadata struct {
 	DisplayName      string
 	TotalCount       string
@@ -179,6 +223,25 @@ type findItemMessageXML struct {
 	HasAttachments string `xml:"HasAttachments"`
 }
 
+type getItemResponseEnvelope struct {
+	Body struct {
+		Response struct {
+			ResponseMessages struct {
+				Messages []getItemResponseMessage `xml:"GetItemResponseMessage"`
+			} `xml:"ResponseMessages"`
+		} `xml:"GetItemResponse"`
+	} `xml:"Body"`
+}
+
+type getItemResponseMessage struct {
+	ResponseClass string `xml:"ResponseClass,attr"`
+	ResponseCode  string `xml:"ResponseCode"`
+	MessageText   string `xml:"MessageText"`
+	Items         struct {
+		Messages []findItemMessageXML `xml:"Message"`
+	} `xml:"Items"`
+}
+
 func parseFindItemResponse(reader io.Reader) ([]findItemMessage, error) {
 	data, err := io.ReadAll(reader)
 	if err != nil {
@@ -200,21 +263,51 @@ func parseFindItemResponse(reader io.Reader) ([]findItemMessage, error) {
 			return nil, fmt.Errorf("ews FindItem failed: %s", strings.TrimSpace(response.ResponseCode))
 		}
 		for _, item := range response.RootFolder.Items.Messages {
-			messages = append(messages, findItemMessage{
-				ID:             strings.TrimSpace(item.ItemID.ID),
-				Subject:        strings.TrimSpace(item.Subject),
-				FromName:       strings.TrimSpace(item.From.Mailbox.Name),
-				FromEmail:      strings.TrimSpace(item.From.Mailbox.EmailAddress),
-				ReceivedAt:     strings.TrimSpace(item.DateTimeReceived),
-				IsRead:         strings.EqualFold(strings.TrimSpace(item.IsRead), "true"),
-				HasAttachments: strings.EqualFold(strings.TrimSpace(item.HasAttachments), "true"),
-			})
+			messages = append(messages, messageFromXML(item))
 		}
 	}
 	if messages == nil {
 		return []findItemMessage{}, nil
 	}
 	return messages, nil
+}
+
+func parseGetItemResponse(reader io.Reader) (findItemMessage, error) {
+	data, err := io.ReadAll(reader)
+	if err != nil {
+		return findItemMessage{}, err
+	}
+	var envelope getItemResponseEnvelope
+	if err := xml.Unmarshal(data, &envelope); err != nil {
+		return findItemMessage{}, err
+	}
+	if len(envelope.Body.Response.ResponseMessages.Messages) == 0 {
+		return findItemMessage{}, fmt.Errorf("missing GetItem response")
+	}
+	for _, response := range envelope.Body.Response.ResponseMessages.Messages {
+		if response.ResponseClass != "" && response.ResponseClass != "Success" {
+			if strings.TrimSpace(response.MessageText) != "" {
+				return findItemMessage{}, fmt.Errorf("ews GetItem failed: %s", strings.TrimSpace(response.MessageText))
+			}
+			return findItemMessage{}, fmt.Errorf("ews GetItem failed: %s", strings.TrimSpace(response.ResponseCode))
+		}
+		for _, item := range response.Items.Messages {
+			return messageFromXML(item), nil
+		}
+	}
+	return findItemMessage{}, fmt.Errorf("missing GetItem message")
+}
+
+func messageFromXML(item findItemMessageXML) findItemMessage {
+	return findItemMessage{
+		ID:             strings.TrimSpace(item.ItemID.ID),
+		Subject:        strings.TrimSpace(item.Subject),
+		FromName:       strings.TrimSpace(item.From.Mailbox.Name),
+		FromEmail:      strings.TrimSpace(item.From.Mailbox.EmailAddress),
+		ReceivedAt:     strings.TrimSpace(item.DateTimeReceived),
+		IsRead:         strings.EqualFold(strings.TrimSpace(item.IsRead), "true"),
+		HasAttachments: strings.EqualFold(strings.TrimSpace(item.HasAttachments), "true"),
+	}
 }
 
 func parseGetFolderResponse(reader io.Reader) (folderMetadata, error) {

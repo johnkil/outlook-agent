@@ -42,6 +42,7 @@ func (client *Transport) Capabilities(context.Context) transport.CapabilitySet {
 	return transport.CapabilitySet{Actions: []action.Definition{
 		{Name: "GetFolder", Transport: "ews", Class: policy.ReadMetadata, Level: action.LevelRawGuardedExecution},
 		{Name: "mail.search", Transport: "ews", Class: policy.ReadMetadata, Level: action.LevelHighLevelMCPTool},
+		{Name: "mail.fetch_metadata", Transport: "ews", Class: policy.ReadMetadata, Level: action.LevelHighLevelMCPTool},
 		{Name: "EWSRequest", Transport: "ews", Class: policy.Destructive, Level: action.LevelRawGuardedExecution},
 	}}
 }
@@ -67,6 +68,16 @@ func (client *Transport) Execute(ctx context.Context, request transport.ActionRe
 			return transport.ActionResponse{OK: false, Error: err.Error()}
 		}
 		return transport.ActionResponse{OK: true, Data: map[string]any{"messages": messages}}
+	case "mail.fetch_metadata":
+		messageID := strings.TrimSpace(stringValue(request.Payload, "id", ""))
+		if messageID == "" {
+			return transport.ActionResponse{OK: false, Error: "mail.fetch_metadata requires id"}
+		}
+		message, err := client.getItem(ctx, messageID)
+		if err != nil {
+			return transport.ActionResponse{OK: false, Error: err.Error()}
+		}
+		return transport.ActionResponse{OK: true, Data: map[string]any{"message": normalizeFindItemMessage(message)}}
 	case "EWSRequest":
 		data, err := client.executeRawEWSRequest(ctx, request.Payload)
 		if err != nil {
@@ -181,6 +192,40 @@ func (client *Transport) findItems(ctx context.Context, folderID string, maxItem
 		return []any{}, nil
 	}
 	return messages, nil
+}
+
+func (client *Transport) getItem(ctx context.Context, itemID string) (findItemMessage, error) {
+	if err := client.config.Validate(); err != nil {
+		return findItemMessage{}, err
+	}
+	if client.secrets == nil {
+		return findItemMessage{}, fmt.Errorf("secret store is not configured")
+	}
+	password, err := client.secrets.Get(ctx, client.config.SecretRef)
+	if err != nil {
+		return findItemMessage{}, err
+	}
+	request, err := BuildGetItemRequest(client.config, password, itemID)
+	if err != nil {
+		return findItemMessage{}, err
+	}
+	request = request.WithContext(ctx)
+	response, err := client.client.Do(request)
+	if err != nil {
+		return findItemMessage{}, err
+	}
+	defer response.Body.Close()
+	message, parseErr := parseGetItemResponse(response.Body)
+	if response.StatusCode < 200 || response.StatusCode >= 300 {
+		if parseErr != nil {
+			return findItemMessage{}, fmt.Errorf("ews returned HTTP %d", response.StatusCode)
+		}
+		return findItemMessage{}, fmt.Errorf("ews returned HTTP %d", response.StatusCode)
+	}
+	if parseErr != nil {
+		return findItemMessage{}, parseErr
+	}
+	return message, nil
 }
 
 func (client *Transport) getFolder(ctx context.Context, folderID string) (folderMetadata, error) {
