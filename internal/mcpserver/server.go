@@ -191,28 +191,103 @@ type Runtime struct {
 	profile string
 }
 
-func Catalog() ToolCatalog {
-	return ToolCatalog{
-		Tools: []ToolInfo{
-			{Name: "outlook.auth_check", Description: "Check Outlook Agent authentication for the selected profile."},
-			{Name: "outlook.capabilities", Description: "List Outlook Agent transport capabilities."},
-			{Name: "outlook.mail_search", Description: "Search mail metadata using the configured transport."},
-			{Name: "outlook.mail_fetch_metadata", Description: "Fetch metadata for a single message."},
-			{Name: "outlook.mail_fetch_body", Description: "Fetch body text for an explicit message."},
-			{Name: "outlook.mail_list_attachments", Description: "List attachment metadata for an explicit message."},
-			{Name: "outlook.mail_fetch_attachment", Description: "Fetch a single explicit message attachment."},
-			{Name: "outlook.mail_create_draft", Description: "Create a saved draft without sending."},
-			{Name: "outlook.mail_move_to_deleted_items", Description: "Move confirmed messages to Deleted Items."},
-			{Name: "outlook.mail_rules_list", Description: "List read-only mailbox rule metadata."},
-			{Name: "outlook.mail_rule_set_enabled", Description: "Enable or disable a message rule after dry-run confirmation."},
-			{Name: "outlook.mailbox_settings_get", Description: "Get read-only mailbox settings metadata."},
-			{Name: "outlook.calendar_list", Description: "List calendar events for a bounded window."},
-			{Name: "outlook.calendar_availability", Description: "List availability windows for a bounded window."},
-			{Name: "outlook.action_dry_run", Description: "Summarize a mutating or broad action before confirmation."},
-			{Name: "outlook.action_confirm", Description: "Execute an exact dry-run-confirmed action."},
-			{Name: "outlook.raw_action", Description: "Execute a policy-guarded raw transport action."},
-		},
+type toolRegistration struct {
+	name string
+	add  func(*mcp.Server, *Runtime, string)
+}
+
+var toolRegistrations = []toolRegistration{
+	{name: "outlook.auth_check", add: func(server *mcp.Server, runtime *Runtime, name string) {
+		mcp.AddTool(server, mcpTool(name), authCheckHandler(runtime))
+	}},
+	{name: "outlook.capabilities", add: func(server *mcp.Server, runtime *Runtime, name string) {
+		mcp.AddTool(server, mcpTool(name), capabilitiesHandler(runtime.client))
+	}},
+	{name: "outlook.mail_search", add: func(server *mcp.Server, runtime *Runtime, name string) {
+		mcp.AddTool(server, mcpTool(name), mailSearchHandler(runtime.client))
+	}},
+	{name: "outlook.mail_fetch_metadata", add: func(server *mcp.Server, runtime *Runtime, name string) {
+		mcp.AddTool(server, mcpTool(name), mailFetchMetadataHandler(runtime.client))
+	}},
+	{name: "outlook.mail_fetch_body", add: func(server *mcp.Server, runtime *Runtime, name string) {
+		mcp.AddTool(server, mcpTool(name), mailFetchBodyHandler(runtime.client))
+	}},
+	{name: "outlook.mail_list_attachments", add: func(server *mcp.Server, runtime *Runtime, name string) {
+		mcp.AddTool(server, mcpTool(name), mailListAttachmentsHandler(runtime.client))
+	}},
+	{name: "outlook.mail_fetch_attachment", add: func(server *mcp.Server, runtime *Runtime, name string) {
+		mcp.AddTool(server, mcpTool(name), mailFetchAttachmentHandler(runtime.client))
+	}},
+	{name: "outlook.mail_create_draft", add: func(server *mcp.Server, runtime *Runtime, name string) {
+		mcp.AddTool(server, mcpTool(name), mailCreateDraftHandler(runtime.client))
+	}},
+	{name: "outlook.mail_move_to_deleted_items", add: func(server *mcp.Server, runtime *Runtime, name string) {
+		mcp.AddTool(server, mcpTool(name), mailMoveToDeletedItemsHandler(runtime))
+	}},
+	{name: "outlook.mail_rules_list", add: func(server *mcp.Server, runtime *Runtime, name string) {
+		mcp.AddTool(server, mcpTool(name), mailRulesListHandler(runtime.client))
+	}},
+	{name: "outlook.mail_rule_set_enabled", add: func(server *mcp.Server, runtime *Runtime, name string) {
+		mcp.AddTool(server, mcpTool(name), mailRuleSetEnabledHandler(runtime))
+	}},
+	{name: "outlook.mailbox_settings_get", add: func(server *mcp.Server, runtime *Runtime, name string) {
+		mcp.AddTool(server, mcpTool(name), mailboxSettingsGetHandler(runtime.client))
+	}},
+	{name: "outlook.calendar_list", add: func(server *mcp.Server, runtime *Runtime, name string) {
+		mcp.AddTool(server, mcpTool(name), calendarListHandler(runtime.client))
+	}},
+	{name: "outlook.calendar_availability", add: func(server *mcp.Server, runtime *Runtime, name string) {
+		mcp.AddTool(server, mcpTool(name), calendarAvailabilityHandler(runtime.client))
+	}},
+	{name: "outlook.action_dry_run", add: func(server *mcp.Server, runtime *Runtime, name string) {
+		mcp.AddTool(server, mcpTool(name), dryRunHandler(runtime))
+	}},
+	{name: "outlook.action_confirm", add: func(server *mcp.Server, runtime *Runtime, name string) {
+		mcp.AddTool(server, mcpTool(name), actionConfirmHandler(runtime))
+	}},
+	{name: "outlook.raw_action", add: func(server *mcp.Server, runtime *Runtime, name string) {
+		mcp.AddTool(server, mcpTool(name), rawActionHandler(runtime))
+	}},
+}
+
+var toolDescriptionByName = map[string]string{
+	"outlook.auth_check":                 "Check authentication for the selected Outlook profile without returning secrets.",
+	"outlook.capabilities":               "List supported actions, safety classes, and policy gates before raw or unfamiliar workflows.",
+	"outlook.mail_search":                "First step for bounded mail discovery; returns metadata-only message results.",
+	"outlook.mail_fetch_metadata":        "Fetch metadata for one explicit message before body or attachment reads.",
+	"outlook.mail_fetch_body":            "Fetch body text for one explicit message; not a bulk body reader.",
+	"outlook.mail_list_attachments":      "List attachment metadata for one explicit message; does not fetch attachment content.",
+	"outlook.mail_fetch_attachment":      "Fetch one explicit attachment by message id and attachment id.",
+	"outlook.mail_create_draft":          "Create a save-only draft; does not send mail.",
+	"outlook.mail_move_to_deleted_items": "Move exact message ids to Deleted Items after the required dry-run confirmation token.",
+	"outlook.mail_rules_list":            "List read-only mailbox rule metadata before any rule change.",
+	"outlook.mail_rule_set_enabled":      "Enable or disable one settings/rules item only with a dry-run confirmation token.",
+	"outlook.mailbox_settings_get":       "Get read-only mailbox settings metadata.",
+	"outlook.calendar_list":              "List calendar events for a bounded time window.",
+	"outlook.calendar_availability":      "List free/busy availability for a bounded time window.",
+	"outlook.action_dry_run":             "Required summary step for broad, mutating, send-like, destructive, or unknown actions.",
+	"outlook.action_confirm":             "Execute only the exact payload reviewed by outlook.action_dry_run.",
+	"outlook.raw_action":                 "Advanced policy-guarded escape hatch for capability-discovered actions; prefer high-level tools first.",
+}
+
+func toolDescription(name string) string {
+	description, ok := toolDescriptionByName[name]
+	if !ok || strings.TrimSpace(description) == "" {
+		panic("missing MCP tool description for " + name)
 	}
+	return description
+}
+
+func mcpTool(name string) *mcp.Tool {
+	return &mcp.Tool{Name: name, Description: toolDescription(name)}
+}
+
+func Catalog() ToolCatalog {
+	tools := make([]ToolInfo, 0, len(toolRegistrations))
+	for _, registration := range toolRegistrations {
+		tools = append(tools, ToolInfo{Name: registration.name, Description: toolDescription(registration.name)})
+	}
+	return ToolCatalog{Tools: tools}
 }
 
 func New() *mcp.Server {
@@ -267,23 +342,9 @@ func NewWithTransportProfile(client transport.Transport, profile string) *mcp.Se
 func NewWithRuntime(runtime *Runtime) *mcp.Server {
 	server := mcp.NewServer(&mcp.Implementation{Name: "outlook-agent", Version: buildinfo.Version}, nil)
 
-	mcp.AddTool(server, &mcp.Tool{Name: "outlook.auth_check", Description: "Check Outlook Agent authentication for the selected profile."}, authCheckHandler(runtime))
-	mcp.AddTool(server, &mcp.Tool{Name: "outlook.capabilities", Description: "List Outlook Agent transport capabilities."}, capabilitiesHandler(runtime.client))
-	mcp.AddTool(server, &mcp.Tool{Name: "outlook.mail_search", Description: "Search mail metadata using the configured transport."}, mailSearchHandler(runtime.client))
-	mcp.AddTool(server, &mcp.Tool{Name: "outlook.mail_fetch_metadata", Description: "Fetch metadata for a single message."}, mailFetchMetadataHandler(runtime.client))
-	mcp.AddTool(server, &mcp.Tool{Name: "outlook.mail_fetch_body", Description: "Fetch body text for an explicit message."}, mailFetchBodyHandler(runtime.client))
-	mcp.AddTool(server, &mcp.Tool{Name: "outlook.mail_list_attachments", Description: "List attachment metadata for an explicit message."}, mailListAttachmentsHandler(runtime.client))
-	mcp.AddTool(server, &mcp.Tool{Name: "outlook.mail_fetch_attachment", Description: "Fetch a single explicit message attachment."}, mailFetchAttachmentHandler(runtime.client))
-	mcp.AddTool(server, &mcp.Tool{Name: "outlook.mail_create_draft", Description: "Create a saved draft without sending."}, mailCreateDraftHandler(runtime.client))
-	mcp.AddTool(server, &mcp.Tool{Name: "outlook.mail_move_to_deleted_items", Description: "Move confirmed messages to Deleted Items."}, mailMoveToDeletedItemsHandler(runtime))
-	mcp.AddTool(server, &mcp.Tool{Name: "outlook.mail_rules_list", Description: "List read-only mailbox rule metadata."}, mailRulesListHandler(runtime.client))
-	mcp.AddTool(server, &mcp.Tool{Name: "outlook.mail_rule_set_enabled", Description: "Enable or disable a message rule after dry-run confirmation."}, mailRuleSetEnabledHandler(runtime))
-	mcp.AddTool(server, &mcp.Tool{Name: "outlook.mailbox_settings_get", Description: "Get read-only mailbox settings metadata."}, mailboxSettingsGetHandler(runtime.client))
-	mcp.AddTool(server, &mcp.Tool{Name: "outlook.calendar_list", Description: "List calendar events for a bounded window."}, calendarListHandler(runtime.client))
-	mcp.AddTool(server, &mcp.Tool{Name: "outlook.calendar_availability", Description: "List availability windows for a bounded window."}, calendarAvailabilityHandler(runtime.client))
-	mcp.AddTool(server, &mcp.Tool{Name: "outlook.action_dry_run", Description: "Summarize a mutating or broad action before confirmation."}, dryRunHandler(runtime))
-	mcp.AddTool(server, &mcp.Tool{Name: "outlook.action_confirm", Description: "Execute an exact dry-run-confirmed action."}, actionConfirmHandler(runtime))
-	mcp.AddTool(server, &mcp.Tool{Name: "outlook.raw_action", Description: "Execute a policy-guarded raw transport action."}, rawActionHandler(runtime))
+	for _, registration := range toolRegistrations {
+		registration.add(server, runtime, registration.name)
+	}
 
 	return server
 }
