@@ -31,8 +31,20 @@ Operator checklist:
 7. Keep `access_token` and `refresh_token` out of config, shell history, issue
    comments, and release artifacts.
 8. Run `outlook-agent --config <private-config> auth check`.
-9. Run read-only Graph smoke checks before any draft, move, send-like, or raw
-   GraphRequest workflow.
+9. Run the Graph-specific read-only smoke harness before any draft, move,
+   send-like, or raw GraphRequest workflow:
+
+```bash
+GOPATH=$PWD/.cache/go GOCACHE=$PWD/.cache/go-build GOMODCACHE=$PWD/.cache/go-mod \
+OUTLOOK_AGENT_LIVE_GRAPH_CONFIG=<private-config> \
+OUTLOOK_AGENT_LIVE_GRAPH_PROFILE=<graph-profile> \
+go test ./internal/app -run TestLiveGraphReadOnlySmoke -count=1 -v
+```
+
+The harness verifies `auth check` through the Graph auth probe plus
+`mail.search`, `mail.fetch_metadata` when a message id is available, and
+`calendar.list`. Body, attachment, draft, move, send-like, raw GraphRequest,
+and write actions are excluded from this read-only harness.
 
 ## EWS Enablement
 

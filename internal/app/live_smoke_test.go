@@ -138,6 +138,68 @@ func TestLiveHighLevelReadMetadataSuiteSmoke(t *testing.T) {
 	}
 }
 
+func TestLiveGraphReadOnlySmoke(t *testing.T) {
+	configPath := os.Getenv("OUTLOOK_AGENT_LIVE_GRAPH_CONFIG")
+	if configPath == "" {
+		t.Skip("OUTLOOK_AGENT_LIVE_GRAPH_CONFIG is not set")
+	}
+	profile := os.Getenv("OUTLOOK_AGENT_LIVE_GRAPH_PROFILE")
+
+	ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
+	defer cancel()
+
+	client, _, err := app.BuildTransport(app.Options{ConfigPath: configPath, Profile: profile})
+	if err != nil {
+		t.Fatalf("build live Graph transport: %v", err)
+	}
+	if client.Name() != "graph" {
+		t.Fatalf("expected graph transport, got %q", client.Name())
+	}
+	auth := client.Authenticate(ctx, profile)
+	if !auth.OK {
+		t.Fatalf("live Graph auth failed: %s", auth.Error)
+	}
+
+	search := client.Execute(ctx, transport.ActionRequest{
+		Name:    "mail.search",
+		Payload: map[string]any{"max": 5},
+	})
+	if !search.OK {
+		t.Fatalf("live Graph mail.search failed: %s summary=%#v", search.Error, responseSummary(search.Data))
+	}
+	if _, ok := search.Data["messages"].([]any); !ok {
+		t.Fatalf("expected Graph messages list in response, got %#v", responseSummary(search.Data))
+	}
+	if messageID := firstLiveMessageID(search.Data); messageID != "" {
+		metadata := client.Execute(ctx, transport.ActionRequest{
+			Name:    "mail.fetch_metadata",
+			Payload: map[string]any{"id": messageID},
+		})
+		if !metadata.OK {
+			t.Fatalf("live Graph mail.fetch_metadata failed: %s summary=%#v", metadata.Error, responseSummary(metadata.Data))
+		}
+		message, ok := metadata.Data["message"].(map[string]any)
+		if !ok || message["id"] == "" {
+			t.Fatalf("expected Graph message metadata, got %#v", responseSummary(metadata.Data))
+		}
+	}
+
+	start, end := liveCalendarDayRange(time.Now())
+	calendar := client.Execute(ctx, transport.ActionRequest{
+		Name: "calendar.list",
+		Payload: map[string]any{
+			"start": start,
+			"end":   end,
+		},
+	})
+	if !calendar.OK {
+		t.Fatalf("live Graph calendar.list failed: %s summary=%#v", calendar.Error, responseSummary(calendar.Data))
+	}
+	if _, ok := calendar.Data["events"].([]any); !ok {
+		t.Fatalf("expected Graph events list in response, got %#v", responseSummary(calendar.Data))
+	}
+}
+
 func TestLiveOWARawFindPeopleSmoke(t *testing.T) {
 	configPath := os.Getenv("OUTLOOK_AGENT_LIVE_CONFIG")
 	if configPath == "" {

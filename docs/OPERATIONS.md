@@ -105,6 +105,24 @@ Before promoting an upgrade:
 8. Confirm logs do not contain secrets, session material, raw message bodies,
    attachment contents, or raw discovery assets.
 
+## Graph Live Validation
+
+Use the Graph-specific live smoke harness after a private Graph profile has
+completed device-code enrollment and `auth check` is expected to work:
+
+```bash
+GOPATH=$PWD/.cache/go GOCACHE=$PWD/.cache/go-build GOMODCACHE=$PWD/.cache/go-mod \
+OUTLOOK_AGENT_LIVE_GRAPH_CONFIG=<private-config> \
+OUTLOOK_AGENT_LIVE_GRAPH_PROFILE=<graph-profile> \
+go test ./internal/app -run TestLiveGraphReadOnlySmoke -count=1 -v
+```
+
+The private config and profile stay outside this repository. The harness checks
+Graph authentication plus metadata-only `mail.search`, `mail.fetch_metadata`
+when a message id exists, and `calendar.list`. It deliberately excludes
+body reads, attachment reads, draft creation, moves, send-like actions, raw
+GraphRequest, and all write actions.
+
 ## Rollback Procedure
 
 If an upgrade fails:

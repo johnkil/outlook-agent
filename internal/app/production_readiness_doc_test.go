@@ -161,11 +161,11 @@ func TestDocsTrackGraphOAuthTokenCacheEvidence(t *testing.T) {
 		filepath.Join("..", "..", "docs", "PRODUCTION_BACKLOG.md"): {
 			"Graph OAuth and live smoke enablement",
 			"refresh-capable token-cache handling",
-			"live enterprise app approval, admin consent, controlled live token storage, `auth check`, and controlled read-only smoke evidence",
+			"live enterprise app approval, admin consent, controlled live token storage, successful `auth check`, and controlled read-only smoke evidence from a private run",
 		},
 		filepath.Join("..", "..", "docs", "PRODUCTION_READINESS.md"): {
 			"refresh-capable JSON token credential",
-			"token acquisition/storage and refresh are unit-tested",
+			"device-code OAuth enrollment",
 			"live Graph smoke evidence still requires enterprise app approval",
 		},
 	}
@@ -203,6 +203,44 @@ func TestDocsTrackGraphDeviceCodeEnrollmentEvidence(t *testing.T) {
 		filepath.Join("..", "..", "docs", "PRODUCTION_READINESS.md"): {
 			"device-code OAuth enrollment",
 			"live Graph smoke evidence still requires enterprise app approval",
+		},
+	}
+
+	for path, required := range documents {
+		data, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatalf("read %s: %v", path, err)
+		}
+		text := string(data)
+		for _, marker := range required {
+			if !strings.Contains(text, marker) {
+				t.Fatalf("expected %s to contain %q", path, marker)
+			}
+		}
+	}
+}
+
+func TestDocsTrackGraphLiveSmokeHarness(t *testing.T) {
+	documents := map[string][]string{
+		filepath.Join("..", "..", "docs", "ENTERPRISE_ENABLEMENT.md"): {
+			"OUTLOOK_AGENT_LIVE_GRAPH_CONFIG",
+			"OUTLOOK_AGENT_LIVE_GRAPH_PROFILE",
+			"TestLiveGraphReadOnlySmoke",
+		},
+		filepath.Join("..", "..", "docs", "PRODUCTION_BACKLOG.md"): {
+			"Graph read-only live smoke harness",
+			"auth check",
+			"mail.search",
+			"mail.fetch_metadata",
+			"calendar.list",
+		},
+		filepath.Join("..", "..", "docs", "PRODUCTION_READINESS.md"): {
+			"TestLiveGraphReadOnlySmoke",
+			"body/attachment/write actions are excluded",
+		},
+		filepath.Join("..", "..", "docs", "OPERATIONS.md"): {
+			"OUTLOOK_AGENT_LIVE_GRAPH_CONFIG",
+			"TestLiveGraphReadOnlySmoke",
 		},
 	}
 
