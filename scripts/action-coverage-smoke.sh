@@ -137,7 +137,15 @@ JSON
     def part: .part // .;
     def parse_output($value):
       if ($value | type) == "object" then
-        $value
+        if ($value.structuredContent? != null) then
+          parse_output($value.structuredContent)
+        elif ($value.structured_content? != null) then
+          parse_output($value.structured_content)
+        elif ($value.content? | type) == "array" then
+          parse_output($value.content)
+        else
+          $value
+        end
       elif ($value | type) == "string" then
         ($value | fromjson? // {})
       elif ($value | type) == "array" then
