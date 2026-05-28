@@ -3,6 +3,7 @@ package graph_test
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -37,7 +38,6 @@ func TestEnrollDeviceCodeStoresTokenCredential(t *testing.T) {
 				"user_code":        "ABCD-EFGH",
 				"verification_uri": "https://microsoft.com/devicelogin",
 				"expires_in":       900,
-				"interval":         0,
 				"message":          "Open https://microsoft.com/devicelogin and enter ABCD-EFGH.",
 			})
 		case "/oauth2/v2.0/token":
@@ -52,11 +52,6 @@ func TestEnrollDeviceCodeStoresTokenCredential(t *testing.T) {
 			}
 			tokenPolls++
 			response.Header().Set("Content-Type", "application/json")
-			if tokenPolls == 1 {
-				response.WriteHeader(http.StatusBadRequest)
-				_ = json.NewEncoder(response).Encode(map[string]any{"error": "authorization_pending"})
-				return
-			}
 			_ = json.NewEncoder(response).Encode(map[string]any{
 				"token_type":    "Bearer",
 				"scope":         "offline_access Mail.Read Calendars.Read",
@@ -85,11 +80,14 @@ func TestEnrollDeviceCodeStoresTokenCredential(t *testing.T) {
 	if err != nil {
 		t.Fatalf("enroll device code: %v", err)
 	}
-	if !deviceCodeRequestSeen || tokenPolls != 2 {
-		t.Fatalf("expected device-code request and two token polls, device=%v polls=%d", deviceCodeRequestSeen, tokenPolls)
+	if !deviceCodeRequestSeen || tokenPolls != 1 {
+		t.Fatalf("expected device-code request and one token poll, device=%v polls=%d", deviceCodeRequestSeen, tokenPolls)
 	}
 	if challenge.VerificationURI != "https://microsoft.com/devicelogin" || challenge.UserCode != "ABCD-EFGH" {
 		t.Fatalf("unexpected challenge: %#v", challenge)
+	}
+	if challenge.Interval != 5 {
+		t.Fatalf("expected default challenge poll interval, got %#v", challenge)
 	}
 	if enrollment.SecretRef != "memory:graph-token" || enrollment.TokenType != "Bearer" {
 		t.Fatalf("unexpected sanitized enrollment metadata: %#v", enrollment)
@@ -119,6 +117,49 @@ func TestEnrollDeviceCodeStoresTokenCredential(t *testing.T) {
 	}
 	if !expiresAt.After(time.Now().UTC()) {
 		t.Fatalf("expected future expires_at, got %s", expiresAt.Format(time.RFC3339))
+	}
+}
+
+func TestEnrollDeviceCodeUsesDefaultPollIntervalWhenServerOmitsInterval(t *testing.T) {
+	var tokenPolls int
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		switch request.URL.Path {
+		case "/oauth2/v2.0/devicecode":
+			response.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(response).Encode(map[string]any{
+				"device_code":      "private-device-code",
+				"user_code":        "ABCD-EFGH",
+				"verification_uri": "https://microsoft.com/devicelogin",
+				"expires_in":       900,
+			})
+		case "/oauth2/v2.0/token":
+			tokenPolls++
+			response.Header().Set("Content-Type", "application/json")
+			response.WriteHeader(http.StatusBadRequest)
+			_ = json.NewEncoder(response).Encode(map[string]any{"error": "authorization_pending"})
+		default:
+			t.Fatalf("unexpected path: %s", request.URL.Path)
+		}
+	}))
+	defer server.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+
+	_, err := graph.EnrollDeviceCode(ctx, graph.Config{
+		SecretRef: secret.Ref("memory:graph-token"),
+		OAuth: graph.OAuthConfig{
+			ClientID:      "client-id",
+			DeviceCodeURL: server.URL + "/oauth2/v2.0/devicecode",
+			TokenURL:      server.URL + "/oauth2/v2.0/token",
+			Scopes:        []string{"offline_access", "Mail.Read", "Calendars.Read"},
+		},
+	}, secret.NewMemoryStore(nil), server.Client(), nil)
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("expected context deadline while waiting for next poll, got %v", err)
+	}
+	if tokenPolls != 1 {
+		t.Fatalf("expected default interval to prevent immediate re-poll, got %d token polls", tokenPolls)
 	}
 }
 

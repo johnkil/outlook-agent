@@ -12,7 +12,10 @@ import (
 	"github.com/johnkil/outlook-agent/internal/secret"
 )
 
-const deviceCodeGrantType = "urn:ietf:params:oauth:grant-type:device_code"
+const (
+	deviceCodeGrantType                  = "urn:ietf:params:oauth:grant-type:device_code"
+	defaultDeviceCodePollIntervalSeconds = 5
+)
 
 type DeviceCodeChallenge struct {
 	VerificationURI string `json:"verification_uri"`
@@ -65,7 +68,7 @@ func EnrollDeviceCode(ctx context.Context, config Config, secrets secret.Writabl
 		UserCode:        challenge.UserCode,
 		Message:         challenge.Message,
 		ExpiresIn:       challenge.ExpiresIn,
-		Interval:        challenge.Interval,
+		Interval:        deviceCodePollIntervalSeconds(challenge.Interval),
 	}
 	if onChallenge != nil {
 		onChallenge(publicChallenge)
@@ -141,7 +144,7 @@ func pollDeviceCodeToken(ctx context.Context, config OAuthConfig, client *http.C
 		expiresIn = 900
 	}
 	deadline := time.Now().UTC().Add(time.Duration(expiresIn) * time.Second)
-	interval := time.Duration(challenge.Interval) * time.Second
+	interval := deviceCodePollInterval(challenge.Interval)
 
 	for {
 		if time.Now().UTC().After(deadline) {
@@ -156,7 +159,7 @@ func pollDeviceCodeToken(ctx context.Context, config OAuthConfig, client *http.C
 		}
 		interval = nextInterval
 		if interval <= 0 {
-			continue
+			interval = time.Duration(defaultDeviceCodePollIntervalSeconds) * time.Second
 		}
 		select {
 		case <-ctx.Done():
@@ -164,6 +167,17 @@ func pollDeviceCodeToken(ctx context.Context, config OAuthConfig, client *http.C
 		case <-time.After(interval):
 		}
 	}
+}
+
+func deviceCodePollInterval(intervalSeconds int) time.Duration {
+	return time.Duration(deviceCodePollIntervalSeconds(intervalSeconds)) * time.Second
+}
+
+func deviceCodePollIntervalSeconds(intervalSeconds int) int {
+	if intervalSeconds <= 0 {
+		return defaultDeviceCodePollIntervalSeconds
+	}
+	return intervalSeconds
 }
 
 func pollDeviceCodeTokenOnce(ctx context.Context, config OAuthConfig, client *http.Client, tokenURL string, deviceCode string, interval time.Duration) (tokenCredential, bool, time.Duration, error) {
