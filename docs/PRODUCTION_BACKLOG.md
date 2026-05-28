@@ -38,8 +38,8 @@ investigated with public-safe evidence.
 
 ## Tracking Policy
 
-- Every open production gate must have a GitHub issue before the draft PR is
-  marked ready for review.
+- Every open production gate must have a GitHub issue before the gate is
+  considered closed for enterprise rollout.
 - Issues may refer to private operator evidence, but private values must stay
   outside this repository.
 - Closing a gate requires updating this document, `docs/PRODUCTION_READINESS.md`,

@@ -21,7 +21,7 @@ Status values:
 
 | Requirement | Status | Evidence |
 | --- | --- | --- |
-| GitHub repository | Ready | Project lives as a separate Git repository with pushed branch `feat/owa-adapter`; README defines the product shape. |
+| GitHub repository | Ready | Project lives as a separate Git repository; `origin/main` contains the merged public core and README defines the product shape. |
 | PRD/RFC/SPEC | Ready | `docs/PRD.md`, `docs/RFC.md`, and `docs/SPEC.md` define product goals, architecture, CLI, MCP tools, safety classes, config, and tests. |
 | Go CLI | Ready | `cmd/outlook-agent`, `internal/cli`, config runtime, enriched doctor readiness output, auth check, safety-class and action-specific policy explain, OWA discovery, strict explicit config-path handling, and MCP startup are covered by Go tests. |
 | MCP server | Ready | `internal/mcpserver` registers the public tools, including read-only rules/settings metadata tools, has in-memory MCP client smoke tests, verifies capabilities -> dry-run -> confirm flow, has a versioned compatibility policy in `docs/MCP_COMPATIBILITY.md`, and `cmd/outlook-agent` has stdio command-transport smoke coverage. |
