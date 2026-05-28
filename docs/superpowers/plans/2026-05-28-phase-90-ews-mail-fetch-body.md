@@ -37,4 +37,4 @@ body reads require a separate controlled fixture decision.
 - [x] Update public-safe README/SPEC/coverage/readiness/backlog/runbooks.
 - [x] Run full local CI, release smoke, public-safety, private-marker, and temp
   artifact checks.
-- [ ] Update PR #1 and issue #6 as appropriate.
+- [x] Update PR #1 and issue #6 as appropriate.
