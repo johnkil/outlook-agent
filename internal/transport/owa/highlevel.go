@@ -35,14 +35,22 @@ func (client *Transport) executeHighLevel(ctx context.Context, request transport
 		}
 		return transport.ActionResponse{OK: true, Data: map[string]any{"windows": normalizeAvailabilityWindows(response.Data)}}, true
 	case "mail.fetch_metadata":
-		response := client.executeService(ctx, "GetItem", client.buildGetItemRequest(stringValue(request.Payload, "id"), false), false)
+		messageID := strings.TrimSpace(stringValue(request.Payload, "id"))
+		if messageID == "" {
+			return transport.ActionResponse{OK: false, Error: "mail.fetch_metadata requires id"}, true
+		}
+		response := client.executeService(ctx, "GetItem", client.buildGetItemRequest(messageID, false), false)
 		if !response.OK {
 			return response, true
 		}
 		messages := normalizeMailItems(extractItems(response.Data))
 		return transport.ActionResponse{OK: true, Data: map[string]any{"message": firstAny(messages)}}, true
 	case "mail.fetch_body":
-		response := client.executeService(ctx, "GetItem", client.buildGetItemRequest(stringValue(request.Payload, "id"), true), false)
+		messageID := strings.TrimSpace(stringValue(request.Payload, "id"))
+		if messageID == "" {
+			return transport.ActionResponse{OK: false, Error: "mail.fetch_body requires id"}, true
+		}
+		response := client.executeService(ctx, "GetItem", client.buildGetItemRequest(messageID, true), false)
 		if !response.OK {
 			return response, true
 		}
@@ -50,13 +58,22 @@ func (client *Transport) executeHighLevel(ctx context.Context, request transport
 		itemID := itemID(item)
 		return transport.ActionResponse{OK: true, Data: map[string]any{"id": itemID["id"], "body_text": bodyText(item)}}, true
 	case "mail.list_attachments":
-		response := client.executeService(ctx, "GetItem", client.buildListAttachmentsRequest(stringValue(request.Payload, "id")), false)
+		messageID := strings.TrimSpace(stringValue(request.Payload, "id"))
+		if messageID == "" {
+			return transport.ActionResponse{OK: false, Error: "mail.list_attachments requires id"}, true
+		}
+		response := client.executeService(ctx, "GetItem", client.buildListAttachmentsRequest(messageID), false)
 		if !response.OK {
 			return response, true
 		}
 		return transport.ActionResponse{OK: true, Data: map[string]any{"attachments": normalizeAttachmentMetadata(extractAttachments(response.Data))}}, true
 	case "mail.fetch_attachment":
-		response := client.executeService(ctx, "GetAttachment", client.buildGetAttachmentRequest(stringValue(request.Payload, "attachment_id")), false)
+		messageID := strings.TrimSpace(stringValue(request.Payload, "message_id"))
+		attachmentID := strings.TrimSpace(stringValue(request.Payload, "attachment_id"))
+		if messageID == "" || attachmentID == "" {
+			return transport.ActionResponse{OK: false, Error: "mail.fetch_attachment requires message_id and attachment_id"}, true
+		}
+		response := client.executeService(ctx, "GetAttachment", client.buildGetAttachmentRequest(attachmentID), false)
 		if !response.OK {
 			return response, true
 		}
@@ -70,6 +87,9 @@ func (client *Transport) executeHighLevel(ctx context.Context, request transport
 		return transport.ActionResponse{OK: true, Data: map[string]any{"draft": firstAny(drafts)}}, true
 	case "mail.move_to_deleted_items":
 		ids := anySlice(request.Payload["ids"])
+		if len(ids) == 0 {
+			return transport.ActionResponse{OK: false, Error: "mail.move_to_deleted_items requires ids"}, true
+		}
 		response := client.executeService(ctx, "DeleteItem", client.buildMoveToDeletedItemsRequest(ids), false)
 		if !response.OK {
 			return response, true

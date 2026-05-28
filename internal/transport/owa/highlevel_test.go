@@ -281,6 +281,72 @@ func TestHighLevelCalendarAvailabilityRequiresMailboxEmail(t *testing.T) {
 	}
 }
 
+func TestHighLevelExplicitTargetActionsFailBeforeServiceCall(t *testing.T) {
+	tests := []struct {
+		name      string
+		request   transport.ActionRequest
+		wantError string
+	}{
+		{
+			name:      "fetch metadata",
+			request:   transport.ActionRequest{Name: "mail.fetch_metadata", Payload: map[string]any{}},
+			wantError: "mail.fetch_metadata requires id",
+		},
+		{
+			name:      "fetch body",
+			request:   transport.ActionRequest{Name: "mail.fetch_body", Payload: map[string]any{}},
+			wantError: "mail.fetch_body requires id",
+		},
+		{
+			name:      "list attachments",
+			request:   transport.ActionRequest{Name: "mail.list_attachments", Payload: map[string]any{}},
+			wantError: "mail.list_attachments requires id",
+		},
+		{
+			name: "fetch attachment missing message",
+			request: transport.ActionRequest{
+				Name:    "mail.fetch_attachment",
+				Payload: map[string]any{"attachment_id": "att-1"},
+			},
+			wantError: "mail.fetch_attachment requires message_id and attachment_id",
+		},
+		{
+			name: "fetch attachment missing attachment",
+			request: transport.ActionRequest{
+				Name:    "mail.fetch_attachment",
+				Payload: map[string]any{"message_id": "msg-1"},
+			},
+			wantError: "mail.fetch_attachment requires message_id and attachment_id",
+		},
+		{
+			name:      "move to deleted items",
+			request:   transport.ActionRequest{Name: "mail.move_to_deleted_items", Payload: map[string]any{}},
+			wantError: "mail.move_to_deleted_items requires ids",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var calls []recordedServiceCall
+			server := newOWAServiceServer(t, &calls, map[string]any{"Body": map[string]any{"ResponseMessages": map[string]any{"Items": []any{}}}})
+			defer server.Close()
+			client := newTestTransport(server)
+
+			response := client.Execute(context.Background(), tt.request)
+
+			if response.OK {
+				t.Fatalf("expected explicit target failure, got %#v", response)
+			}
+			if !strings.Contains(response.Error, tt.wantError) {
+				t.Fatalf("expected error %q, got %q", tt.wantError, response.Error)
+			}
+			if len(calls) != 0 {
+				t.Fatalf("expected failure before service call, got %#v", calls)
+			}
+		})
+	}
+}
+
 func TestCapabilitiesIncludeOWAHighLevelReadActions(t *testing.T) {
 	client := owa.NewTransport(owa.Config{
 		BaseURL:   "https://example.test",
