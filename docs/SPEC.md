@@ -27,6 +27,22 @@ Exit codes:
 - `3`: authentication or secret-store failure.
 - `4`: transport unavailable.
 
+`doctor` is read-only and never fetches secret values. Successful output
+includes:
+
+- `version`: build version shared with MCP server metadata;
+- `config`: `{found, kind, path}` where `kind` is `none`, `env`, or
+  `explicit`;
+- `profile`: selected profile name after applying config defaults and
+  `--profile`;
+- `secret_store`: keychain readiness metadata for the current platform;
+- `transports`: supported transport names;
+- `mcp_stdio`: whether the local MCP server mode is compiled in.
+
+If an explicit or environment config path is missing or invalid, `doctor`
+returns exit code `1`, `ok=false`, and a sanitized `error` mirrored under
+`config.error`.
+
 ## MCP Tools
 
 Initial public tool names:

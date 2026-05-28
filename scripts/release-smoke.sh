@@ -5,7 +5,9 @@ script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 repo_root="$(cd -- "${script_dir}/.." && pwd)"
 cd "$repo_root"
 
-dist_dir="${OUTLOOK_AGENT_DIST_DIR:-$(mktemp -d /private/tmp/outlook-agent-release-smoke.XXXXXX)}"
+tmp_root="${TMPDIR:-/tmp}"
+tmp_root="${tmp_root%/}"
+dist_dir="${OUTLOOK_AGENT_DIST_DIR:-$(mktemp -d "${tmp_root}/outlook-agent-release-smoke.XXXXXX")}"
 expected_archives=6
 
 cleanup() {
@@ -41,5 +43,20 @@ while IFS= read -r archive; do
     exit 1
   fi
 done < <(find "$dist_dir" -maxdepth 1 -type f \( -name "*.tar.gz" -o -name "*.zip" \) | sort)
+
+host_goos="$(go env GOOS)"
+host_goarch="$(go env GOARCH)"
+host_archive="${dist_dir}/outlook-agent_smoke_${host_goos}_${host_goarch}.tar.gz"
+if [[ -f "$host_archive" ]]; then
+  run_dir="$(mktemp -d "${tmp_root}/outlook-agent-release-run.XXXXXX")"
+  tar -xzf "$host_archive" -C "$run_dir"
+  doctor_output="$("${run_dir}/outlook-agent_smoke_${host_goos}_${host_goarch}/outlook-agent" doctor)"
+  rm -rf "$run_dir"
+  if ! grep -Fq '"version": "smoke"' <<<"$doctor_output"; then
+    echo "host archive doctor output did not include embedded smoke version" >&2
+    echo "$doctor_output" >&2
+    exit 1
+  fi
+fi
 
 echo "release smoke passed: ${archive_count} archives in ${dist_dir}"

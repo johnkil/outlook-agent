@@ -21,7 +21,7 @@ Status values:
 | --- | --- | --- |
 | GitHub repository | Ready | Project lives as a separate Git repository with pushed branch `feat/owa-adapter`; README defines the product shape. |
 | PRD/RFC/SPEC | Ready | `docs/PRD.md`, `docs/RFC.md`, and `docs/SPEC.md` define product goals, architecture, CLI, MCP tools, safety classes, config, and tests. |
-| Go CLI | Ready | `cmd/outlook-agent`, `internal/cli`, config runtime, auth check, policy explain, OWA discovery, strict explicit config-path handling, and MCP startup are covered by Go tests. |
+| Go CLI | Ready | `cmd/outlook-agent`, `internal/cli`, config runtime, enriched doctor readiness output, auth check, policy explain, OWA discovery, strict explicit config-path handling, and MCP startup are covered by Go tests. |
 | MCP server | Ready | `internal/mcpserver` registers the public tools, has in-memory MCP client smoke tests, verifies capabilities -> dry-run -> confirm flow, has a versioned compatibility policy in `docs/MCP_COMPATIBILITY.md`, and `cmd/outlook-agent` has stdio command-transport smoke coverage. |
 | All discovered OWA actions | Ready for discovered set | OWA registry classifies 55 raw service actions in `docs/OWA_ACTION_REGISTRY.md`; `TestTransportCapabilitiesIncludeClassifiedOWAServiceActions` and `TestOWARawCapabilitiesExposeExecutionRoutes` cover raw capability presence, classes, and execution routes. |
 | High-level mail/calendar workflows | Ready initial set | Search, metadata fetch, explicit fixture body fetch, explicit attachment listing/fetch, draft save, move to Deleted Items, calendar list, and availability are implemented and have live smoke evidence through controlled fixtures or bounded metadata reads. |

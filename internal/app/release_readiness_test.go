@@ -26,14 +26,17 @@ func TestReleaseReadinessArtifactsExist(t *testing.T) {
 			"govulncheck",
 		},
 		filepath.Join("..", "..", "scripts", "release-smoke.sh"): {
+			"TMPDIR",
 			"OUTLOOK_AGENT_DIST_DIR",
 			"scripts/release-build.sh",
 			"SHA256SUMS.txt",
 			"expected_archives=6",
+			"\"version\": \"smoke\"",
 		},
 		filepath.Join("..", "..", "scripts", "release-build.sh"): {
 			"GOOS",
 			"GOARCH",
+			"internal/buildinfo.Version",
 			"SHA256SUMS.txt",
 			"OUTLOOK_AGENT_SIGN_RELEASE",
 		},

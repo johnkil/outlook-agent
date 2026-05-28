@@ -20,7 +20,8 @@ Run:
 scripts/release-build.sh snapshot
 ```
 
-The script builds these target archives into `dist/`:
+The script builds these target archives into `dist/` and embeds the release
+version into `outlook-agent doctor` / MCP server metadata:
 
 - `darwin/amd64`
 - `darwin/arm64`
@@ -44,9 +45,10 @@ the repository, run:
 GOPATH=$PWD/.cache/go GOCACHE=$PWD/.cache/go-build GOMODCACHE=$PWD/.cache/go-mod scripts/release-smoke.sh
 ```
 
-The smoke builds into a temporary dist directory, verifies six platform
-archives, verifies `SHA256SUMS.txt`, and removes the temporary output unless
-`OUTLOOK_AGENT_KEEP_RELEASE_SMOKE=1` is set.
+The smoke builds into a portable temporary dist directory, verifies six
+platform archives, verifies `SHA256SUMS.txt`, starts the host-platform archive
+when one is runnable, checks the embedded `doctor` version, and removes the
+temporary output unless `OUTLOOK_AGENT_KEEP_RELEASE_SMOKE=1` is set.
 
 ## Signed Checksums
 

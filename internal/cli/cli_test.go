@@ -7,6 +7,8 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
+	"strings"
 	"testing"
 
 	"github.com/johnkil/outlook-agent/internal/transport"
@@ -37,6 +39,108 @@ func TestDoctorPrintsMachineReadableStatus(t *testing.T) {
 	}
 	if payload["mcp_stdio"] != true {
 		t.Fatalf("expected mcp_stdio=true, got %#v", payload["mcp_stdio"])
+	}
+}
+
+func TestDoctorReportsReadinessContract(t *testing.T) {
+	configPath := filepath.Join(t.TempDir(), "outlook-agent.json")
+	if err := os.WriteFile(configPath, []byte(`{
+		"default_profile": "work",
+		"profiles": {
+			"work": {
+				"transport": "fake"
+			}
+		}
+	}`), 0o600); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+
+	code := Run([]string{"--config", configPath, "doctor"}, &stdout, &stderr)
+
+	if code != 0 {
+		t.Fatalf("expected exit code 0, got %d, stderr=%s", code, stderr.String())
+	}
+	var payload struct {
+		OK         bool     `json:"ok"`
+		Command    string   `json:"command"`
+		Version    string   `json:"version"`
+		Profile    string   `json:"profile"`
+		MCPStdio   bool     `json:"mcp_stdio"`
+		Transports []string `json:"transports"`
+		Config     struct {
+			Found bool   `json:"found"`
+			Kind  string `json:"kind"`
+			Path  string `json:"path"`
+		} `json:"config"`
+		SecretStore struct {
+			Kind      string `json:"kind"`
+			Available bool   `json:"available"`
+		} `json:"secret_store"`
+	}
+	if err := json.Unmarshal(stdout.Bytes(), &payload); err != nil {
+		t.Fatalf("doctor output is not JSON: %v; output=%s", err, stdout.String())
+	}
+
+	if !payload.OK || payload.Command != "doctor" || payload.Version == "" {
+		t.Fatalf("unexpected doctor identity fields: %#v", payload)
+	}
+	if !payload.Config.Found || payload.Config.Kind != "explicit" || payload.Config.Path != configPath {
+		t.Fatalf("unexpected config discovery: %#v", payload.Config)
+	}
+	if payload.Profile != "work" {
+		t.Fatalf("expected selected profile work, got %q", payload.Profile)
+	}
+	if payload.SecretStore.Kind != "keychain" || payload.SecretStore.Available != (runtime.GOOS == "darwin") {
+		t.Fatalf("unexpected secret-store readiness: %#v", payload.SecretStore)
+	}
+	for _, expected := range []string{"fake", "graph", "ews", "owa"} {
+		if !stringSliceContains(payload.Transports, expected) {
+			t.Fatalf("expected transport %q in %#v", expected, payload.Transports)
+		}
+	}
+	if !payload.MCPStdio {
+		t.Fatalf("expected MCP stdio readiness")
+	}
+}
+
+func TestDoctorReportsMissingExplicitConfig(t *testing.T) {
+	missingConfig := filepath.Join(t.TempDir(), "missing.json")
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+
+	code := Run([]string{"--config", missingConfig, "doctor"}, &stdout, &stderr)
+
+	if code == 0 {
+		t.Fatalf("expected non-zero exit for missing explicit config, stdout=%s", stdout.String())
+	}
+	var payload struct {
+		OK      bool   `json:"ok"`
+		Command string `json:"command"`
+		Error   string `json:"error"`
+		Config  struct {
+			Found bool   `json:"found"`
+			Kind  string `json:"kind"`
+			Path  string `json:"path"`
+			Error string `json:"error"`
+		} `json:"config"`
+	}
+	if err := json.Unmarshal(stdout.Bytes(), &payload); err != nil {
+		t.Fatalf("doctor output is not JSON: %v; output=%s stderr=%s", err, stdout.String(), stderr.String())
+	}
+
+	if payload.OK {
+		t.Fatalf("expected ok=false, got %#v", payload)
+	}
+	if payload.Command != "doctor" {
+		t.Fatalf("expected command doctor, got %q", payload.Command)
+	}
+	if payload.Config.Found || payload.Config.Kind != "explicit" || payload.Config.Path != missingConfig {
+		t.Fatalf("unexpected missing config discovery: %#v", payload.Config)
+	}
+	if !strings.Contains(payload.Error, "config file not found") || payload.Config.Error != payload.Error {
+		t.Fatalf("expected sanitized config error, got %#v", payload)
 	}
 }
 

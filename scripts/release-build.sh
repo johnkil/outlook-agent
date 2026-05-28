@@ -52,7 +52,7 @@ for target in "${targets[@]}"; do
 
   mkdir -p "$package_dir"
   CGO_ENABLED=0 GOOS="$GOOS" GOARCH="$GOARCH" \
-    go build -trimpath -ldflags "-s -w" -o "${package_dir}/${output_name}" ./cmd/outlook-agent
+    go build -trimpath -ldflags "-s -w -X github.com/johnkil/outlook-agent/internal/buildinfo.Version=${version}" -o "${package_dir}/${output_name}" ./cmd/outlook-agent
   cp README.md "${package_dir}/"
   cp docs/RELEASE.md "${package_dir}/"
 

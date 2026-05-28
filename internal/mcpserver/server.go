@@ -9,6 +9,7 @@ import (
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
+	"github.com/johnkil/outlook-agent/internal/buildinfo"
 	"github.com/johnkil/outlook-agent/internal/confirm"
 	"github.com/johnkil/outlook-agent/internal/policy"
 	"github.com/johnkil/outlook-agent/internal/redact"
@@ -237,7 +238,7 @@ func NewWithTransportProfile(client transport.Transport, profile string) *mcp.Se
 }
 
 func NewWithRuntime(runtime *Runtime) *mcp.Server {
-	server := mcp.NewServer(&mcp.Implementation{Name: "outlook-agent", Version: "0.1.0"}, nil)
+	server := mcp.NewServer(&mcp.Implementation{Name: "outlook-agent", Version: buildinfo.Version}, nil)
 
 	mcp.AddTool(server, &mcp.Tool{Name: "outlook.auth_check", Description: "Check Outlook Agent authentication for the selected profile."}, authCheckHandler(runtime))
 	mcp.AddTool(server, &mcp.Tool{Name: "outlook.capabilities", Description: "List Outlook Agent transport capabilities."}, capabilitiesHandler(runtime.client))

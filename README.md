@@ -6,7 +6,8 @@ mail and calendar systems.
 The project goal is to provide one production runtime that can be used by
 OpenCode, Codex, and other MCP-capable agents:
 
-- `outlook-agent doctor` checks local runtime readiness.
+- `outlook-agent doctor` checks version, config discovery, secret-store,
+  transport, and local MCP readiness.
 - `outlook-agent auth check` verifies configured credentials without printing
   secrets.
 - `outlook-agent policy explain` shows which actions are safe, guarded, or

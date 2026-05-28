@@ -6,8 +6,11 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"runtime"
 	"strconv"
 
+	"github.com/johnkil/outlook-agent/internal/buildinfo"
+	"github.com/johnkil/outlook-agent/internal/config"
 	"github.com/johnkil/outlook-agent/internal/policy"
 	"github.com/johnkil/outlook-agent/internal/transport"
 	"github.com/johnkil/outlook-agent/internal/transport/owa"
@@ -53,12 +56,7 @@ func RunWithRuntime(args []string, stdout io.Writer, stderr io.Writer, runtime R
 
 	switch commandArgs[0] {
 	case "doctor":
-		return writeJSON(stdout, map[string]any{
-			"ok":         true,
-			"command":    "doctor",
-			"mcp_stdio":  true,
-			"transports": []string{"fake", "graph", "ews", "owa"},
-		})
+		return runDoctor(stdout, options)
 	case "policy":
 		if len(commandArgs) == 2 && commandArgs[1] == "explain" {
 			return writeJSON(stdout, map[string]any{
@@ -92,6 +90,62 @@ func RunWithRuntime(args []string, stdout io.Writer, stderr io.Writer, runtime R
 
 	fmt.Fprintf(stderr, "unknown command: %s\n", commandArgs[0])
 	return 1
+}
+
+type doctorConfigOutput struct {
+	Found bool   `json:"found"`
+	Kind  string `json:"kind"`
+	Path  string `json:"path,omitempty"`
+	Error string `json:"error,omitempty"`
+}
+
+type doctorSecretStoreOutput struct {
+	Kind      string `json:"kind"`
+	Available bool   `json:"available"`
+}
+
+type doctorOutput struct {
+	OK          bool                    `json:"ok"`
+	Command     string                  `json:"command"`
+	Version     string                  `json:"version"`
+	Profile     string                  `json:"profile,omitempty"`
+	Config      doctorConfigOutput      `json:"config"`
+	SecretStore doctorSecretStoreOutput `json:"secret_store"`
+	MCPStdio    bool                    `json:"mcp_stdio"`
+	Transports  []string                `json:"transports"`
+	Error       string                  `json:"error,omitempty"`
+}
+
+func runDoctor(stdout io.Writer, options Options) int {
+	loaded, source, err := config.Load(config.Options{ExplicitPath: options.ConfigPath})
+	profile := options.Profile
+	if profile == "" {
+		profile = loaded.DefaultProfile
+	}
+	output := doctorOutput{
+		OK:      err == nil,
+		Command: "doctor",
+		Version: buildinfo.Version,
+		Profile: profile,
+		Config: doctorConfigOutput{
+			Found: source.Found,
+			Kind:  source.Kind,
+			Path:  source.Path,
+		},
+		SecretStore: doctorSecretStoreOutput{
+			Kind:      "keychain",
+			Available: runtime.GOOS == "darwin",
+		},
+		MCPStdio:   true,
+		Transports: []string{"fake", "graph", "ews", "owa"},
+	}
+	if err != nil {
+		output.Error = err.Error()
+		output.Config.Error = err.Error()
+		writeJSON(stdout, output)
+		return 1
+	}
+	return writeJSON(stdout, output)
 }
 
 func runAuthCheck(stdout io.Writer, options Options, runtime Runtime) int {
