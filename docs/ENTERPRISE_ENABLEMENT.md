@@ -63,8 +63,20 @@ Operator checklist:
 5. Configure an EWS profile with endpoint, username, and secret reference in a
    private config file.
 6. Run `outlook-agent --config <private-config> auth check`.
-7. Start with `GetFolder` or another read-metadata SOAP request before using
-   raw EWSRequest.
+7. Run the EWS-specific read-metadata smoke harness before using raw
+   EWSRequest or broader SOAP workflows:
+
+```bash
+GOPATH=$PWD/.cache/go GOCACHE=$PWD/.cache/go-build GOMODCACHE=$PWD/.cache/go-mod \
+OUTLOOK_AGENT_LIVE_EWS_CONFIG=<private-config> \
+OUTLOOK_AGENT_LIVE_EWS_PROFILE=<ews-profile> \
+go test ./internal/app -run TestLiveEWSReadMetadataSmoke -count=1 -v
+```
+
+The harness verifies `auth check` through the EWS `GetFolder` auth probe and
+then executes metadata-only `GetFolder` for Inbox. Raw EWSRequest, body,
+attachment, send-like, and write actions are excluded from this read-metadata
+harness.
 
 ## Secret Store And Config
 

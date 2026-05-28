@@ -123,6 +123,23 @@ when a message id exists, and `calendar.list`. It deliberately excludes
 body reads, attachment reads, draft creation, moves, send-like actions, raw
 GraphRequest, and all write actions.
 
+## EWS Live Validation
+
+Use the EWS-specific live smoke harness after a private EWS profile has been
+approved for the endpoint/auth method and `auth check` is expected to work:
+
+```bash
+GOPATH=$PWD/.cache/go GOCACHE=$PWD/.cache/go-build GOMODCACHE=$PWD/.cache/go-mod \
+OUTLOOK_AGENT_LIVE_EWS_CONFIG=<private-config> \
+OUTLOOK_AGENT_LIVE_EWS_PROFILE=<ews-profile> \
+go test ./internal/app -run TestLiveEWSReadMetadataSmoke -count=1 -v
+```
+
+The private config and profile stay outside this repository. The harness checks
+EWS authentication through the configured auth probe and executes metadata-only
+`GetFolder` against Inbox. It deliberately excludes raw EWSRequest, body reads,
+attachment reads, send-like actions, and all write actions.
+
 ## Rollback Procedure
 
 If an upgrade fails:

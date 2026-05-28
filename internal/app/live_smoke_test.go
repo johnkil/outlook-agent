@@ -200,6 +200,44 @@ func TestLiveGraphReadOnlySmoke(t *testing.T) {
 	}
 }
 
+func TestLiveEWSReadMetadataSmoke(t *testing.T) {
+	configPath := os.Getenv("OUTLOOK_AGENT_LIVE_EWS_CONFIG")
+	if configPath == "" {
+		t.Skip("OUTLOOK_AGENT_LIVE_EWS_CONFIG is not set")
+	}
+	profile := os.Getenv("OUTLOOK_AGENT_LIVE_EWS_PROFILE")
+
+	ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
+	defer cancel()
+
+	client, _, err := app.BuildTransport(app.Options{ConfigPath: configPath, Profile: profile})
+	if err != nil {
+		t.Fatalf("build live EWS transport: %v", err)
+	}
+	if client.Name() != "ews" {
+		t.Fatalf("expected ews transport, got %q", client.Name())
+	}
+	auth := client.Authenticate(ctx, profile)
+	if !auth.OK {
+		t.Fatalf("live EWS auth failed: %s", auth.Error)
+	}
+
+	response := client.Execute(ctx, transport.ActionRequest{
+		Name:    "GetFolder",
+		Payload: map[string]any{"folder_id": "inbox"},
+	})
+	if !response.OK {
+		t.Fatalf("live EWS GetFolder failed: %s summary=%#v", response.Error, responseSummary(response.Data))
+	}
+	folder, ok := response.Data["folder"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected EWS folder metadata, got %#v", responseSummary(response.Data))
+	}
+	if !hasAnyEWSFolderMetadata(folder) {
+		t.Fatalf("expected EWS folder metadata keys, got %#v", folder)
+	}
+}
+
 func TestLiveOWARawFindPeopleSmoke(t *testing.T) {
 	configPath := os.Getenv("OUTLOOK_AGENT_LIVE_CONFIG")
 	if configPath == "" {
@@ -297,6 +335,25 @@ func firstLiveMessageID(data map[string]any) string {
 		}
 	}
 	return ""
+}
+
+func hasAnyEWSFolderMetadata(folder map[string]any) bool {
+	for _, key := range []string{"display_name", "total_count", "child_folder_count", "unread_count", "response_code"} {
+		value, ok := folder[key]
+		if !ok {
+			continue
+		}
+		if text, ok := value.(string); ok {
+			if text != "" {
+				return true
+			}
+			continue
+		}
+		if value != nil {
+			return true
+		}
+	}
+	return false
 }
 
 func liveCalendarDayRange(now time.Time) (string, string) {

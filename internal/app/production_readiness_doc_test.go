@@ -258,6 +258,42 @@ func TestDocsTrackGraphLiveSmokeHarness(t *testing.T) {
 	}
 }
 
+func TestDocsTrackEWSLiveSmokeHarness(t *testing.T) {
+	documents := map[string][]string{
+		filepath.Join("..", "..", "docs", "ENTERPRISE_ENABLEMENT.md"): {
+			"OUTLOOK_AGENT_LIVE_EWS_CONFIG",
+			"OUTLOOK_AGENT_LIVE_EWS_PROFILE",
+			"TestLiveEWSReadMetadataSmoke",
+		},
+		filepath.Join("..", "..", "docs", "PRODUCTION_BACKLOG.md"): {
+			"EWS read-metadata live smoke harness",
+			"auth check",
+			"GetFolder",
+		},
+		filepath.Join("..", "..", "docs", "PRODUCTION_READINESS.md"): {
+			"TestLiveEWSReadMetadataSmoke",
+			"raw EWSRequest/body/attachment/write actions are excluded",
+		},
+		filepath.Join("..", "..", "docs", "OPERATIONS.md"): {
+			"OUTLOOK_AGENT_LIVE_EWS_CONFIG",
+			"TestLiveEWSReadMetadataSmoke",
+		},
+	}
+
+	for path, required := range documents {
+		data, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatalf("read %s: %v", path, err)
+		}
+		text := string(data)
+		for _, marker := range required {
+			if !strings.Contains(text, marker) {
+				t.Fatalf("expected %s to contain %q", path, marker)
+			}
+		}
+	}
+}
+
 func sectionBetween(text, startMarker, endMarker string) string {
 	start := strings.Index(text, startMarker)
 	if start < 0 {
