@@ -43,6 +43,7 @@ func (client *Transport) Capabilities(context.Context) transport.CapabilitySet {
 		{Name: "GetFolder", Transport: "ews", Class: policy.ReadMetadata, Level: action.LevelRawGuardedExecution},
 		{Name: "mail.search", Transport: "ews", Class: policy.ReadMetadata, Level: action.LevelHighLevelMCPTool},
 		{Name: "mail.fetch_metadata", Transport: "ews", Class: policy.ReadMetadata, Level: action.LevelHighLevelMCPTool},
+		{Name: "calendar.list", Transport: "ews", Class: policy.ReadMetadata, Level: action.LevelHighLevelMCPTool},
 		{Name: "EWSRequest", Transport: "ews", Class: policy.Destructive, Level: action.LevelRawGuardedExecution},
 	}}
 }
@@ -78,6 +79,12 @@ func (client *Transport) Execute(ctx context.Context, request transport.ActionRe
 			return transport.ActionResponse{OK: false, Error: err.Error()}
 		}
 		return transport.ActionResponse{OK: true, Data: map[string]any{"message": normalizeFindItemMessage(message)}}
+	case "calendar.list":
+		events, err := client.listCalendarEvents(ctx, stringValue(request.Payload, "start", ""), stringValue(request.Payload, "end", ""), intValue(request.Payload, "max", 150))
+		if err != nil {
+			return transport.ActionResponse{OK: false, Error: err.Error()}
+		}
+		return transport.ActionResponse{OK: true, Data: map[string]any{"events": events}}
 	case "EWSRequest":
 		data, err := client.executeRawEWSRequest(ctx, request.Payload)
 		if err != nil {
@@ -194,6 +201,52 @@ func (client *Transport) findItems(ctx context.Context, folderID string, maxItem
 	return messages, nil
 }
 
+func (client *Transport) listCalendarEvents(ctx context.Context, start string, end string, maxItems int) ([]any, error) {
+	start = strings.TrimSpace(start)
+	end = strings.TrimSpace(end)
+	if start == "" || end == "" {
+		return nil, fmt.Errorf("calendar.list requires start and end")
+	}
+	if err := client.config.Validate(); err != nil {
+		return nil, err
+	}
+	if client.secrets == nil {
+		return nil, fmt.Errorf("secret store is not configured")
+	}
+	password, err := client.secrets.Get(ctx, client.config.SecretRef)
+	if err != nil {
+		return nil, err
+	}
+	request, err := BuildFindCalendarItemsRequest(client.config, password, start, end, maxItems)
+	if err != nil {
+		return nil, err
+	}
+	request = request.WithContext(ctx)
+	response, err := client.client.Do(request)
+	if err != nil {
+		return nil, err
+	}
+	defer response.Body.Close()
+	items, parseErr := parseFindCalendarItemsResponse(response.Body)
+	if response.StatusCode < 200 || response.StatusCode >= 300 {
+		if parseErr != nil {
+			return nil, fmt.Errorf("ews returned HTTP %d", response.StatusCode)
+		}
+		return nil, fmt.Errorf("ews returned HTTP %d", response.StatusCode)
+	}
+	if parseErr != nil {
+		return nil, parseErr
+	}
+	events := make([]any, 0, len(items))
+	for _, item := range items {
+		events = append(events, normalizeCalendarEvent(item))
+	}
+	if events == nil {
+		return []any{}, nil
+	}
+	return events, nil
+}
+
 func (client *Transport) getItem(ctx context.Context, itemID string) (findItemMessage, error) {
 	if err := client.config.Validate(); err != nil {
 		return findItemMessage{}, err
@@ -270,6 +323,16 @@ func normalizeFindItemMessage(item findItemMessage) map[string]any {
 		"received_at":     item.ReceivedAt,
 		"is_read":         item.IsRead,
 		"has_attachments": item.HasAttachments,
+	}
+}
+
+func normalizeCalendarEvent(item calendarEvent) map[string]any {
+	return map[string]any{
+		"id":       item.ID,
+		"title":    item.Subject,
+		"start":    item.Start,
+		"end":      item.End,
+		"location": item.Location,
 	}
 }
 

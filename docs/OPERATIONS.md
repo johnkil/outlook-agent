@@ -139,7 +139,8 @@ The private config and profile stay outside this repository. The harness checks
 EWS authentication through the configured auth probe, executes metadata-only
 `GetFolder` against Inbox, and executes metadata-only `mail.search` through
 EWS `FindItem`, plus metadata-only `mail.fetch_metadata` through EWS `GetItem`
-when a message id is available. It deliberately excludes raw EWSRequest, body
+when a message id is available, and metadata-only `calendar.list` through EWS
+`FindItem` with `CalendarView`. It deliberately excludes raw EWSRequest, body
 reads, attachment reads, send-like actions, and all write actions.
 
 ## Rollback Procedure

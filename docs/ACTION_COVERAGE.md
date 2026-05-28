@@ -100,6 +100,9 @@ Implemented high-level OWA mappings:
 | dry-run mutating summaries | attachment/folder/rule/config payload shapes | unit-tested for plural and singular OWA body keys; stdio MCP dry-run live smoke-tested for representative variants; no confirmation executed |
 | dry-run payload catalog | 26 mutating raw OWA actions | sanitized example payload exists for every raw `reversible_bulk`, `destructive`, `send_like`, and `settings_or_rules` action; each example produces a non-zero dry-run count without network calls and is live stdio MCP smoke-tested after auth without confirmation |
 | raw Graph escape hatch | `GraphRequest` | implemented and unit-tested as a destructive raw action with a dry-run summary requiring unsafe mode plus exact confirmation; device-code token acquisition and refresh-capable token cache are unit-tested; live Graph enablement remains blocked on app registration/admin consent/live token storage |
+| typed EWS mail search | EWS `FindItem` | implemented as metadata-only `mail.search` with unit coverage; live EWS enablement remains blocked on endpoint/auth policy |
+| typed EWS mail metadata fetch | EWS `GetItem` | implemented as metadata-only `mail.fetch_metadata` with unit coverage; live EWS enablement remains blocked on endpoint/auth policy |
+| typed EWS calendar list | EWS `FindItem` with `CalendarView` | implemented as metadata-only `calendar.list` with unit coverage; live EWS enablement remains blocked on endpoint/auth policy |
 | raw EWS SOAP escape hatch | `EWSRequest` | implemented and unit-tested as a destructive raw action for caller-provided SOAP XML envelopes with a dry-run summary requiring unsafe mode plus exact confirmation; live EWS enablement remains blocked on endpoint/auth policy |
 
 Important OWA compatibility note: high-level OWA JSON payloads use ordered JSON

@@ -76,7 +76,8 @@ go test ./internal/app -run TestLiveEWSReadMetadataSmoke -count=1 -v
 The harness verifies `auth check` through the EWS `GetFolder` auth probe,
 executes metadata-only `GetFolder` for Inbox, and executes metadata-only
 `mail.search` through EWS `FindItem`, plus metadata-only
-`mail.fetch_metadata` through EWS `GetItem` when a message id is available.
+`mail.fetch_metadata` through EWS `GetItem` when a message id is available,
+and metadata-only `calendar.list` through EWS `FindItem` with `CalendarView`.
 Raw EWSRequest, body, attachment, send-like, and write actions are excluded
 from this read-metadata harness.
 

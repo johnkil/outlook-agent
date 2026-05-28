@@ -80,7 +80,8 @@ Status: implemented initial slice.
   remain.
 - EWS transport where Exchange policy allows it: initial SOAP `GetFolder`
   read-metadata probe/action, typed metadata-only `mail.search` via
-  `FindItem`, and typed metadata-only `mail.fetch_metadata` via `GetItem`
+  `FindItem`, typed metadata-only `mail.fetch_metadata` via `GetItem`, and
+  typed metadata-only `calendar.list` via `FindItem` with `CalendarView`
   implemented; guarded raw `EWSRequest` implemented as an unsafe
   dry-run/confirm escape hatch; additional typed high-level EWS workflows and
   live environment/auth enablement remain.

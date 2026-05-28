@@ -260,6 +260,21 @@ func TestLiveEWSReadMetadataSmoke(t *testing.T) {
 			t.Fatalf("expected EWS message metadata, got %#v", responseSummary(metadata.Data))
 		}
 	}
+
+	start, end := liveCalendarDayRange(time.Now())
+	calendar := client.Execute(ctx, transport.ActionRequest{
+		Name: "calendar.list",
+		Payload: map[string]any{
+			"start": start,
+			"end":   end,
+		},
+	})
+	if !calendar.OK {
+		t.Fatalf("live EWS calendar.list failed: %s summary=%#v", calendar.Error, responseSummary(calendar.Data))
+	}
+	if _, ok := calendar.Data["events"].([]any); !ok {
+		t.Fatalf("expected EWS calendar event metadata list, got %#v", responseSummary(calendar.Data))
+	}
 }
 
 func TestLiveOWARawFindPeopleSmoke(t *testing.T) {

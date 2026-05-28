@@ -50,8 +50,8 @@ production-ready, but they are intentionally outside the public core repository:
 - EWS endpoint availability, Exchange auth method enablement, and any
   server-side allow-listing or tenant policy changes. The public EWS adapter
   already has metadata-only `GetFolder`, `mail.search`, and
-  `mail.fetch_metadata` coverage, but private live evidence still belongs to
-  the enterprise rollout.
+  `mail.fetch_metadata`, and `calendar.list` coverage, but private live
+  evidence still belongs to the enterprise rollout.
 - Enterprise secret scanning and repository protection owned by the GitHub
   organization or repository administrators.
   This includes enterprise secret scanning policy, alert routing, and owners.
@@ -76,7 +76,9 @@ surface:
 - Additional typed Graph shortcuts beyond the current mail/calendar,
   read-only rules/settings, and shared/delegated mailbox target surface, such
   as specialized admin flows.
-- Typed EWS shortcuts beyond `GetFolder` and the raw EWSRequest escape hatch.
+- Typed EWS shortcuts beyond the current metadata-only `GetFolder`,
+  `mail.search`, `mail.fetch_metadata`, and `calendar.list` paths plus the raw
+  EWSRequest escape hatch.
 - Live execution of every destructive, send-like, or settings-changing raw
   action. Dry-run coverage plus exact confirmation behavior is the required
   safety proof; execution should use controlled fixtures only.

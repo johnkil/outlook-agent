@@ -86,7 +86,7 @@ func TestTransportAuthenticatesWithGetFolderSOAP(t *testing.T) {
 	}
 }
 
-func TestTransportCapabilitiesIncludeGetFolderRawRequestMailSearchAndFetchMetadata(t *testing.T) {
+func TestTransportCapabilitiesIncludeGetFolderMailSearchFetchMetadataCalendarListAndRawRequest(t *testing.T) {
 	client := ews.NewTransport(ews.Config{
 		EndpointURL: "https://example.test/EWS/Exchange.asmx",
 		Username:    "DOMAIN\\user",
@@ -94,8 +94,8 @@ func TestTransportCapabilitiesIncludeGetFolderRawRequestMailSearchAndFetchMetada
 	}, secret.NewMemoryStore(map[string]string{"memory:ews": "password-secret"}), nil)
 
 	capabilities := client.Capabilities(context.Background())
-	if len(capabilities.Actions) != 4 {
-		t.Fatalf("expected four EWS actions, got %#v", capabilities.Actions)
+	if len(capabilities.Actions) != 5 {
+		t.Fatalf("expected five EWS actions, got %#v", capabilities.Actions)
 	}
 	actions := map[string]action.Definition{}
 	for _, item := range capabilities.Actions {
@@ -116,6 +116,10 @@ func TestTransportCapabilitiesIncludeGetFolderRawRequestMailSearchAndFetchMetada
 	fetchMetadata := actions["mail.fetch_metadata"]
 	if fetchMetadata.Name != "mail.fetch_metadata" || fetchMetadata.Transport != "ews" || fetchMetadata.Class != policy.ReadMetadata || fetchMetadata.Level != action.LevelHighLevelMCPTool {
 		t.Fatalf("unexpected mail.fetch_metadata capability: %#v", fetchMetadata)
+	}
+	calendarList := actions["calendar.list"]
+	if calendarList.Name != "calendar.list" || calendarList.Transport != "ews" || calendarList.Class != policy.ReadMetadata || calendarList.Level != action.LevelHighLevelMCPTool {
+		t.Fatalf("unexpected calendar.list capability: %#v", calendarList)
 	}
 }
 
@@ -317,6 +321,91 @@ func TestTransportRejectsMailFetchMetadataWithoutID(t *testing.T) {
 
 	if result.OK || !strings.Contains(result.Error, "mail.fetch_metadata requires id") {
 		t.Fatalf("expected id error, got %#v", result)
+	}
+}
+
+func TestTransportExecutesCalendarListWithCalendarView(t *testing.T) {
+	var sawCalendarView bool
+	var sawAuth bool
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		if request.Method != http.MethodPost {
+			t.Fatalf("expected POST, got %s", request.Method)
+		}
+		if request.Header.Get("SOAPAction") != "http://schemas.microsoft.com/exchange/services/2006/messages/FindItem" {
+			t.Fatalf("unexpected SOAPAction: %s", request.Header.Get("SOAPAction"))
+		}
+		auth := strings.TrimPrefix(request.Header.Get("Authorization"), "Basic ")
+		decoded, err := base64.StdEncoding.DecodeString(auth)
+		if err != nil {
+			t.Fatalf("decode auth: %v", err)
+		}
+		sawAuth = string(decoded) == "DOMAIN\\user:password-secret"
+		body, err := io.ReadAll(request.Body)
+		if err != nil {
+			t.Fatalf("read body: %v", err)
+		}
+		text := string(body)
+		sawCalendarView = strings.Contains(text, `<m:FindItem Traversal="Shallow">`) &&
+			strings.Contains(text, `<t:BaseShape>IdOnly</t:BaseShape>`) &&
+			strings.Contains(text, `<t:FieldURI FieldURI="item:Subject"/>`) &&
+			strings.Contains(text, `<t:FieldURI FieldURI="calendar:Start"/>`) &&
+			strings.Contains(text, `<t:FieldURI FieldURI="calendar:End"/>`) &&
+			strings.Contains(text, `<t:FieldURI FieldURI="calendar:Location"/>`) &&
+			strings.Contains(text, `<m:CalendarView MaxEntriesReturned="5" StartDate="2026-05-28T00:00:00Z" EndDate="2026-05-29T00:00:00Z"/>`) &&
+			strings.Contains(text, `<t:DistinguishedFolderId Id="calendar"/>`)
+		response.Header().Set("Content-Type", "text/xml")
+		_, _ = response.Write([]byte(successfulFindCalendarItemsResponse()))
+	}))
+	defer server.Close()
+
+	client := ews.NewTransport(ews.Config{
+		EndpointURL: server.URL + "/EWS/Exchange.asmx",
+		Username:    "DOMAIN\\user",
+		SecretRef:   secret.Ref("memory:ews"),
+	}, secret.NewMemoryStore(map[string]string{"memory:ews": "password-secret"}), server.Client())
+
+	result := client.Execute(context.Background(), transport.ActionRequest{
+		Name: "calendar.list",
+		Payload: map[string]any{
+			"start": "2026-05-28T00:00:00Z",
+			"end":   "2026-05-29T00:00:00Z",
+			"max":   5,
+		},
+	})
+
+	if !result.OK {
+		t.Fatalf("expected calendar.list ok, got %#v", result)
+	}
+	if !sawAuth || !sawCalendarView {
+		t.Fatalf("expected auth and CalendarView SOAP request, auth=%v calendarView=%v", sawAuth, sawCalendarView)
+	}
+	events := result.Data["events"].([]any)
+	if len(events) != 2 {
+		t.Fatalf("expected two events, got %#v", events)
+	}
+	first := events[0].(map[string]any)
+	if first["id"] != "event-1" || first["title"] != "Planning" || first["location"] != "Room 1" {
+		t.Fatalf("unexpected first event: %#v", first)
+	}
+	if first["start"] != "2026-05-28T09:00:00Z" || first["end"] != "2026-05-28T09:30:00Z" {
+		t.Fatalf("unexpected first event time fields: %#v", first)
+	}
+}
+
+func TestTransportRejectsCalendarListWithoutRange(t *testing.T) {
+	client := ews.NewTransport(ews.Config{
+		EndpointURL: "https://example.test/EWS/Exchange.asmx",
+		Username:    "DOMAIN\\user",
+		SecretRef:   secret.Ref("memory:ews"),
+	}, secret.NewMemoryStore(map[string]string{"memory:ews": "password-secret"}), nil)
+
+	result := client.Execute(context.Background(), transport.ActionRequest{
+		Name:    "calendar.list",
+		Payload: map[string]any{"start": "2026-05-28T00:00:00Z"},
+	})
+
+	if result.OK || !strings.Contains(result.Error, "calendar.list requires start and end") {
+		t.Fatalf("expected range error, got %#v", result)
 	}
 }
 
@@ -541,6 +630,41 @@ func successfulGetItemResponse() string {
         </m:GetItemResponseMessage>
       </m:ResponseMessages>
     </m:GetItemResponse>
+  </soap:Body>
+</soap:Envelope>`
+}
+
+func successfulFindCalendarItemsResponse() string {
+	return `<?xml version="1.0" encoding="utf-8"?>
+<soap:Envelope xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/"
+  xmlns:m="http://schemas.microsoft.com/exchange/services/2006/messages"
+  xmlns:t="http://schemas.microsoft.com/exchange/services/2006/types">
+  <soap:Body>
+    <m:FindItemResponse>
+      <m:ResponseMessages>
+        <m:FindItemResponseMessage ResponseClass="Success">
+          <m:ResponseCode>NoError</m:ResponseCode>
+          <m:RootFolder TotalItemsInView="2" IncludesLastItemInRange="true">
+            <t:Items>
+              <t:CalendarItem>
+                <t:ItemId Id="event-1" ChangeKey="ck-1"/>
+                <t:Subject>Planning</t:Subject>
+                <t:Start>2026-05-28T09:00:00Z</t:Start>
+                <t:End>2026-05-28T09:30:00Z</t:End>
+                <t:Location>Room 1</t:Location>
+              </t:CalendarItem>
+              <t:CalendarItem>
+                <t:ItemId Id="event-2" ChangeKey="ck-2"/>
+                <t:Subject>Retro</t:Subject>
+                <t:Start>2026-05-28T10:00:00Z</t:Start>
+                <t:End>2026-05-28T10:30:00Z</t:End>
+                <t:Location>Room 2</t:Location>
+              </t:CalendarItem>
+            </t:Items>
+          </m:RootFolder>
+        </m:FindItemResponseMessage>
+      </m:ResponseMessages>
+    </m:FindItemResponse>
   </soap:Body>
 </soap:Envelope>`
 }

@@ -66,6 +66,24 @@ func BuildGetItemRequest(config Config, password secret.Value, itemID string) (*
 	return request, nil
 }
 
+func BuildFindCalendarItemsRequest(config Config, password secret.Value, start string, end string, maxItems int) (*http.Request, error) {
+	endpoint, err := config.normalizedEndpointURL()
+	if err != nil {
+		return nil, err
+	}
+	body := findCalendarItemsEnvelope(start, end, maxItems)
+	request, err := http.NewRequest(http.MethodPost, endpoint, strings.NewReader(body))
+	if err != nil {
+		return nil, err
+	}
+	request.Header.Set("Content-Type", "text/xml; charset=utf-8")
+	request.Header.Set("Accept", "text/xml")
+	request.Header.Set("User-Agent", "outlook-agent")
+	request.Header.Set("SOAPAction", "http://schemas.microsoft.com/exchange/services/2006/messages/FindItem")
+	request.SetBasicAuth(config.Username, string(password))
+	return request, nil
+}
+
 func BuildRawEWSRequest(config Config, password secret.Value, bodyXML string, soapAction string) (*http.Request, error) {
 	endpoint, err := config.normalizedEndpointURL()
 	if err != nil {
@@ -166,6 +184,36 @@ func getItemEnvelope(itemID string) string {
 </soap:Envelope>`, escapedItemID)
 }
 
+func findCalendarItemsEnvelope(start string, end string, maxItems int) string {
+	if maxItems <= 0 {
+		maxItems = 150
+	}
+	escapedStart := html.EscapeString(strings.TrimSpace(start))
+	escapedEnd := html.EscapeString(strings.TrimSpace(end))
+	return fmt.Sprintf(`<?xml version="1.0" encoding="utf-8"?>
+<soap:Envelope xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/"
+  xmlns:m="http://schemas.microsoft.com/exchange/services/2006/messages"
+  xmlns:t="http://schemas.microsoft.com/exchange/services/2006/types">
+  <soap:Body>
+    <m:FindItem Traversal="Shallow">
+      <m:ItemShape>
+        <t:BaseShape>IdOnly</t:BaseShape>
+        <t:AdditionalProperties>
+          <t:FieldURI FieldURI="item:Subject"/>
+          <t:FieldURI FieldURI="calendar:Start"/>
+          <t:FieldURI FieldURI="calendar:End"/>
+          <t:FieldURI FieldURI="calendar:Location"/>
+        </t:AdditionalProperties>
+      </m:ItemShape>
+      <m:CalendarView MaxEntriesReturned="%d" StartDate="%s" EndDate="%s"/>
+      <m:ParentFolderIds>
+        <t:DistinguishedFolderId Id="calendar"/>
+      </m:ParentFolderIds>
+    </m:FindItem>
+  </soap:Body>
+</soap:Envelope>`, maxItems, escapedStart, escapedEnd)
+}
+
 type folderMetadata struct {
 	DisplayName      string
 	TotalCount       string
@@ -184,6 +232,14 @@ type findItemMessage struct {
 	ReceivedAt     string
 	IsRead         bool
 	HasAttachments bool
+}
+
+type calendarEvent struct {
+	ID       string
+	Subject  string
+	Start    string
+	End      string
+	Location string
 }
 
 type findItemResponseEnvelope struct {
@@ -242,6 +298,37 @@ type getItemResponseMessage struct {
 	} `xml:"Items"`
 }
 
+type findCalendarItemsResponseEnvelope struct {
+	Body struct {
+		Response struct {
+			ResponseMessages struct {
+				Messages []findCalendarItemsResponseMessage `xml:"FindItemResponseMessage"`
+			} `xml:"ResponseMessages"`
+		} `xml:"FindItemResponse"`
+	} `xml:"Body"`
+}
+
+type findCalendarItemsResponseMessage struct {
+	ResponseClass string `xml:"ResponseClass,attr"`
+	ResponseCode  string `xml:"ResponseCode"`
+	MessageText   string `xml:"MessageText"`
+	RootFolder    struct {
+		Items struct {
+			CalendarItems []calendarItemXML `xml:"CalendarItem"`
+		} `xml:"Items"`
+	} `xml:"RootFolder"`
+}
+
+type calendarItemXML struct {
+	ItemID struct {
+		ID string `xml:"Id,attr"`
+	} `xml:"ItemId"`
+	Subject  string `xml:"Subject"`
+	Start    string `xml:"Start"`
+	End      string `xml:"End"`
+	Location string `xml:"Location"`
+}
+
 func parseFindItemResponse(reader io.Reader) ([]findItemMessage, error) {
 	data, err := io.ReadAll(reader)
 	if err != nil {
@@ -270,6 +357,42 @@ func parseFindItemResponse(reader io.Reader) ([]findItemMessage, error) {
 		return []findItemMessage{}, nil
 	}
 	return messages, nil
+}
+
+func parseFindCalendarItemsResponse(reader io.Reader) ([]calendarEvent, error) {
+	data, err := io.ReadAll(reader)
+	if err != nil {
+		return nil, err
+	}
+	var envelope findCalendarItemsResponseEnvelope
+	if err := xml.Unmarshal(data, &envelope); err != nil {
+		return nil, err
+	}
+	if len(envelope.Body.Response.ResponseMessages.Messages) == 0 {
+		return nil, fmt.Errorf("missing FindItem calendar response")
+	}
+	var events []calendarEvent
+	for _, response := range envelope.Body.Response.ResponseMessages.Messages {
+		if response.ResponseClass != "" && response.ResponseClass != "Success" {
+			if strings.TrimSpace(response.MessageText) != "" {
+				return nil, fmt.Errorf("ews FindItem calendar failed: %s", strings.TrimSpace(response.MessageText))
+			}
+			return nil, fmt.Errorf("ews FindItem calendar failed: %s", strings.TrimSpace(response.ResponseCode))
+		}
+		for _, item := range response.RootFolder.Items.CalendarItems {
+			events = append(events, calendarEvent{
+				ID:       strings.TrimSpace(item.ItemID.ID),
+				Subject:  strings.TrimSpace(item.Subject),
+				Start:    strings.TrimSpace(item.Start),
+				End:      strings.TrimSpace(item.End),
+				Location: strings.TrimSpace(item.Location),
+			})
+		}
+	}
+	if events == nil {
+		return []calendarEvent{}, nil
+	}
+	return events, nil
 }
 
 func parseGetItemResponse(reader io.Reader) (findItemMessage, error) {
