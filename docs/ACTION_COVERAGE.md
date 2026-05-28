@@ -32,6 +32,7 @@ level 5: workflow skill guidance
 | Mail | `outlook.mail_create_draft` | 4 |
 | Mail | `outlook.mail_move_to_deleted_items` | 4 |
 | Mail | `outlook.mail_rules_list` | 4 |
+| Mail | `outlook.mail_rule_set_enabled` | 4 |
 | Mail | `outlook.mailbox_settings_get` | 4 |
 | Calendar | `outlook.calendar_list` | 4 |
 | Calendar | `outlook.calendar_availability` | 4 |
@@ -87,6 +88,7 @@ Implemented high-level OWA mappings:
 | `mail.create_draft` | `CreateItem` | implemented as `SaveOnly` draft and live MCP smoke-tested with a fixture |
 | `mail.move_to_deleted_items` | `DeleteItem` | implemented as `MoveToDeletedItems` and live MCP smoke-tested through dry-run/confirmation cleanup of the draft fixture |
 | `mail.rules.list` | Graph `messageRules` / transport capability | implemented as read-only typed MCP tool where the selected transport supports it |
+| `mail.rules.set_enabled` | Graph `PATCH messageRules/{id}` / transport capability | implemented as a typed settings/rules MCP tool requiring dry-run confirmation before enabling or disabling an existing rule |
 | `mailbox.settings.get` | Graph `mailboxSettings` / transport capability | implemented as read-only typed MCP tool where the selected transport supports it |
 | `calendar.list` | `GetCalendarView` | implemented and live smoke-tested for a one-day range |
 | `calendar.availability` | `GetUserAvailabilityInternal` | implemented and live smoke-tested; MCP tool accepts optional mailbox email |

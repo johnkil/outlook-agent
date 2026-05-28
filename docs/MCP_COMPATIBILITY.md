@@ -49,10 +49,11 @@ high-level mail and calendar tools. Transports that support delegated or shared
 mailbox targeting may use it; transports that do not support it keep their
 existing behavior or return a normal transport error.
 
-Compatibility version `0.1` also includes additive read-metadata tools for
-mailbox rules and mailbox settings: `outlook.mail_rules_list` and
-`outlook.mailbox_settings_get`. These tools expose existing safe transport
-actions without expanding the settings/rules write surface.
+Compatibility version `0.1` also includes additive tools for mailbox rules and
+mailbox settings: read-metadata `outlook.mail_rules_list`,
+dry-run-confirmed settings/rules `outlook.mail_rule_set_enabled`, and
+read-metadata `outlook.mailbox_settings_get`. The set-enabled helper exposes a
+narrow existing-rule toggle without opening arbitrary rule/settings writes.
 
 Clients must ignore unknown output fields and unknown capability detail fields.
 Servers must keep existing fields present with compatible meanings.

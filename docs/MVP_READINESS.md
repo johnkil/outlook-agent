@@ -74,8 +74,8 @@ without them because the raw guarded paths preserve the lower-level capability
 surface:
 
 - Additional typed Graph shortcuts beyond the current mail/calendar,
-  read-only rules/settings, and shared/delegated mailbox target surface, such
-  as specialized admin flows.
+  read-only rules/settings, guarded rule set-enabled, and shared/delegated
+  mailbox target surface, such as specialized admin flows.
 - Typed EWS shortcuts beyond the current metadata-only `GetFolder`,
   `mail.search`, `mail.fetch_metadata`, `calendar.list`, and
   `calendar.availability` paths plus the raw EWSRequest escape hatch.

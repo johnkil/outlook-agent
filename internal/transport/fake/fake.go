@@ -24,6 +24,7 @@ func New() *Transport {
 			{Name: "mail.create_draft", Transport: "fake", Class: policy.DraftOnly, Level: action.LevelHighLevelMCPTool},
 			{Name: "mail.move_to_deleted_items", Transport: "fake", Class: policy.ReversibleBulk, Level: action.LevelHighLevelMCPTool},
 			{Name: "mail.rules.list", Transport: "fake", Class: policy.ReadMetadata, Level: action.LevelHighLevelMCPTool},
+			{Name: "mail.rules.set_enabled", Transport: "fake", Class: policy.SettingsOrRules, Level: action.LevelHighLevelMCPTool},
 			{Name: "mailbox.settings.get", Transport: "fake", Class: policy.ReadMetadata, Level: action.LevelHighLevelMCPTool},
 			{Name: "calendar.list", Transport: "fake", Class: policy.ReadMetadata, Level: action.LevelHighLevelMCPTool},
 			{Name: "calendar.availability", Transport: "fake", Class: policy.ReadMetadata, Level: action.LevelHighLevelMCPTool},
@@ -144,6 +145,17 @@ func (client *Transport) Execute(_ context.Context, request transport.ActionRequ
 				},
 			},
 		}
+	case "mail.rules.set_enabled":
+		return transport.ActionResponse{
+			OK: true,
+			Data: map[string]any{
+				"rule": map[string]any{
+					"id":           valueOrDefault(request.Payload, "id", "rule-1"),
+					"display_name": "Fake planning filter",
+					"is_enabled":   valueOrDefault(request.Payload, "enabled", false),
+				},
+			},
+		}
 	case "mailbox.settings.get":
 		setting := valueOrDefault(request.Payload, "setting", "")
 		settings := map[string]any{
@@ -202,10 +214,17 @@ func valueOrDefault(payload map[string]any, key string, fallback any) any {
 func (client *Transport) DryRun(_ context.Context, request transport.ActionRequest) transport.DryRunSummary {
 	return transport.DryRunSummary{
 		Action:               request.Name,
-		Count:                countIDs(request.Payload),
-		Reversible:           request.Name == "mail.move_to_deleted_items",
+		Count:                dryRunCount(request),
+		Reversible:           request.Name == "mail.move_to_deleted_items" || request.Name == "mail.rules.set_enabled",
 		RequiresConfirmation: true,
 	}
+}
+
+func dryRunCount(request transport.ActionRequest) int {
+	if request.Name == "mail.rules.set_enabled" {
+		return 1
+	}
+	return countIDs(request.Payload)
 }
 
 func countIDs(payload map[string]any) int {

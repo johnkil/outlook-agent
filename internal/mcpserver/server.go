@@ -112,6 +112,14 @@ type MailRulesListOutput struct {
 	Rules []any `json:"rules"`
 }
 
+type MailRuleSetEnabledInput struct {
+	RuleID       string `json:"rule_id" jsonschema:"message rule id"`
+	Enabled      bool   `json:"enabled" jsonschema:"whether the rule should be enabled"`
+	FolderID     string `json:"folder_id,omitempty" jsonschema:"optional mail folder id"`
+	ConfirmToken string `json:"confirm_token" jsonschema:"confirmation token from outlook.action_dry_run"`
+	Mailbox      string `json:"mailbox,omitempty" jsonschema:"optional mailbox user id or user principal name"`
+}
+
 type MailboxSettingsGetInput struct {
 	Setting string `json:"setting,omitempty" jsonschema:"optional mailbox setting name"`
 	Mailbox string `json:"mailbox,omitempty" jsonschema:"optional mailbox user id or user principal name"`
@@ -196,6 +204,7 @@ func Catalog() ToolCatalog {
 			{Name: "outlook.mail_create_draft", Description: "Create a saved draft without sending."},
 			{Name: "outlook.mail_move_to_deleted_items", Description: "Move confirmed messages to Deleted Items."},
 			{Name: "outlook.mail_rules_list", Description: "List read-only mailbox rule metadata."},
+			{Name: "outlook.mail_rule_set_enabled", Description: "Enable or disable a message rule after dry-run confirmation."},
 			{Name: "outlook.mailbox_settings_get", Description: "Get read-only mailbox settings metadata."},
 			{Name: "outlook.calendar_list", Description: "List calendar events for a bounded window."},
 			{Name: "outlook.calendar_availability", Description: "List availability windows for a bounded window."},
@@ -268,6 +277,7 @@ func NewWithRuntime(runtime *Runtime) *mcp.Server {
 	mcp.AddTool(server, &mcp.Tool{Name: "outlook.mail_create_draft", Description: "Create a saved draft without sending."}, mailCreateDraftHandler(runtime.client))
 	mcp.AddTool(server, &mcp.Tool{Name: "outlook.mail_move_to_deleted_items", Description: "Move confirmed messages to Deleted Items."}, mailMoveToDeletedItemsHandler(runtime))
 	mcp.AddTool(server, &mcp.Tool{Name: "outlook.mail_rules_list", Description: "List read-only mailbox rule metadata."}, mailRulesListHandler(runtime.client))
+	mcp.AddTool(server, &mcp.Tool{Name: "outlook.mail_rule_set_enabled", Description: "Enable or disable a message rule after dry-run confirmation."}, mailRuleSetEnabledHandler(runtime))
 	mcp.AddTool(server, &mcp.Tool{Name: "outlook.mailbox_settings_get", Description: "Get read-only mailbox settings metadata."}, mailboxSettingsGetHandler(runtime.client))
 	mcp.AddTool(server, &mcp.Tool{Name: "outlook.calendar_list", Description: "List calendar events for a bounded window."}, calendarListHandler(runtime.client))
 	mcp.AddTool(server, &mcp.Tool{Name: "outlook.calendar_availability", Description: "List availability windows for a bounded window."}, calendarAvailabilityHandler(runtime.client))
@@ -408,6 +418,25 @@ func mailRulesListHandler(client transport.Transport) func(context.Context, *mcp
 		redacted := redact.Value(response.Data).(map[string]any)
 		rules, _ := redacted["rules"].([]any)
 		return nil, MailRulesListOutput{Rules: rules}, nil
+	}
+}
+
+func mailRuleSetEnabledHandler(runtime *Runtime) func(context.Context, *mcp.CallToolRequest, MailRuleSetEnabledInput) (*mcp.CallToolResult, ActionResultOutput, error) {
+	return func(ctx context.Context, _ *mcp.CallToolRequest, input MailRuleSetEnabledInput) (*mcp.CallToolResult, ActionResultOutput, error) {
+		if input.ConfirmToken == "" {
+			return nil, ActionResultOutput{OK: false, Error: "confirm_token required"}, nil
+		}
+		payload := withMailbox(map[string]any{
+			"id":        input.RuleID,
+			"enabled":   input.Enabled,
+			"folder_id": input.FolderID,
+		}, input.Mailbox)
+		if !runtime.confirm.Consume(input.ConfirmToken, bindingFor(runtime.client, runtime.profile, "mail.rules.set_enabled", payload, false)) {
+			return nil, ActionResultOutput{OK: false, Error: "confirmation token is invalid"}, nil
+		}
+		response := runtime.client.Execute(ctx, transport.ActionRequest{Name: "mail.rules.set_enabled", Payload: payload})
+		redacted := redact.Value(response.Data).(map[string]any)
+		return nil, ActionResultOutput{OK: response.OK, Data: redacted, Error: response.Error}, nil
 	}
 }
 

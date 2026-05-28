@@ -150,8 +150,9 @@ The initial Graph adapter supports `GetMailFolder`, `mail.search`,
 `mail.fetch_metadata`, explicit `mail.fetch_body`, explicit
 `mail.list_attachments`, explicit `mail.fetch_attachment`,
 `mail.create_draft`, `mail.move_to_deleted_items`, read-only
-`mail.rules.list`, read-only `mailbox.settings.get`, `calendar.list`, and
-`calendar.availability`, plus guarded raw `GraphRequest`. It
+`mail.rules.list`, confirmed `mail.rules.set_enabled`, read-only
+`mailbox.settings.get`, `calendar.list`, and `calendar.availability`, plus
+guarded raw `GraphRequest`. It
 uses `/me/mailFolders/inbox` as its auth probe and keeps default message access
 metadata-only through `/me/mailFolders/{folder}/messages` and
 `/me/messages/{id}`. High-level Graph actions accept optional `mailbox` to use
@@ -164,11 +165,13 @@ move-to-Deleted-Items uses Graph's reversible message move. Calendar metadata
 uses `calendarView` and `calendar/getSchedule` under the selected owner path.
 Rule metadata uses `mailFolders/{folder}/messageRules`; mailbox settings
 metadata uses `mailboxSettings` and approved subresources such as
-`workingHours` and `timeZone`. Rule/settings writes stay behind raw
-`GraphRequest`, which is intentionally classified as destructive and requires
-unsafe dry-run plus exact confirmation because an arbitrary Graph request can
-send, mutate, or delete data. App registration, admin consent, and live tenant
-policy approval stay outside the public repository.
+`workingHours` and `timeZone`. `mail.rules.set_enabled` uses a minimal Graph
+rule patch and requires dry-run confirmation before it can enable or disable an
+existing rule. Broader rule/settings writes stay behind raw `GraphRequest`,
+which is intentionally classified as destructive and requires unsafe dry-run
+plus exact confirmation because an arbitrary Graph request can send, mutate, or
+delete data. App registration, admin consent, and live tenant policy approval
+stay outside the public repository.
 
 ## Product Shape
 

@@ -32,6 +32,7 @@ func TestCatalogContainsInitialTools(t *testing.T) {
 		"outlook.mail_create_draft",
 		"outlook.mail_move_to_deleted_items",
 		"outlook.mail_rules_list",
+		"outlook.mail_rule_set_enabled",
 		"outlook.mailbox_settings_get",
 		"outlook.calendar_list",
 		"outlook.calendar_availability",
@@ -179,6 +180,50 @@ func TestMCPRulesSettingsToolsForwardInputs(t *testing.T) {
 	}
 	if capturing.lastRequest.Payload["setting"] != "timeZone" || capturing.lastRequest.Payload["mailbox"] != "shared@example.com" {
 		t.Fatalf("expected setting and mailbox forwarded, got %#v", capturing.lastRequest.Payload)
+	}
+
+	dryRunResult, err := clientSession.CallTool(ctx, &mcp.CallToolParams{
+		Name: "outlook.action_dry_run",
+		Arguments: map[string]any{
+			"action": "mail.rules.set_enabled",
+			"payload": map[string]any{
+				"id":        "rule-1",
+				"enabled":   false,
+				"folder_id": "inbox",
+				"mailbox":   "shared@example.com",
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("call rules set-enabled dry-run: %v", err)
+	}
+	dryRun := decodeStructured[mcpserver.DryRunOutput](t, dryRunResult)
+	if !dryRun.OK || dryRun.ConfirmationToken == "" || !dryRun.RequiresConfirmation || dryRun.RequiresUnsafe {
+		t.Fatalf("expected rules set-enabled dry-run token without unsafe: %#v", dryRun)
+	}
+
+	setEnabledResult, err := clientSession.CallTool(ctx, &mcp.CallToolParams{
+		Name: "outlook.mail_rule_set_enabled",
+		Arguments: map[string]any{
+			"rule_id":       "rule-1",
+			"enabled":       false,
+			"folder_id":     "inbox",
+			"mailbox":       "shared@example.com",
+			"confirm_token": dryRun.ConfirmationToken,
+		},
+	})
+	if err != nil {
+		t.Fatalf("call rules set-enabled: %v", err)
+	}
+	setEnabled := decodeStructured[mcpserver.ActionResultOutput](t, setEnabledResult)
+	if !setEnabled.OK {
+		t.Fatalf("expected confirmed rules set-enabled to execute: %#v", setEnabled)
+	}
+	if capturing.lastRequest.Name != "mail.rules.set_enabled" {
+		t.Fatalf("expected mail.rules.set_enabled request, got %#v", capturing.lastRequest)
+	}
+	if capturing.lastRequest.Payload["id"] != "rule-1" || capturing.lastRequest.Payload["enabled"] != false || capturing.lastRequest.Payload["folder_id"] != "inbox" || capturing.lastRequest.Payload["mailbox"] != "shared@example.com" {
+		t.Fatalf("expected rule id, enabled, folder_id, and mailbox forwarded, got %#v", capturing.lastRequest.Payload)
 	}
 }
 
@@ -487,6 +532,7 @@ func (capturing *capturingTransport) Authenticate(context.Context, string) trans
 func (capturing *capturingTransport) Capabilities(context.Context) transport.CapabilitySet {
 	return transport.CapabilitySet{Actions: []action.Definition{
 		{Name: "mail.move_to_deleted_items", Transport: "capture", Class: policy.ReversibleBulk, Level: action.LevelHighLevelMCPTool},
+		{Name: "mail.rules.set_enabled", Transport: "capture", Class: policy.SettingsOrRules, Level: action.LevelHighLevelMCPTool},
 	}}
 }
 
@@ -499,6 +545,7 @@ func (capturing *capturingTransport) Execute(_ context.Context, request transpor
 			"message":     map[string]any{"id": "msg-1"},
 			"moved_count": 1,
 			"rules":       []any{map[string]any{"id": "rule-1", "display_name": "Keep"}},
+			"rule":        map[string]any{"id": "rule-1", "display_name": "Keep", "is_enabled": false},
 			"settings":    map[string]any{"timeZone": "UTC"},
 			"windows": []any{
 				map[string]any{
@@ -512,8 +559,8 @@ func (capturing *capturingTransport) Execute(_ context.Context, request transpor
 	}
 }
 
-func (capturing *capturingTransport) DryRun(context.Context, transport.ActionRequest) transport.DryRunSummary {
-	return transport.DryRunSummary{Action: "mail.move_to_deleted_items", Count: 1, Reversible: true, RequiresConfirmation: true}
+func (capturing *capturingTransport) DryRun(_ context.Context, request transport.ActionRequest) transport.DryRunSummary {
+	return transport.DryRunSummary{Action: request.Name, Count: 1, Reversible: true, RequiresConfirmation: true}
 }
 
 type failingTransport struct{}

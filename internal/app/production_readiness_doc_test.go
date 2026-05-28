@@ -258,6 +258,41 @@ func TestDocsTrackGraphLiveSmokeHarness(t *testing.T) {
 	}
 }
 
+func TestDocsTrackGraphRuleSetEnabledEvidence(t *testing.T) {
+	documents := map[string][]string{
+		filepath.Join("..", "..", "README.md"): {
+			"`mail.rules.set_enabled`",
+			"dry-run confirmation",
+		},
+		filepath.Join("..", "..", "docs", "SPEC.md"): {
+			"outlook.mail_rule_set_enabled",
+			"`mail.rules.set_enabled`",
+			"`settings_or_rules`",
+		},
+		filepath.Join("..", "..", "docs", "ACTION_COVERAGE.md"): {
+			"`mail.rules.set_enabled`",
+			"Graph `PATCH messageRules/{id}`",
+		},
+		filepath.Join("..", "..", "docs", "PRODUCTION_READINESS.md"): {
+			"first carefully gated typed rule write helper",
+			"`mail.rules.set_enabled`",
+		},
+	}
+
+	for path, required := range documents {
+		data, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatalf("read %s: %v", path, err)
+		}
+		text := string(data)
+		for _, marker := range required {
+			if !strings.Contains(text, marker) {
+				t.Fatalf("expected %s to contain %q", path, marker)
+			}
+		}
+	}
+}
+
 func TestDocsTrackEWSLiveSmokeHarness(t *testing.T) {
 	documents := map[string][]string{
 		filepath.Join("..", "..", "docs", "ENTERPRISE_ENABLEMENT.md"): {

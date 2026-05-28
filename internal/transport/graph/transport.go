@@ -54,6 +54,7 @@ func (client *Transport) Capabilities(context.Context) transport.CapabilitySet {
 		{Name: "mail.create_draft", Transport: "graph", Class: policy.DraftOnly, Level: action.LevelHighLevelMCPTool},
 		{Name: "mail.move_to_deleted_items", Transport: "graph", Class: policy.ReversibleBulk, Level: action.LevelHighLevelMCPTool},
 		{Name: "mail.rules.list", Transport: "graph", Class: policy.ReadMetadata, Level: action.LevelHighLevelMCPTool},
+		{Name: "mail.rules.set_enabled", Transport: "graph", Class: policy.SettingsOrRules, Level: action.LevelHighLevelMCPTool},
 		{Name: "mailbox.settings.get", Transport: "graph", Class: policy.ReadMetadata, Level: action.LevelHighLevelMCPTool},
 		{Name: "calendar.list", Transport: "graph", Class: policy.ReadMetadata, Level: action.LevelHighLevelMCPTool},
 		{Name: "calendar.availability", Transport: "graph", Class: policy.ReadMetadata, Level: action.LevelHighLevelMCPTool},
@@ -158,6 +159,12 @@ func (client *Transport) Execute(ctx context.Context, request transport.ActionRe
 			return transport.ActionResponse{OK: false, Error: err.Error()}
 		}
 		return transport.ActionResponse{OK: true, Data: map[string]any{"rules": rules}}
+	case "mail.rules.set_enabled":
+		rule, err := client.setMessageRuleEnabled(ctx, mailbox, request.Payload)
+		if err != nil {
+			return transport.ActionResponse{OK: false, Error: err.Error()}
+		}
+		return transport.ActionResponse{OK: true, Data: map[string]any{"rule": normalizeGraphMessageRule(rule)}}
 	case "mailbox.settings.get":
 		settings, err := client.getMailboxSettings(ctx, mailbox, stringValue(request.Payload, "setting", ""))
 		if err != nil {
@@ -187,6 +194,9 @@ func (client *Transport) DryRun(_ context.Context, request transport.ActionReque
 	}
 	if request.Name == "GraphRequest" {
 		return transport.DryRunSummary{Action: request.Name, Count: 1, Reversible: false, RequiresConfirmation: true}
+	}
+	if request.Name == "mail.rules.set_enabled" {
+		return transport.DryRunSummary{Action: request.Name, Count: 1, Reversible: true, RequiresConfirmation: true}
 	}
 	return transport.DryRunSummary{Action: request.Name, Count: 1, Reversible: false, RequiresConfirmation: false}
 }
@@ -505,6 +515,29 @@ func (client *Transport) listMessageRules(ctx context.Context, mailbox string, f
 		return []any{}, nil
 	}
 	return rules, nil
+}
+
+func (client *Transport) setMessageRuleEnabled(ctx context.Context, mailbox string, payload map[string]any) (messageRule, error) {
+	ruleID := strings.TrimSpace(stringValue(payload, "id", ""))
+	if ruleID == "" {
+		return messageRule{}, fmt.Errorf("mail.rules.set_enabled requires id")
+	}
+	enabled, ok := boolValue(payload, "enabled")
+	if !ok {
+		return messageRule{}, fmt.Errorf("mail.rules.set_enabled requires enabled")
+	}
+	requestURL, err := client.messageRuleURL(mailbox, stringValue(payload, "folder_id", "inbox"), ruleID)
+	if err != nil {
+		return messageRule{}, err
+	}
+	var rule messageRule
+	if err := client.doJSON(ctx, http.MethodPatch, requestURL, map[string]any{"isEnabled": enabled}, &rule); err != nil {
+		return messageRule{}, err
+	}
+	if rule.ID == "" {
+		return messageRule{}, fmt.Errorf("missing Graph messageRule response")
+	}
+	return rule, nil
 }
 
 func (client *Transport) getMailboxSettings(ctx context.Context, mailbox string, setting string) (any, error) {
@@ -948,6 +981,17 @@ func (client *Transport) messageRulesURL(mailbox string, folderID string) (strin
 	return base + graphOwnerPath(mailbox) + "/mailFolders/" + url.PathEscape(folderID) + "/messageRules", nil
 }
 
+func (client *Transport) messageRuleURL(mailbox string, folderID string, ruleID string) (string, error) {
+	base, err := client.messageRulesURL(mailbox, folderID)
+	if err != nil {
+		return "", err
+	}
+	if strings.TrimSpace(ruleID) == "" {
+		return "", fmt.Errorf("mail.rules.set_enabled requires id")
+	}
+	return base + "/" + url.PathEscape(ruleID), nil
+}
+
 func (client *Transport) mailboxSettingsURL(mailbox string, setting string) (string, error) {
 	base, err := client.config.normalizedBaseURL()
 	if err != nil {
@@ -1130,6 +1174,18 @@ func intValue(values map[string]any, key string, fallback int) int {
 	default:
 		return fallback
 	}
+}
+
+func boolValue(values map[string]any, key string) (bool, bool) {
+	if values == nil {
+		return false, false
+	}
+	value, ok := values[key]
+	if !ok {
+		return false, false
+	}
+	typed, ok := value.(bool)
+	return typed, ok
 }
 
 func stringSlice(value any) []string {

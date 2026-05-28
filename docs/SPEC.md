@@ -74,6 +74,7 @@ outlook.mail_fetch_attachment
 outlook.mail_create_draft
 outlook.mail_move_to_deleted_items
 outlook.mail_rules_list
+outlook.mail_rule_set_enabled
 outlook.mailbox_settings_get
 outlook.calendar_list
 outlook.calendar_availability
@@ -108,6 +109,10 @@ Key tool inputs:
 - `outlook.mail_rules_list`: optional `folder_id` and optional `mailbox`.
   Returns read-only mailbox rule metadata when the selected transport supports
   `mail.rules.list`.
+- `outlook.mail_rule_set_enabled`: `rule_id`, `enabled`, `confirm_token`,
+  optional `folder_id`, and optional `mailbox`. The action maps to
+  `mail.rules.set_enabled`, is classified as `settings_or_rules`, and requires
+  a matching `outlook.action_dry_run` confirmation token before execution.
 - `outlook.mailbox_settings_get`: optional `setting` and optional `mailbox`.
   Returns read-only mailbox settings metadata when the selected transport
   supports `mailbox.settings.get`.
@@ -206,14 +211,18 @@ Configured transports:
   `mailbox.settings.get`, `calendar.list`, and `calendar.availability`, plus
   explicit `mail.fetch_body`, explicit `mail.list_attachments`, explicit
   `mail.fetch_attachment`, `mail.create_draft`,
-  `mail.move_to_deleted_items`, and raw guarded `GraphRequest`; `auth check`
-  probes `/me/mailFolders/inbox`. `mail.rules.list` uses
+  `mail.move_to_deleted_items`, confirmed `mail.rules.set_enabled`, and raw
+  guarded `GraphRequest`; `auth check` probes `/me/mailFolders/inbox`.
+  `mail.rules.list` uses
   `/me/mailFolders/{folder}/messageRules`, defaulting to Inbox.
+  `mail.rules.set_enabled` uses `PATCH
+  /me/mailFolders/{folder}/messageRules/{id}` with a minimal `isEnabled` body
+  and requires the `settings_or_rules` dry-run/confirm route.
   `mailbox.settings.get` uses `/me/mailboxSettings` or an allowlisted
   subresource: `automaticRepliesSetting`, `dateFormat`,
   `delegateMeetingMessageDeliveryOptions`, `language`, `timeFormat`,
-  `timeZone`, `workingHours`, or `userPurpose`. Rule/settings writes remain
-  covered only by raw guarded `GraphRequest`. High-level Graph actions accept
+  `timeZone`, `workingHours`, or `userPurpose`. Broader rule/settings writes
+  remain covered by raw guarded `GraphRequest`. High-level Graph actions accept
   optional payload `mailbox` or `user_id` to target the matching
   `/users/{id|userPrincipalName}` endpoint for delegated or shared mailboxes;
   MCP tools expose `mailbox`. App registration, admin consent, and live tenant

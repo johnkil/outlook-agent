@@ -74,8 +74,9 @@ Status: implemented initial slice.
   credential handling, `GetMailFolder`, `mail.search`, `mail.fetch_metadata`,
   `mail.fetch_body`, `mail.list_attachments`, `mail.fetch_attachment`,
   `mail.create_draft`, `mail.move_to_deleted_items`, `mail.rules.list`,
-  `mailbox.settings.get`, `calendar.list`, and `calendar.availability` actions
-  implemented; guarded raw `GraphRequest` implemented as an unsafe
+  `mail.rules.set_enabled`, `mailbox.settings.get`, `calendar.list`, and
+  `calendar.availability` actions implemented; guarded raw `GraphRequest`
+  implemented as an unsafe
   dry-run/confirm escape hatch; admin consent and live token storage validation
   remain.
 - EWS transport where Exchange policy allows it: initial SOAP `GetFolder`

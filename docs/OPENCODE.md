@@ -126,6 +126,7 @@ The MCP server registers the initial public tool surface from `docs/SPEC.md`:
 - `outlook.mail_create_draft`
 - `outlook.mail_move_to_deleted_items`
 - `outlook.mail_rules_list`
+- `outlook.mail_rule_set_enabled`
 - `outlook.mailbox_settings_get`
 - `outlook.calendar_list`
 - `outlook.calendar_availability`

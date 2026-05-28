@@ -89,6 +89,7 @@ func TestTransportGraphCapabilitiesIncludeBodyDraftMove(t *testing.T) {
 		{name: "mail.create_draft", class: policy.DraftOnly, level: action.LevelHighLevelMCPTool},
 		{name: "mail.move_to_deleted_items", class: policy.ReversibleBulk, level: action.LevelHighLevelMCPTool},
 		{name: "mail.rules.list", class: policy.ReadMetadata, level: action.LevelHighLevelMCPTool},
+		{name: "mail.rules.set_enabled", class: policy.SettingsOrRules, level: action.LevelHighLevelMCPTool},
 		{name: "mailbox.settings.get", class: policy.ReadMetadata, level: action.LevelHighLevelMCPTool},
 		{name: "calendar.list", class: policy.ReadMetadata, level: action.LevelHighLevelMCPTool},
 		{name: "calendar.availability", class: policy.ReadMetadata, level: action.LevelHighLevelMCPTool},
@@ -694,6 +695,48 @@ func TestTransportExecutesMailRulesList(t *testing.T) {
 	}
 }
 
+func TestTransportExecutesMailRulesSetEnabled(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		if request.Method != http.MethodPatch || request.URL.Path != "/v1.0/me/mailFolders/inbox/messageRules/rule-1" {
+			t.Fatalf("unexpected request: %s %s", request.Method, request.URL.String())
+		}
+		if request.Header.Get("Authorization") != "Bearer token-secret" {
+			t.Fatal("expected bearer token header")
+		}
+		var body map[string]any
+		if err := json.NewDecoder(request.Body).Decode(&body); err != nil {
+			t.Fatalf("decode request body: %v", err)
+		}
+		if body["isEnabled"] != false || len(body) != 1 {
+			t.Fatalf("expected minimal isEnabled patch body, got %#v", body)
+		}
+		response.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(response).Encode(graphRuleResponse("rule-1", "Quiet newsletters", false))
+	}))
+	defer server.Close()
+
+	client := graph.NewTransport(graph.Config{
+		BaseURL:   server.URL + "/v1.0",
+		SecretRef: secret.Ref("memory:graph"),
+	}, secret.NewMemoryStore(map[string]string{"memory:graph": "token-secret"}), server.Client())
+
+	result := client.Execute(context.Background(), transport.ActionRequest{
+		Name: "mail.rules.set_enabled",
+		Payload: map[string]any{
+			"id":      "rule-1",
+			"enabled": false,
+		},
+	})
+
+	if !result.OK {
+		t.Fatalf("expected mail.rules.set_enabled ok, got %#v", result)
+	}
+	rule := result.Data["rule"].(map[string]any)
+	if rule["id"] != "rule-1" || rule["display_name"] != "Quiet newsletters" || rule["is_enabled"] != false {
+		t.Fatalf("unexpected rule response: %#v", rule)
+	}
+}
+
 func TestTransportExecutesMailboxSettingsGet(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
 		if request.Method != http.MethodGet || request.URL.Path != "/v1.0/me/mailboxSettings" {
@@ -836,6 +879,25 @@ func TestTransportDryRunGraphRequestRequiresConfirmation(t *testing.T) {
 
 	if summary.Action != "GraphRequest" || summary.Count != 1 || summary.Reversible || !summary.RequiresConfirmation {
 		t.Fatalf("unexpected GraphRequest dry-run summary: %#v", summary)
+	}
+}
+
+func TestTransportDryRunMailRulesSetEnabledRequiresConfirmation(t *testing.T) {
+	client := graph.NewTransport(graph.Config{
+		BaseURL:   "https://graph.example.test/v1.0",
+		SecretRef: secret.Ref("memory:graph"),
+	}, secret.NewMemoryStore(map[string]string{"memory:graph": "token-secret"}), nil)
+
+	summary := client.DryRun(context.Background(), transport.ActionRequest{
+		Name: "mail.rules.set_enabled",
+		Payload: map[string]any{
+			"id":      "rule-1",
+			"enabled": false,
+		},
+	})
+
+	if summary.Action != "mail.rules.set_enabled" || summary.Count != 1 || !summary.Reversible || !summary.RequiresConfirmation {
+		t.Fatalf("unexpected mail.rules.set_enabled dry-run summary: %#v", summary)
 	}
 }
 
@@ -1146,6 +1208,17 @@ func graphMessageResponse(id string, subject string, name string, address string
 				"address": address,
 			},
 		},
+	}
+}
+
+func graphRuleResponse(id string, displayName string, enabled bool) map[string]any {
+	return map[string]any{
+		"id":          id,
+		"displayName": displayName,
+		"sequence":    1,
+		"isEnabled":   enabled,
+		"hasError":    false,
+		"isReadOnly":  false,
 	}
 }
 
