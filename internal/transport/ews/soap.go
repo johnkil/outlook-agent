@@ -66,6 +66,24 @@ func BuildGetItemRequest(config Config, password secret.Value, itemID string) (*
 	return request, nil
 }
 
+func BuildGetItemBodyRequest(config Config, password secret.Value, itemID string) (*http.Request, error) {
+	endpoint, err := config.normalizedEndpointURL()
+	if err != nil {
+		return nil, err
+	}
+	body := getItemBodyEnvelope(itemID)
+	request, err := http.NewRequest(http.MethodPost, endpoint, strings.NewReader(body))
+	if err != nil {
+		return nil, err
+	}
+	request.Header.Set("Content-Type", "text/xml; charset=utf-8")
+	request.Header.Set("Accept", "text/xml")
+	request.Header.Set("User-Agent", "outlook-agent")
+	request.Header.Set("SOAPAction", "http://schemas.microsoft.com/exchange/services/2006/messages/GetItem")
+	request.SetBasicAuth(config.Username, string(password))
+	return request, nil
+}
+
 func BuildFindCalendarItemsRequest(config Config, password secret.Value, start string, end string, maxItems int) (*http.Request, error) {
 	endpoint, err := config.normalizedEndpointURL()
 	if err != nil {
@@ -202,6 +220,29 @@ func getItemEnvelope(itemID string) string {
 </soap:Envelope>`, escapedItemID)
 }
 
+func getItemBodyEnvelope(itemID string) string {
+	escapedItemID := html.EscapeString(strings.TrimSpace(itemID))
+	return fmt.Sprintf(`<?xml version="1.0" encoding="utf-8"?>
+<soap:Envelope xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/"
+  xmlns:m="http://schemas.microsoft.com/exchange/services/2006/messages"
+  xmlns:t="http://schemas.microsoft.com/exchange/services/2006/types">
+  <soap:Body>
+    <m:GetItem>
+      <m:ItemShape>
+        <t:BaseShape>IdOnly</t:BaseShape>
+        <t:BodyType>Text</t:BodyType>
+        <t:AdditionalProperties>
+          <t:FieldURI FieldURI="item:Body"/>
+        </t:AdditionalProperties>
+      </m:ItemShape>
+      <m:ItemIds>
+        <t:ItemId Id="%s"/>
+      </m:ItemIds>
+    </m:GetItem>
+  </soap:Body>
+</soap:Envelope>`, escapedItemID)
+}
+
 func findCalendarItemsEnvelope(start string, end string, maxItems int) string {
 	if maxItems <= 0 {
 		maxItems = 150
@@ -285,6 +326,7 @@ type findItemMessage struct {
 	ReceivedAt     string
 	IsRead         bool
 	HasAttachments bool
+	Body           string
 }
 
 type calendarEvent struct {
@@ -337,6 +379,7 @@ type findItemMessageXML struct {
 	} `xml:"From"`
 	IsRead         string `xml:"IsRead"`
 	HasAttachments string `xml:"HasAttachments"`
+	Body           string `xml:"Body"`
 }
 
 type getItemResponseEnvelope struct {
@@ -555,6 +598,7 @@ func messageFromXML(item findItemMessageXML) findItemMessage {
 		ReceivedAt:     strings.TrimSpace(item.DateTimeReceived),
 		IsRead:         strings.EqualFold(strings.TrimSpace(item.IsRead), "true"),
 		HasAttachments: strings.EqualFold(strings.TrimSpace(item.HasAttachments), "true"),
+		Body:           strings.TrimSpace(item.Body),
 	}
 }
 

@@ -145,8 +145,8 @@ EWS `FindItem`, plus metadata-only `mail.fetch_metadata` through EWS `GetItem`
 when a message id is available, and metadata-only `calendar.list` through EWS
 `FindItem` with `CalendarView`. When `OUTLOOK_AGENT_LIVE_EWS_AVAILABILITY_EMAIL`
 is set, it also executes metadata-only `calendar.availability` through EWS
-`GetUserAvailability`. It deliberately excludes raw EWSRequest, body reads,
-attachment reads, send-like actions, and all write actions.
+`GetUserAvailability`. It deliberately excludes explicit `mail.fetch_body`, raw
+EWSRequest, attachment reads, send-like actions, and all write actions.
 
 ## Rollback Procedure
 

@@ -82,9 +82,9 @@ executes metadata-only `GetFolder` for Inbox, and executes metadata-only
 `mail.fetch_metadata` through EWS `GetItem` when a message id is available,
 metadata-only `calendar.list` through EWS `FindItem` with `CalendarView`, and
 metadata-only `calendar.availability` through EWS `GetUserAvailability` when
-the optional availability mailbox is configured. Raw EWSRequest, body,
-attachment, send-like, and write actions are excluded from this read-metadata
-harness.
+the optional availability mailbox is configured. Explicit `mail.fetch_body`,
+raw EWSRequest, attachment, send-like, and write actions are excluded from this
+read-metadata harness.
 
 ## Secret Store And Config
 

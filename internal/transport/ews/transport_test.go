@@ -94,8 +94,8 @@ func TestTransportCapabilitiesIncludeGetFolderMailCalendarAndRawRequest(t *testi
 	}, secret.NewMemoryStore(map[string]string{"memory:ews": "password-secret"}), nil)
 
 	capabilities := client.Capabilities(context.Background())
-	if len(capabilities.Actions) != 6 {
-		t.Fatalf("expected six EWS actions, got %#v", capabilities.Actions)
+	if len(capabilities.Actions) != 7 {
+		t.Fatalf("expected seven EWS actions, got %#v", capabilities.Actions)
 	}
 	actions := map[string]action.Definition{}
 	for _, item := range capabilities.Actions {
@@ -116,6 +116,10 @@ func TestTransportCapabilitiesIncludeGetFolderMailCalendarAndRawRequest(t *testi
 	fetchMetadata := actions["mail.fetch_metadata"]
 	if fetchMetadata.Name != "mail.fetch_metadata" || fetchMetadata.Transport != "ews" || fetchMetadata.Class != policy.ReadMetadata || fetchMetadata.Level != action.LevelHighLevelMCPTool {
 		t.Fatalf("unexpected mail.fetch_metadata capability: %#v", fetchMetadata)
+	}
+	fetchBody := actions["mail.fetch_body"]
+	if fetchBody.Name != "mail.fetch_body" || fetchBody.Transport != "ews" || fetchBody.Class != policy.ReadBodyExplicit || fetchBody.Level != action.LevelHighLevelMCPTool {
+		t.Fatalf("unexpected mail.fetch_body capability: %#v", fetchBody)
 	}
 	calendarList := actions["calendar.list"]
 	if calendarList.Name != "calendar.list" || calendarList.Transport != "ews" || calendarList.Class != policy.ReadMetadata || calendarList.Level != action.LevelHighLevelMCPTool {
@@ -324,6 +328,69 @@ func TestTransportRejectsMailFetchMetadataWithoutID(t *testing.T) {
 	})
 
 	if result.OK || !strings.Contains(result.Error, "mail.fetch_metadata requires id") {
+		t.Fatalf("expected id error, got %#v", result)
+	}
+}
+
+func TestTransportExecutesMailFetchBodyWithGetItem(t *testing.T) {
+	var sawGetItem bool
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		if request.Method != http.MethodPost {
+			t.Fatalf("expected POST, got %s", request.Method)
+		}
+		if request.Header.Get("SOAPAction") != "http://schemas.microsoft.com/exchange/services/2006/messages/GetItem" {
+			t.Fatalf("unexpected SOAPAction: %s", request.Header.Get("SOAPAction"))
+		}
+		body, err := io.ReadAll(request.Body)
+		if err != nil {
+			t.Fatalf("read body: %v", err)
+		}
+		text := string(body)
+		sawGetItem = strings.Contains(text, `<m:GetItem>`) &&
+			strings.Contains(text, `<t:BaseShape>IdOnly</t:BaseShape>`) &&
+			strings.Contains(text, `<t:BodyType>Text</t:BodyType>`) &&
+			strings.Contains(text, `<t:FieldURI FieldURI="item:Body"/>`) &&
+			strings.Contains(text, `<t:ItemId Id="message-1"/>`)
+		response.Header().Set("Content-Type", "text/xml")
+		_, _ = response.Write([]byte(successfulGetItemBodyResponse()))
+	}))
+	defer server.Close()
+
+	client := ews.NewTransport(ews.Config{
+		EndpointURL: server.URL + "/EWS/Exchange.asmx",
+		Username:    "DOMAIN\\user",
+		SecretRef:   secret.Ref("memory:ews"),
+	}, secret.NewMemoryStore(map[string]string{"memory:ews": "password-secret"}), server.Client())
+
+	result := client.Execute(context.Background(), transport.ActionRequest{
+		Name:    "mail.fetch_body",
+		Payload: map[string]any{"id": "message-1"},
+	})
+
+	if !result.OK {
+		t.Fatalf("expected mail.fetch_body ok, got %#v", result)
+	}
+	if !sawGetItem {
+		t.Fatal("expected GetItem SOAP request with text body shape")
+	}
+	if result.Data["id"] != "message-1" || result.Data["body_text"] != "Hello from EWS body" {
+		t.Fatalf("unexpected body response: %#v", result.Data)
+	}
+}
+
+func TestTransportRejectsMailFetchBodyWithoutID(t *testing.T) {
+	client := ews.NewTransport(ews.Config{
+		EndpointURL: "https://example.test/EWS/Exchange.asmx",
+		Username:    "DOMAIN\\user",
+		SecretRef:   secret.Ref("memory:ews"),
+	}, secret.NewMemoryStore(map[string]string{"memory:ews": "password-secret"}), nil)
+
+	result := client.Execute(context.Background(), transport.ActionRequest{
+		Name:    "mail.fetch_body",
+		Payload: map[string]any{},
+	})
+
+	if result.OK || !strings.Contains(result.Error, "mail.fetch_body requires id") {
 		t.Fatalf("expected id error, got %#v", result)
 	}
 }
@@ -728,6 +795,29 @@ func successfulGetItemResponse() string {
               </t:From>
               <t:IsRead>false</t:IsRead>
               <t:HasAttachments>true</t:HasAttachments>
+            </t:Message>
+          </m:Items>
+        </m:GetItemResponseMessage>
+      </m:ResponseMessages>
+    </m:GetItemResponse>
+  </soap:Body>
+</soap:Envelope>`
+}
+
+func successfulGetItemBodyResponse() string {
+	return `<?xml version="1.0" encoding="utf-8"?>
+<soap:Envelope xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/"
+  xmlns:m="http://schemas.microsoft.com/exchange/services/2006/messages"
+  xmlns:t="http://schemas.microsoft.com/exchange/services/2006/types">
+  <soap:Body>
+    <m:GetItemResponse>
+      <m:ResponseMessages>
+        <m:GetItemResponseMessage ResponseClass="Success">
+          <m:ResponseCode>NoError</m:ResponseCode>
+          <m:Items>
+            <t:Message>
+              <t:ItemId Id="message-1" ChangeKey="ck-1"/>
+              <t:Body BodyType="Text">Hello from EWS body</t:Body>
             </t:Message>
           </m:Items>
         </m:GetItemResponseMessage>

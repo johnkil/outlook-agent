@@ -43,6 +43,7 @@ func (client *Transport) Capabilities(context.Context) transport.CapabilitySet {
 		{Name: "GetFolder", Transport: "ews", Class: policy.ReadMetadata, Level: action.LevelRawGuardedExecution},
 		{Name: "mail.search", Transport: "ews", Class: policy.ReadMetadata, Level: action.LevelHighLevelMCPTool},
 		{Name: "mail.fetch_metadata", Transport: "ews", Class: policy.ReadMetadata, Level: action.LevelHighLevelMCPTool},
+		{Name: "mail.fetch_body", Transport: "ews", Class: policy.ReadBodyExplicit, Level: action.LevelHighLevelMCPTool},
 		{Name: "calendar.list", Transport: "ews", Class: policy.ReadMetadata, Level: action.LevelHighLevelMCPTool},
 		{Name: "calendar.availability", Transport: "ews", Class: policy.ReadMetadata, Level: action.LevelHighLevelMCPTool},
 		{Name: "EWSRequest", Transport: "ews", Class: policy.Destructive, Level: action.LevelRawGuardedExecution},
@@ -80,6 +81,16 @@ func (client *Transport) Execute(ctx context.Context, request transport.ActionRe
 			return transport.ActionResponse{OK: false, Error: err.Error()}
 		}
 		return transport.ActionResponse{OK: true, Data: map[string]any{"message": normalizeFindItemMessage(message)}}
+	case "mail.fetch_body":
+		messageID := strings.TrimSpace(stringValue(request.Payload, "id", ""))
+		if messageID == "" {
+			return transport.ActionResponse{OK: false, Error: "mail.fetch_body requires id"}
+		}
+		message, err := client.getItemBody(ctx, messageID)
+		if err != nil {
+			return transport.ActionResponse{OK: false, Error: err.Error()}
+		}
+		return transport.ActionResponse{OK: true, Data: map[string]any{"id": message.ID, "body_text": message.Body}}
 	case "calendar.list":
 		events, err := client.listCalendarEvents(ctx, stringValue(request.Payload, "start", ""), stringValue(request.Payload, "end", ""), intValue(request.Payload, "max", 150))
 		if err != nil {
@@ -316,6 +327,40 @@ func (client *Transport) getItem(ctx context.Context, itemID string) (findItemMe
 		return findItemMessage{}, err
 	}
 	request, err := BuildGetItemRequest(client.config, password, itemID)
+	if err != nil {
+		return findItemMessage{}, err
+	}
+	request = request.WithContext(ctx)
+	response, err := client.client.Do(request)
+	if err != nil {
+		return findItemMessage{}, err
+	}
+	defer response.Body.Close()
+	message, parseErr := parseGetItemResponse(response.Body)
+	if response.StatusCode < 200 || response.StatusCode >= 300 {
+		if parseErr != nil {
+			return findItemMessage{}, fmt.Errorf("ews returned HTTP %d", response.StatusCode)
+		}
+		return findItemMessage{}, fmt.Errorf("ews returned HTTP %d", response.StatusCode)
+	}
+	if parseErr != nil {
+		return findItemMessage{}, parseErr
+	}
+	return message, nil
+}
+
+func (client *Transport) getItemBody(ctx context.Context, itemID string) (findItemMessage, error) {
+	if err := client.config.Validate(); err != nil {
+		return findItemMessage{}, err
+	}
+	if client.secrets == nil {
+		return findItemMessage{}, fmt.Errorf("secret store is not configured")
+	}
+	password, err := client.secrets.Get(ctx, client.config.SecretRef)
+	if err != nil {
+		return findItemMessage{}, err
+	}
+	request, err := BuildGetItemBodyRequest(client.config, password, itemID)
 	if err != nil {
 		return findItemMessage{}, err
 	}

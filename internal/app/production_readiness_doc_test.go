@@ -293,6 +293,41 @@ func TestDocsTrackGraphRuleSetEnabledEvidence(t *testing.T) {
 	}
 }
 
+func TestDocsTrackEWSMailFetchBodyEvidence(t *testing.T) {
+	documents := map[string][]string{
+		filepath.Join("..", "..", "README.md"): {
+			"`mail.fetch_body`",
+			"explicit body",
+		},
+		filepath.Join("..", "..", "docs", "SPEC.md"): {
+			"`mail.fetch_body`",
+			"`BodyType`",
+			"`item:Body`",
+		},
+		filepath.Join("..", "..", "docs", "ACTION_COVERAGE.md"): {
+			"typed EWS mail body fetch",
+			"EWS `GetItem` with `BodyType=Text`",
+		},
+		filepath.Join("..", "..", "docs", "PRODUCTION_READINESS.md"): {
+			"typed explicit `mail.fetch_body` through `GetItem`",
+			"read body action is excluded from the read-metadata live harness",
+		},
+	}
+
+	for path, required := range documents {
+		data, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatalf("read %s: %v", path, err)
+		}
+		text := string(data)
+		for _, marker := range required {
+			if !strings.Contains(text, marker) {
+				t.Fatalf("expected %s to contain %q", path, marker)
+			}
+		}
+	}
+}
+
 func TestDocsTrackEWSLiveSmokeHarness(t *testing.T) {
 	documents := map[string][]string{
 		filepath.Join("..", "..", "docs", "ENTERPRISE_ENABLEMENT.md"): {
@@ -307,7 +342,7 @@ func TestDocsTrackEWSLiveSmokeHarness(t *testing.T) {
 		},
 		filepath.Join("..", "..", "docs", "PRODUCTION_READINESS.md"): {
 			"TestLiveEWSReadMetadataSmoke",
-			"raw EWSRequest/body/attachment/write actions are excluded",
+			"read body action is excluded from the read-metadata live harness",
 		},
 		filepath.Join("..", "..", "docs", "OPERATIONS.md"): {
 			"OUTLOOK_AGENT_LIVE_EWS_CONFIG",
