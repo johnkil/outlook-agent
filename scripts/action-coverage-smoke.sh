@@ -11,6 +11,7 @@ work_dir="$(mktemp -d "${tmp_root}/outlook-agent-action-coverage.XXXXXX")"
 coverage_json="${work_dir}/coverage.json"
 auth_json="${work_dir}/auth.json"
 opencode_jsonl="${work_dir}/opencode.jsonl"
+opencode_config_dir="${work_dir}/opencode-config"
 
 cleanup() {
   if [[ -z "${OUTLOOK_AGENT_KEEP_ACTION_COVERAGE_SMOKE:-}" ]]; then
@@ -70,10 +71,22 @@ fi
 opencode_ok="skipped"
 if [[ -n "${OUTLOOK_AGENT_OPENCODE_LIVE_DIR:-}" ]]; then
   require_command opencode
+  mkdir -p "$opencode_config_dir"
+  cat > "${opencode_config_dir}/opencode.json" <<'JSON'
+{
+  "$schema": "https://opencode.ai/config.json",
+  "permission": {
+    "outlook-agent_outlook_*": "deny",
+    "outlook-agent_outlook_auth_check": "allow",
+    "outlook-agent_outlook_capabilities": "allow",
+    "outlook-agent_outlook_action_dry_run": "allow"
+  }
+}
+JSON
   model="${OUTLOOK_AGENT_OPENCODE_MODEL:-alfagen/MiniMaxAI/MiniMax}"
   (
     cd "$OUTLOOK_AGENT_OPENCODE_LIVE_DIR"
-    opencode run \
+    env -u OPENCODE_CONFIG OPENCODE_CONFIG_DIR="$opencode_config_dir" opencode run \
       --model "$model" \
       --format json \
       --title outlook-agent-action-coverage-smoke \
