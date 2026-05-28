@@ -118,13 +118,12 @@ func Evaluate(request Request) Decision {
 			Reason:               "settings or rules action requires review",
 		}
 	case Unknown:
-		if request.UnsafeMode {
-			return Decision{Allowed: true}
-		}
 		return Decision{
-			Allowed:        false,
-			RequiresUnsafe: true,
-			Reason:         "unknown action requires unsafe mode",
+			Allowed:              false,
+			RequiresDryRun:       true,
+			RequiresConfirmation: true,
+			RequiresUnsafe:       true,
+			Reason:               "unknown action requires unsafe dry-run confirmation",
 		}
 	default:
 		return Decision{
@@ -139,6 +138,17 @@ func EvaluateConfirmed(request Request) Decision {
 	switch request.Class {
 	case ReversibleSingleItem, ReversibleBulk, SendLike, SettingsOrRules:
 		return Decision{Allowed: true}
+	case Unknown:
+		if request.UnsafeMode {
+			return Decision{Allowed: true}
+		}
+		return Decision{
+			Allowed:              false,
+			RequiresDryRun:       true,
+			RequiresConfirmation: true,
+			RequiresUnsafe:       true,
+			Reason:               "unknown action requires unsafe dry-run confirmation",
+		}
 	case Destructive:
 		if request.UnsafeMode {
 			return Decision{Allowed: true}

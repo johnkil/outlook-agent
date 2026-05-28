@@ -101,6 +101,9 @@ func TestHighLevelMailSearchCallsFindItemAndNormalizesMessages(t *testing.T) {
 	}
 
 	messages := response.Data["messages"].([]any)
+	if response.Data["returned"] != 1 || response.Data["limit"] != 25 || response.Data["truncated"] != false {
+		t.Fatalf("expected search window metadata, got %#v", response.Data)
+	}
 	message := messages[0].(map[string]any)
 	if message["id"] != "msg-1" || message["subject"] != "Planning notes" || message["sender"] != "Alex" {
 		t.Fatalf("unexpected normalized message: %#v", message)
@@ -617,6 +620,35 @@ func TestHighLevelMailFetchAttachmentDownloadsFileAttachmentByID(t *testing.T) {
 	}
 }
 
+func TestHighLevelMailFetchAttachmentRejectsOversizedDownload(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		switch request.URL.Path {
+		case "/owa/auth.owa":
+			http.SetCookie(response, &http.Cookie{Name: "X-OWA-CANARY", Value: "canary-secret"})
+			response.WriteHeader(http.StatusOK)
+		case "/owa/service.svc/s/GetFileAttachment":
+			response.Header().Set("Content-Type", "text/plain")
+			_, _ = response.Write([]byte(strings.Repeat("x", transport.MaxResponseBytes+1)))
+		default:
+			t.Fatalf("unexpected path: %s", request.URL.Path)
+		}
+	}))
+	defer server.Close()
+	client := newTestTransport(server)
+
+	response := client.Execute(context.Background(), transport.ActionRequest{
+		Name: "mail.fetch_attachment",
+		Payload: map[string]any{
+			"message_id":    "msg-1",
+			"attachment_id": "att-1",
+		},
+	})
+
+	if response.OK || !strings.Contains(response.Error, "response too large") {
+		t.Fatalf("expected oversized attachment download to be rejected, got %#v", response)
+	}
+}
+
 func TestHighLevelMailCreateDraftCallsCreateItemSaveOnly(t *testing.T) {
 	var calls []recordedServiceCall
 	server := newOWAServiceServer(t, &calls, map[string]any{
@@ -696,6 +728,11 @@ func TestHighLevelMailMoveToDeletedItemsCallsDeleteItem(t *testing.T) {
 	}
 	if response.Data["moved_count"] != 2 || response.Data["reversible"] != true {
 		t.Fatalf("unexpected delete response: %#v", response.Data)
+	}
+	succeeded := response.Data["succeeded"].([]string)
+	failed := response.Data["failed"].([]map[string]any)
+	if len(succeeded) != 2 || succeeded[0] != "msg-1" || succeeded[1] != "msg-2" || len(failed) != 0 {
+		t.Fatalf("unexpected partial-result fields: %#v", response.Data)
 	}
 }
 

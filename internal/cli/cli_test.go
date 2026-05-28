@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -102,6 +103,46 @@ func TestDoctorReportsReadinessContract(t *testing.T) {
 	}
 	if !payload.MCPStdio {
 		t.Fatalf("expected MCP stdio readiness")
+	}
+}
+
+func TestDoctorReportsFileSecretStoreReadiness(t *testing.T) {
+	secretPath := filepath.Join(t.TempDir(), "secret")
+	configPath := filepath.Join(t.TempDir(), "outlook-agent.json")
+	if err := os.WriteFile(configPath, []byte(fmt.Sprintf(`{
+		"default_profile": "work",
+		"profiles": {
+			"work": {
+				"transport": "owa",
+				"secret_ref": %q,
+				"settings": {
+					"base_url": "https://mail.example.com",
+					"username": "DOMAIN\\user"
+				}
+			}
+		}
+	}`, "file:"+secretPath)), 0o600); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+
+	code := Run([]string{"--config", configPath, "doctor"}, &stdout, &stderr)
+
+	if code != 0 {
+		t.Fatalf("expected exit code 0, got %d, stderr=%s", code, stderr.String())
+	}
+	var payload struct {
+		SecretStore struct {
+			Kind      string `json:"kind"`
+			Available bool   `json:"available"`
+		} `json:"secret_store"`
+	}
+	if err := json.Unmarshal(stdout.Bytes(), &payload); err != nil {
+		t.Fatalf("doctor output is not JSON: %v; output=%s", err, stdout.String())
+	}
+	if payload.SecretStore.Kind != "file" || !payload.SecretStore.Available {
+		t.Fatalf("unexpected file secret-store readiness: %#v", payload.SecretStore)
 	}
 }
 
@@ -454,7 +495,7 @@ func TestPolicyExplainActionReportsUnknownActionRoute(t *testing.T) {
 	if payload.Unknown.Name != "TotallyUnknown" || payload.Unknown.SafetyClass != "unknown" {
 		t.Fatalf("unexpected unknown policy detail: %#v", payload.Unknown)
 	}
-	if !payload.Unknown.RequiresUnsafe || payload.Unknown.ExecutionRoute != "unsafe_direct" {
+	if !payload.Unknown.RequiresUnsafe || payload.Unknown.ExecutionRoute != "unsafe_dry_run_confirm" {
 		t.Fatalf("unexpected unknown policy route: %#v", payload.Unknown)
 	}
 }

@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/base64"
 	"fmt"
-	"io"
 	"mime"
 	"net/http"
 	"strings"
@@ -15,11 +14,19 @@ import (
 func (client *Transport) executeHighLevel(ctx context.Context, request transport.ActionRequest) (transport.ActionResponse, bool) {
 	switch request.Name {
 	case "mail.search":
-		response := client.executeService(ctx, "FindItem", client.buildFindInboxItemsRequest(intValue(request.Payload, "max", 150)), false)
+		limit := intValue(request.Payload, "max", 150)
+		response := client.executeService(ctx, "FindItem", client.buildFindInboxItemsRequest(limit), false)
 		if !response.OK {
 			return response, true
 		}
-		return transport.ActionResponse{OK: true, Data: map[string]any{"messages": filterMessages(normalizeMailItems(extractItems(response.Data)), stringValue(request.Payload, "query"))}}, true
+		window := normalizeMailItems(extractItems(response.Data))
+		messages := filterMessages(window, stringValue(request.Payload, "query"))
+		return transport.ActionResponse{OK: true, Data: map[string]any{
+			"messages":  messages,
+			"returned":  len(messages),
+			"limit":     limit,
+			"truncated": len(window) >= limit,
+		}}, true
 	case "calendar.list":
 		response := client.executeService(ctx, "GetCalendarView", client.buildCalendarViewRequest(stringValue(request.Payload, "start"), stringValue(request.Payload, "end")), true)
 		if !response.OK {
@@ -99,7 +106,12 @@ func (client *Transport) executeHighLevel(ctx context.Context, request transport
 		if !response.OK {
 			return response, true
 		}
-		return transport.ActionResponse{OK: true, Data: map[string]any{"moved_count": len(ids), "reversible": true}}, true
+		return transport.ActionResponse{OK: true, Data: map[string]any{
+			"moved_count": len(ids),
+			"reversible":  true,
+			"succeeded":   anyStrings(ids),
+			"failed":      []map[string]any{},
+		}}, true
 	default:
 		return transport.ActionResponse{}, false
 	}
@@ -131,7 +143,7 @@ func (client *Transport) downloadFileAttachment(ctx context.Context, attachmentI
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
 		return nil, fmt.Errorf("owa attachment download returned HTTP %d", response.StatusCode)
 	}
-	body, err := io.ReadAll(response.Body)
+	body, err := transport.ReadLimited(response.Body, transport.MaxResponseBytes)
 	if err != nil {
 		return nil, err
 	}
@@ -632,6 +644,16 @@ func anySlice(value any) []any {
 	default:
 		return nil
 	}
+}
+
+func anyStrings(values []any) []string {
+	output := make([]string, 0, len(values))
+	for _, value := range values {
+		if text, ok := value.(string); ok && strings.TrimSpace(text) != "" {
+			output = append(output, text)
+		}
+	}
+	return output
 }
 
 func stringValue(values map[string]any, key string) string {

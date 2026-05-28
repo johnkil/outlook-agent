@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/johnkil/outlook-agent/internal/secret"
+	"github.com/johnkil/outlook-agent/internal/transport"
 )
 
 const defaultBaseURL = "https://graph.microsoft.com/v1.0"
@@ -42,12 +43,9 @@ func (config Config) normalizedBaseURL() (string, error) {
 	if raw == "" {
 		raw = defaultBaseURL
 	}
-	parsed, err := url.Parse(raw)
+	parsed, err := transport.ValidateServiceURL("base url", raw)
 	if err != nil {
-		return "", fmt.Errorf("base url: %w", err)
-	}
-	if parsed.Scheme == "" || parsed.Host == "" {
-		return "", fmt.Errorf("base url must be absolute")
+		return "", err
 	}
 	return strings.TrimRight(parsed.String(), "/"), nil
 }
@@ -67,14 +65,8 @@ func (config OAuthConfig) validate() error {
 }
 
 func validateAbsoluteURL(label string, raw string) error {
-	parsed, err := url.Parse(strings.TrimSpace(raw))
-	if err != nil {
-		return fmt.Errorf("%s: %w", label, err)
-	}
-	if parsed.Scheme == "" || parsed.Host == "" {
-		return fmt.Errorf("%s must be absolute", label)
-	}
-	return nil
+	_, err := transport.ValidateServiceURL(label, raw)
+	return err
 }
 
 func (config OAuthConfig) tokenURL() (string, error) {

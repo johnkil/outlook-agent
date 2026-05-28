@@ -3,7 +3,9 @@ package config
 import (
 	"encoding/json"
 	"fmt"
+	"net/url"
 	"os"
+	"strings"
 )
 
 const EnvConfigPath = "OUTLOOK_AGENT_CONFIG"
@@ -92,13 +94,11 @@ func containsInlineSecret(value any) bool {
 	switch typed := value.(type) {
 	case map[string]any:
 		for key, child := range typed {
-			switch key {
-			case "password", "token", "secret", "client_secret", "access_token", "refresh_token":
+			if isInlineSecretKey(key) {
 				return true
-			default:
-				if containsInlineSecret(child) {
-					return true
-				}
+			}
+			if containsInlineSecret(child) {
+				return true
 			}
 		}
 	case []any:
@@ -107,6 +107,54 @@ func containsInlineSecret(value any) bool {
 				return true
 			}
 		}
+	case string:
+		return containsURLUserinfo(typed)
 	}
 	return false
+}
+
+func isInlineSecretKey(key string) bool {
+	normalized := normalizeConfigKey(key)
+	if isSafeSecretReferenceKey(normalized) {
+		return false
+	}
+	for _, part := range []string{
+		"password",
+		"accesstoken",
+		"refreshtoken",
+		"clientsecret",
+		"apikey",
+		"authorization",
+		"cookie",
+		"session",
+		"canary",
+	} {
+		if strings.Contains(normalized, part) {
+			return true
+		}
+	}
+	return normalized == "token" || normalized == "secret"
+}
+
+func isSafeSecretReferenceKey(normalized string) bool {
+	switch normalized {
+	case "secretref", "secretstore", "tokenurl", "devicecodeurl":
+		return true
+	default:
+		return false
+	}
+}
+
+func normalizeConfigKey(key string) string {
+	lower := strings.ToLower(strings.TrimSpace(key))
+	replacer := strings.NewReplacer("_", "", "-", "", ".", "", " ", "")
+	return replacer.Replace(lower)
+}
+
+func containsURLUserinfo(value string) bool {
+	parsed, err := url.Parse(strings.TrimSpace(value))
+	if err != nil || parsed == nil || parsed.User == nil {
+		return false
+	}
+	return parsed.Scheme != "" && parsed.Host != ""
 }

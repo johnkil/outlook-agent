@@ -13,7 +13,7 @@ type KeychainRef struct {
 func ParseKeychainRef(ref Ref) (KeychainRef, error) {
 	raw := string(ref)
 	if !strings.HasPrefix(raw, "keychain:") {
-		return KeychainRef{}, fmt.Errorf("keychain ref must start with keychain:")
+		return KeychainRef{}, fmt.Errorf("keychain ref must start with keychain prefix")
 	}
 	payload := strings.TrimPrefix(raw, "keychain:")
 	service, account, ok := strings.Cut(payload, "/")

@@ -5,6 +5,8 @@ package secret
 import (
 	"context"
 	"errors"
+	"slices"
+	"strings"
 	"testing"
 )
 
@@ -64,5 +66,34 @@ func TestKeychainStorePutStoresGenericPassword(t *testing.T) {
 	}
 	if gotValue.String() != Redacted {
 		t.Fatalf("expected keychain value stringer to redact, got %q", gotValue.String())
+	}
+}
+
+func TestKeychainStorePutDoesNotPassSecretInCommandArguments(t *testing.T) {
+	original := securityRunAddGenericPassword
+	t.Cleanup(func() { securityRunAddGenericPassword = original })
+
+	var gotArgs []string
+	var gotStdin string
+	securityRunAddGenericPassword = func(_ context.Context, args []string, stdin string) error {
+		gotArgs = slices.Clone(args)
+		gotStdin = stdin
+		return nil
+	}
+
+	err := NewKeychainStore().Put(context.Background(), Ref("keychain:svc/account"), Value("secret-value"))
+	if err != nil {
+		t.Fatalf("put keychain secret: %v", err)
+	}
+	for _, arg := range gotArgs {
+		if strings.Contains(arg, "secret-value") {
+			t.Fatalf("secret leaked through command arguments: %#v", gotArgs)
+		}
+	}
+	if gotStdin != "secret-value\n" {
+		t.Fatalf("expected secret to be supplied on stdin, got %q", gotStdin)
+	}
+	if len(gotArgs) == 0 || gotArgs[len(gotArgs)-1] != "-w" {
+		t.Fatalf("expected security -w prompt flag to be last, got %#v", gotArgs)
 	}
 }

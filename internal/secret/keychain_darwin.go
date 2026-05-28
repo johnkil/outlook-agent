@@ -29,9 +29,7 @@ var securityFindGenericPassword = func(ctx context.Context, service string, acco
 }
 
 var securityAddGenericPassword = func(ctx context.Context, service string, account string, value Value) error {
-	return exec.CommandContext(
-		ctx,
-		"/usr/bin/security",
+	args := []string{
 		"add-generic-password",
 		"-U",
 		"-s",
@@ -39,8 +37,14 @@ var securityAddGenericPassword = func(ctx context.Context, service string, accou
 		"-a",
 		account,
 		"-w",
-		string(value),
-	).Run()
+	}
+	return securityRunAddGenericPassword(ctx, args, string(value)+"\n")
+}
+
+var securityRunAddGenericPassword = func(ctx context.Context, args []string, stdin string) error {
+	command := exec.CommandContext(ctx, "/usr/bin/security", args...)
+	command.Stdin = strings.NewReader(stdin)
+	return command.Run()
 }
 
 func (store *KeychainStore) Get(ctx context.Context, ref Ref) (Value, error) {

@@ -2,8 +2,10 @@ package mcpserver
 
 import (
 	"context"
+	"crypto/subtle"
 	"errors"
 	"io"
+	"os"
 	"strings"
 	"time"
 
@@ -98,9 +100,10 @@ type MailCreateDraftOutput struct {
 }
 
 type MailMoveToDeletedItemsInput struct {
-	IDs          []string `json:"ids" jsonschema:"message ids to move"`
-	ConfirmToken string   `json:"confirm_token" jsonschema:"confirmation token from outlook.action_dry_run"`
-	Mailbox      string   `json:"mailbox,omitempty" jsonschema:"optional mailbox user id or user principal name"`
+	IDs           []string `json:"ids" jsonschema:"message ids to move"`
+	ConfirmToken  string   `json:"confirm_token" jsonschema:"confirmation token from outlook.action_dry_run"`
+	ApprovalToken string   `json:"approval_token,omitempty" jsonschema:"external approval token supplied by the host after user approval"`
+	Mailbox       string   `json:"mailbox,omitempty" jsonschema:"optional mailbox user id or user principal name"`
 }
 
 type MailRulesListInput struct {
@@ -113,11 +116,12 @@ type MailRulesListOutput struct {
 }
 
 type MailRuleSetEnabledInput struct {
-	RuleID       string `json:"rule_id" jsonschema:"message rule id"`
-	Enabled      bool   `json:"enabled" jsonschema:"whether the rule should be enabled"`
-	FolderID     string `json:"folder_id,omitempty" jsonschema:"optional mail folder id"`
-	ConfirmToken string `json:"confirm_token" jsonschema:"confirmation token from outlook.action_dry_run"`
-	Mailbox      string `json:"mailbox,omitempty" jsonschema:"optional mailbox user id or user principal name"`
+	RuleID        string `json:"rule_id" jsonschema:"message rule id"`
+	Enabled       bool   `json:"enabled" jsonschema:"whether the rule should be enabled"`
+	FolderID      string `json:"folder_id,omitempty" jsonschema:"optional mail folder id"`
+	ConfirmToken  string `json:"confirm_token" jsonschema:"confirmation token from outlook.action_dry_run"`
+	ApprovalToken string `json:"approval_token,omitempty" jsonschema:"external approval token supplied by the host after user approval"`
+	Mailbox       string `json:"mailbox,omitempty" jsonschema:"optional mailbox user id or user principal name"`
 }
 
 type MailboxSettingsGetInput struct {
@@ -169,11 +173,12 @@ type DryRunOutput struct {
 }
 
 type ActionConfirmInput struct {
-	ConfirmToken string         `json:"confirm_token" jsonschema:"confirmation token from outlook.action_dry_run"`
-	Action       string         `json:"action" jsonschema:"action name"`
-	Payload      map[string]any `json:"payload,omitempty" jsonschema:"action payload"`
-	UnsafeMode   bool           `json:"unsafe_mode,omitempty" jsonschema:"whether unsafe mode is active"`
-	Profile      string         `json:"profile,omitempty" jsonschema:"profile name"`
+	ConfirmToken  string         `json:"confirm_token" jsonschema:"confirmation token from outlook.action_dry_run"`
+	ApprovalToken string         `json:"approval_token,omitempty" jsonschema:"external approval token supplied by the host after user approval"`
+	Action        string         `json:"action" jsonschema:"action name"`
+	Payload       map[string]any `json:"payload,omitempty" jsonschema:"action payload"`
+	UnsafeMode    bool           `json:"unsafe_mode,omitempty" jsonschema:"whether unsafe mode is active"`
+	Profile       string         `json:"profile,omitempty" jsonschema:"profile name"`
 }
 
 type RawActionInput struct {
@@ -186,15 +191,18 @@ type RawActionInput struct {
 }
 
 type Runtime struct {
-	client  transport.Transport
-	confirm *confirm.Store
-	profile string
+	client        transport.Transport
+	confirm       *confirm.Store
+	profile       string
+	approvalToken string
 }
 
 type toolRegistration struct {
 	name string
 	add  func(*mcp.Server, *Runtime, string)
 }
+
+const ApprovalTokenEnv = "OUTLOOK_AGENT_APPROVAL_TOKEN"
 
 var toolRegistrations = []toolRegistration{
 	{name: "outlook.auth_check", add: func(server *mcp.Server, runtime *Runtime, name string) {
@@ -325,9 +333,10 @@ func NewRuntimeWithProfile(client transport.Transport, profile string) *Runtime 
 		profile = "default"
 	}
 	return &Runtime{
-		client:  client,
-		confirm: confirm.NewStore(time.Now),
-		profile: profile,
+		client:        client,
+		confirm:       confirm.NewStore(time.Now),
+		profile:       profile,
+		approvalToken: strings.TrimSpace(os.Getenv(ApprovalTokenEnv)),
 	}
 }
 
@@ -457,6 +466,9 @@ func mailMoveToDeletedItemsHandler(runtime *Runtime) func(context.Context, *mcp.
 		if input.ConfirmToken == "" {
 			return nil, ActionResultOutput{OK: false, Error: "confirm_token required"}, nil
 		}
+		if err := runtime.validateExternalApproval(input.ApprovalToken); err != nil {
+			return nil, ActionResultOutput{OK: false, Error: err.Error()}, nil
+		}
 		payload := withMailbox(map[string]any{"ids": stringsToAny(input.IDs)}, input.Mailbox)
 		if !runtime.confirm.Consume(input.ConfirmToken, bindingFor(runtime.client, runtime.profile, "mail.move_to_deleted_items", payload, false)) {
 			return nil, ActionResultOutput{OK: false, Error: "confirmation token is invalid"}, nil
@@ -485,6 +497,9 @@ func mailRuleSetEnabledHandler(runtime *Runtime) func(context.Context, *mcp.Call
 	return func(ctx context.Context, _ *mcp.CallToolRequest, input MailRuleSetEnabledInput) (*mcp.CallToolResult, ActionResultOutput, error) {
 		if input.ConfirmToken == "" {
 			return nil, ActionResultOutput{OK: false, Error: "confirm_token required"}, nil
+		}
+		if err := runtime.validateExternalApproval(input.ApprovalToken); err != nil {
+			return nil, ActionResultOutput{OK: false, Error: err.Error()}, nil
 		}
 		payload := withMailbox(map[string]any{
 			"id":        input.RuleID,
@@ -596,6 +611,9 @@ func dryRunHandler(runtime *Runtime) func(context.Context, *mcp.CallToolRequest,
 
 func actionConfirmHandler(runtime *Runtime) func(context.Context, *mcp.CallToolRequest, ActionConfirmInput) (*mcp.CallToolResult, ActionResultOutput, error) {
 	return func(ctx context.Context, _ *mcp.CallToolRequest, input ActionConfirmInput) (*mcp.CallToolResult, ActionResultOutput, error) {
+		if err := runtime.validateExternalApproval(input.ApprovalToken); err != nil {
+			return nil, ActionResultOutput{OK: false, Error: err.Error()}, nil
+		}
 		if !runtime.confirm.Consume(input.ConfirmToken, bindingFor(runtime.client, runtime.profileOrDefault(input.Profile), input.Action, input.Payload, input.UnsafeMode)) {
 			return nil, ActionResultOutput{OK: false, Error: "confirmation token is invalid"}, nil
 		}
@@ -606,6 +624,18 @@ func actionConfirmHandler(runtime *Runtime) func(context.Context, *mcp.CallToolR
 		response := runtime.client.Execute(ctx, transport.ActionRequest{Name: input.Action, Payload: input.Payload, UnsafeMode: input.UnsafeMode})
 		return nil, actionResultFromResponse(response), nil
 	}
+}
+
+func (runtime *Runtime) validateExternalApproval(token string) error {
+	expected := strings.TrimSpace(runtime.approvalToken)
+	if expected == "" {
+		return nil
+	}
+	actual := strings.TrimSpace(token)
+	if actual == "" || subtle.ConstantTimeCompare([]byte(actual), []byte(expected)) != 1 {
+		return errors.New("external approval token required")
+	}
+	return nil
 }
 
 func rawActionHandler(runtime *Runtime) func(context.Context, *mcp.CallToolRequest, RawActionInput) (*mcp.CallToolResult, ActionResultOutput, error) {

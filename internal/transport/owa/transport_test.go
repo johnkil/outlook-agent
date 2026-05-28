@@ -6,7 +6,10 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"slices"
+	"sync"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/johnkil/outlook-agent/internal/action"
 	"github.com/johnkil/outlook-agent/internal/policy"
@@ -61,6 +64,51 @@ func TestTransportAuthenticatesAndExecutesServiceAction(t *testing.T) {
 	}
 	if !sawCanaryHeader {
 		t.Fatal("expected service request to include canary header")
+	}
+}
+
+func TestTransportAuthenticatesConcurrentlyWithSingleSessionLogin(t *testing.T) {
+	var loginCount atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		if request.URL.Path != "/owa/auth.owa" {
+			t.Fatalf("unexpected path: %s", request.URL.Path)
+		}
+		loginCount.Add(1)
+		time.Sleep(10 * time.Millisecond)
+		http.SetCookie(response, &http.Cookie{Name: "X-OWA-CANARY", Value: "canary-secret"})
+		response.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
+	client := owa.NewTransport(owa.Config{
+		BaseURL:   server.URL,
+		Username:  "DOMAIN\\user",
+		SecretRef: secret.Ref("memory:owa"),
+	}, secret.NewMemoryStore(map[string]string{"memory:owa": "password"}), server.Client())
+
+	var ready sync.WaitGroup
+	var start sync.WaitGroup
+	ready.Add(16)
+	start.Add(1)
+	results := make(chan transport.AuthResult, 16)
+	for range 16 {
+		go func() {
+			ready.Done()
+			start.Wait()
+			results <- client.Authenticate(context.Background(), "default")
+		}()
+	}
+
+	ready.Wait()
+	start.Done()
+	for range 16 {
+		result := <-results
+		if !result.OK {
+			t.Fatalf("expected concurrent auth ok: %#v", result)
+		}
+	}
+	if got := loginCount.Load(); got != 1 {
+		t.Fatalf("expected one shared OWA login, got %d", got)
 	}
 }
 

@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
+	"sync"
 	"time"
 )
 
@@ -17,6 +18,7 @@ type Binding struct {
 }
 
 type Store struct {
+	mu      sync.Mutex
 	now     func() time.Time
 	records map[string]record
 }
@@ -41,6 +43,8 @@ func (store *Store) Generate(binding Binding, ttl time.Duration) (string, error)
 	if err != nil {
 		return "", err
 	}
+	store.mu.Lock()
+	defer store.mu.Unlock()
 	store.records[token] = record{
 		fingerprint: fingerprint(binding),
 		expiresAt:   store.now().Add(ttl),
@@ -49,6 +53,8 @@ func (store *Store) Generate(binding Binding, ttl time.Duration) (string, error)
 }
 
 func (store *Store) Consume(token string, binding Binding) bool {
+	store.mu.Lock()
+	defer store.mu.Unlock()
 	record, ok := store.records[token]
 	if !ok {
 		return false

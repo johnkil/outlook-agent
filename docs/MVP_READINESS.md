@@ -29,11 +29,15 @@ artifacts and local verification commands:
 - Lower-level breadth is preserved with raw guarded execution for all discovered
   OWA actions, raw GraphRequest, and raw EWSRequest.
 - Mutating, destructive, send-like, settings, and broad reversible work is
-  guarded by dry-run summaries and exact confirmation tokens.
+  guarded by dry-run summaries and exact confirmation tokens, with an optional
+  host-side approval token gate for user-mediated confirmations.
 - Unsafe mode is required for destructive or unknown raw action paths, but it
   does not bypass exact confirmation.
-- Redaction covers secrets, cookies, canary values, raw bodies, attachment
-  contents, raw Graph text, and raw EWS XML text.
+- Search responses expose bounded-window metadata (`returned`, `limit`,
+  `truncated`, and Graph `next_link` when available), and bulk move responses
+  expose `succeeded`/`failed` partial-result fields.
+- Redaction covers secrets, cookies, canary values, raw bodies, previews,
+  snippets, attachment contents, raw Graph text, and raw EWS XML text.
 - Release artifacts are defined by scripts and GitHub workflows, including
   cross-platform archives and checksums.
 

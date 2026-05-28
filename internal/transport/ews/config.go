@@ -2,10 +2,10 @@ package ews
 
 import (
 	"fmt"
-	"net/url"
 	"strings"
 
 	"github.com/johnkil/outlook-agent/internal/secret"
+	"github.com/johnkil/outlook-agent/internal/transport"
 )
 
 type Config struct {
@@ -32,12 +32,9 @@ func (config Config) Validate() error {
 
 func (config Config) normalizedEndpointURL() (string, error) {
 	trimmed := strings.TrimSpace(config.EndpointURL)
-	parsed, err := url.Parse(trimmed)
+	parsed, err := transport.ValidateServiceURL("endpoint url", trimmed)
 	if err != nil {
 		return "", err
-	}
-	if parsed.Scheme == "" || parsed.Host == "" {
-		return "", fmt.Errorf("endpoint url must be absolute")
 	}
 	return parsed.String(), nil
 }

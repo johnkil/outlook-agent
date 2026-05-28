@@ -3,7 +3,6 @@ package ews
 import (
 	"context"
 	"fmt"
-	"io"
 	"net/http"
 	"strconv"
 	"strings"
@@ -22,7 +21,7 @@ type Transport struct {
 
 func NewTransport(config Config, secrets secret.Store, client *http.Client) *Transport {
 	if client == nil {
-		client = http.DefaultClient
+		client = transport.DefaultHTTPClient()
 	}
 	return &Transport{config: config, secrets: secrets, client: client}
 }
@@ -66,11 +65,17 @@ func (client *Transport) Execute(ctx context.Context, request transport.ActionRe
 			"response_code":      metadata.ResponseCode,
 		}}}
 	case "mail.search":
-		messages, err := client.findItems(ctx, stringValue(request.Payload, "folder_id", "inbox"), intValue(request.Payload, "max", 150), stringValue(request.Payload, "query", ""))
+		limit := intValue(request.Payload, "max", 150)
+		messages, err := client.findItems(ctx, stringValue(request.Payload, "folder_id", "inbox"), limit, stringValue(request.Payload, "query", ""))
 		if err != nil {
 			return transport.ActionResponse{OK: false, Error: err.Error()}
 		}
-		return transport.ActionResponse{OK: true, Data: map[string]any{"messages": messages}}
+		return transport.ActionResponse{OK: true, Data: map[string]any{
+			"messages":  messages,
+			"returned":  len(messages),
+			"limit":     limit,
+			"truncated": len(messages) >= limit,
+		}}
 	case "mail.fetch_metadata":
 		messageID := strings.TrimSpace(stringValue(request.Payload, "id", ""))
 		if messageID == "" {
@@ -159,7 +164,7 @@ func (client *Transport) executeRawEWSRequest(ctx context.Context, payload map[s
 		"status":  response.StatusCode,
 		"headers": selectedEWSResponseHeaders(response.Header),
 	}
-	rawBody, err := io.ReadAll(response.Body)
+	rawBody, err := transport.ReadLimited(response.Body, transport.MaxResponseBytes)
 	if err != nil {
 		return nil, err
 	}

@@ -6,6 +6,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -24,6 +26,15 @@ func TestConfigValidateRejectsInvalidFields(t *testing.T) {
 	}{
 		{name: "missing secret", config: graph.Config{BaseURL: "https://graph.example.test/v1.0"}, want: "secret ref"},
 		{name: "invalid base", config: graph.Config{BaseURL: "://bad", SecretRef: secret.Ref("memory:graph")}, want: "base url"},
+		{name: "http base url", config: graph.Config{BaseURL: "http://graph.example.test/v1.0", SecretRef: secret.Ref("memory:graph")}, want: "base url must use https"},
+		{name: "base url userinfo", config: graph.Config{BaseURL: "https://user:pass@graph.example.test/v1.0", SecretRef: secret.Ref("memory:graph")}, want: "base url must not include userinfo"},
+		{name: "http oauth token url", config: graph.Config{
+			BaseURL:   "https://graph.example.test/v1.0",
+			SecretRef: secret.Ref("memory:graph"),
+			OAuth: graph.OAuthConfig{
+				TokenURL: "http://login.example.test/token",
+			},
+		}, want: "oauth token url must use https"},
 	}
 
 	for _, tt := range tests {
@@ -190,6 +201,32 @@ func TestTransportExecutesRawGraphRequest(t *testing.T) {
 	}
 }
 
+func TestTransportRejectsOversizedRawGraphResponse(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		response.Header().Set("Content-Type", "text/plain")
+		_, _ = response.Write([]byte(strings.Repeat("x", transport.MaxResponseBytes+1)))
+	}))
+	defer server.Close()
+
+	client := graph.NewTransport(graph.Config{
+		BaseURL:   server.URL + "/v1.0",
+		SecretRef: secret.Ref("memory:graph"),
+	}, secret.NewMemoryStore(map[string]string{"memory:graph": "token-secret"}), server.Client())
+
+	result := client.Execute(context.Background(), transport.ActionRequest{
+		Name: "GraphRequest",
+		Payload: map[string]any{
+			"method": "GET",
+			"path":   "/me",
+		},
+		UnsafeMode: true,
+	})
+
+	if result.OK || !strings.Contains(result.Error, "response too large") {
+		t.Fatalf("expected oversized raw Graph response to be rejected, got %#v", result)
+	}
+}
+
 func TestTransportRejectsRawGraphRequestAbsoluteURL(t *testing.T) {
 	client := graph.NewTransport(graph.Config{
 		BaseURL:   "https://graph.example.test/v1.0",
@@ -309,6 +346,42 @@ func TestTransportExecutesMailSearchForMailboxTarget(t *testing.T) {
 	messages := result.Data["messages"].([]any)
 	if len(messages) != 1 || messages[0].(map[string]any)["subject"] != "Shared" {
 		t.Fatalf("unexpected shared mailbox messages: %#v", messages)
+	}
+}
+
+func TestTransportMailSearchReportsPaginationMetadata(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		if request.Method != http.MethodGet || request.URL.Path != "/v1.0/me/mailFolders/inbox/messages" {
+			t.Fatalf("unexpected request: %s %s", request.Method, request.URL.String())
+		}
+		response.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(response).Encode(map[string]any{
+			"@odata.nextLink": "https://graph.example.test/v1.0/me/mailFolders/inbox/messages?$skiptoken=next",
+			"value": []any{
+				graphMessageResponse("message-1", "Planning", "Alice", "alice@example.com"),
+			},
+		})
+	}))
+	defer server.Close()
+
+	client := graph.NewTransport(graph.Config{
+		BaseURL:   server.URL + "/v1.0",
+		SecretRef: secret.Ref("memory:graph"),
+	}, secret.NewMemoryStore(map[string]string{"memory:graph": "token-secret"}), server.Client())
+
+	result := client.Execute(context.Background(), transport.ActionRequest{
+		Name:    "mail.search",
+		Payload: map[string]any{"max": 1},
+	})
+
+	if !result.OK {
+		t.Fatalf("expected mail.search ok, got %#v", result)
+	}
+	if result.Data["returned"] != 1 || result.Data["limit"] != 1 || result.Data["truncated"] != true {
+		t.Fatalf("expected pagination metadata, got %#v", result.Data)
+	}
+	if result.Data["next_link"] != "https://graph.example.test/v1.0/me/mailFolders/inbox/messages?$skiptoken=next" {
+		t.Fatalf("unexpected next_link: %#v", result.Data["next_link"])
 	}
 }
 
@@ -630,6 +703,47 @@ func TestTransportExecutesMailMoveToDeletedItems(t *testing.T) {
 	}
 	if result.Data["moved_count"] != 1 || result.Data["reversible"] != true {
 		t.Fatalf("unexpected move response: %#v", result.Data)
+	}
+}
+
+func TestTransportMailMoveToDeletedItemsReportsPartialResults(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		response.Header().Set("Content-Type", "application/json")
+		switch request.URL.Path {
+		case "/v1.0/me/messages/message-1/move":
+			_ = json.NewEncoder(response).Encode(graphMessageResponse("message-1", "Moved", "Alice", "alice@example.com"))
+		case "/v1.0/me/messages/message-2/move":
+			response.WriteHeader(http.StatusTooManyRequests)
+			_ = json.NewEncoder(response).Encode(map[string]any{"error": map[string]any{"code": "TooManyRequests"}})
+		default:
+			t.Fatalf("unexpected request: %s %s", request.Method, request.URL.String())
+		}
+	}))
+	defer server.Close()
+
+	client := graph.NewTransport(graph.Config{
+		BaseURL:   server.URL + "/v1.0",
+		SecretRef: secret.Ref("memory:graph"),
+	}, secret.NewMemoryStore(map[string]string{"memory:graph": "token-secret"}), server.Client())
+
+	result := client.Execute(context.Background(), transport.ActionRequest{
+		Name:    "mail.move_to_deleted_items",
+		Payload: map[string]any{"ids": []any{"message-1", "message-2"}},
+	})
+
+	if result.OK || result.Error != "some messages failed to move to Deleted Items" {
+		t.Fatalf("expected partial failure, got %#v", result)
+	}
+	if result.Data["moved_count"] != 1 || result.Data["reversible"] != true {
+		t.Fatalf("unexpected partial summary: %#v", result.Data)
+	}
+	succeeded := result.Data["succeeded"].([]string)
+	if len(succeeded) != 1 || succeeded[0] != "message-1" {
+		t.Fatalf("unexpected succeeded ids: %#v", succeeded)
+	}
+	failed := result.Data["failed"].([]map[string]any)
+	if len(failed) != 1 || failed[0]["id"] != "message-2" {
+		t.Fatalf("unexpected failed ids: %#v", failed)
 	}
 }
 
@@ -1172,6 +1286,66 @@ func TestTransportRefreshesExpiredOAuthTokenSecret(t *testing.T) {
 	expiresAt, _ := time.Parse(time.RFC3339, credential["expires_at"].(string))
 	if !expiresAt.After(time.Now().UTC()) {
 		t.Fatalf("expected future expires_at, got %s", expiresAt.Format(time.RFC3339))
+	}
+}
+
+func TestTransportCoalescesConcurrentExpiredOAuthRefresh(t *testing.T) {
+	var refreshCalls atomic.Int64
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		switch request.URL.Path {
+		case "/oauth/token":
+			refreshCalls.Add(1)
+			time.Sleep(10 * time.Millisecond)
+			response.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(response).Encode(map[string]any{
+				"token_type":    "Bearer",
+				"access_token":  "fresh-token",
+				"refresh_token": "new-refresh",
+				"expires_in":    3600,
+			})
+		case "/v1.0/me/mailFolders/inbox":
+			if request.Header.Get("Authorization") != "Bearer fresh-token" {
+				t.Fatalf("expected fresh bearer, got %q", request.Header.Get("Authorization"))
+			}
+			response.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(response).Encode(graphFolderResponse())
+		default:
+			t.Fatalf("unexpected path: %s", request.URL.Path)
+		}
+	}))
+	defer server.Close()
+
+	store := secret.NewMemoryStore(map[string]string{
+		"memory:graph": `{
+			"token_type": "Bearer",
+			"access_token": "expired-token",
+			"refresh_token": "refresh-secret",
+			"expires_at": "2000-01-01T00:00:00Z"
+		}`,
+	})
+	client := graph.NewTransport(graph.Config{
+		BaseURL:   server.URL + "/v1.0",
+		SecretRef: secret.Ref("memory:graph"),
+		OAuth: graph.OAuthConfig{
+			ClientID: "client-id",
+			TokenURL: server.URL + "/oauth/token",
+		},
+	}, store, server.Client())
+
+	var wg sync.WaitGroup
+	for range 16 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if auth := client.Authenticate(context.Background(), "work"); !auth.OK {
+				t.Errorf("expected auth ok, got %#v", auth)
+			}
+		}()
+	}
+	wg.Wait()
+
+	if got := refreshCalls.Load(); got != 1 {
+		t.Fatalf("expected one coalesced refresh, got %d", got)
 	}
 }
 

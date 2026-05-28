@@ -86,3 +86,25 @@ func TestRedactsMessageBodiesAndAttachmentContent(t *testing.T) {
 		t.Fatalf("expected attachment content_base64 redacted, got %#v", first["content_base64"])
 	}
 }
+
+func TestRedactsBodyPreviewSnippetAndMixedCaseContentKeys(t *testing.T) {
+	input := map[string]any{
+		"bodyPreview": "private preview",
+		"messageBody": "private body",
+		"htmlBody":    "<p>private html</p>",
+		"text_body":   "private text",
+		"Snippet":     "private snippet",
+		"safe":        "metadata",
+	}
+
+	output := redact.Value(input).(map[string]any)
+
+	for _, key := range []string{"bodyPreview", "messageBody", "htmlBody", "text_body", "Snippet"} {
+		if output[key] != redact.Marker {
+			t.Fatalf("expected %s redacted, got %#v", key, output[key])
+		}
+	}
+	if output["safe"] != "metadata" {
+		t.Fatalf("expected safe metadata preserved, got %#v", output["safe"])
+	}
+}

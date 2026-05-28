@@ -57,8 +57,8 @@ func ExecutionRoute(class policy.SafetyClass) string {
 	case policy.Destructive:
 		return "unsafe_dry_run_confirm"
 	case policy.Unknown:
-		return "unsafe_direct"
+		return "unsafe_dry_run_confirm"
 	default:
-		return "unsafe_direct"
+		return "unsafe_dry_run_confirm"
 	}
 }

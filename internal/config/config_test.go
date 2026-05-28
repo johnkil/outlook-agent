@@ -123,6 +123,61 @@ func TestConfigRejectsInlineSecretValues(t *testing.T) {
 	}
 }
 
+func TestConfigRejectsSecretLikeKeysAndURLUserinfo(t *testing.T) {
+	tests := []struct {
+		name string
+		body string
+	}{
+		{
+			name: "mixed case password",
+			body: `{
+				"profiles": {
+					"bad": {
+						"transport": "fake",
+						"Password": "do-not-store-this"
+					}
+				}
+			}`,
+		},
+		{
+			name: "api key",
+			body: `{
+				"profiles": {
+					"bad": {
+						"transport": "fake",
+						"api_key": "do-not-store-this"
+					}
+				}
+			}`,
+		},
+		{
+			name: "url userinfo",
+			body: `{
+				"profiles": {
+					"bad": {
+						"transport": "fake",
+						"secret_ref": "keychain:outlook/work",
+						"settings": {
+							"base_url": "https://user:pass@mail.example.com"
+						}
+					}
+				}
+			}`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			path := writeConfig(t, tt.body)
+
+			_, _, err := config.Load(config.Options{ExplicitPath: path})
+			if err == nil {
+				t.Fatal("expected inline secret-like config value to be rejected")
+			}
+		})
+	}
+}
+
 func writeConfig(t *testing.T, body string) string {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "outlook-agent.json")

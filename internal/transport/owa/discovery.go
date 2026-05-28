@@ -557,10 +557,6 @@ func (err discoveryHTTPStatusError) Error() string {
 	return fmt.Sprintf("owa discovery returned HTTP %d", err.Status)
 }
 
-func (client *Transport) fetchDiscoveryText(ctx context.Context, session Session, source string) (string, string, string, int, int, string, error) {
-	return client.fetchDiscoveryTextRelativeTo(ctx, session, source, "")
-}
-
 func (client *Transport) fetchDiscoveryTextRelativeTo(ctx context.Context, session Session, source string, reference string) (string, string, string, int, int, string, error) {
 	resolved, err := client.config.discoveryURLRelativeTo(source, reference)
 	if err != nil {
@@ -764,10 +760,6 @@ func pathExtension(path string) string {
 		return ""
 	}
 	return path[index:]
-}
-
-func (config Config) discoveryURL(source string) (string, error) {
-	return config.discoveryURLRelativeTo(source, "")
 }
 
 func (config Config) discoveryURLRelativeTo(source string, reference string) (string, error) {
