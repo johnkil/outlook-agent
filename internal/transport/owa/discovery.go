@@ -15,6 +15,7 @@ import (
 
 	"github.com/johnkil/outlook-agent/internal/action"
 	"github.com/johnkil/outlook-agent/internal/policy"
+	"github.com/johnkil/outlook-agent/internal/redact"
 )
 
 var serviceActionPatterns = []*regexp.Regexp{
@@ -663,7 +664,7 @@ func sanitizedURLPathQuery(raw string) string {
 		path = "/"
 	}
 	if parsed.RawQuery != "" {
-		path += "?" + parsed.RawQuery
+		path += "?" + strings.TrimPrefix(redact.String("?"+parsed.RawQuery), "?")
 	}
 	return path
 }

@@ -160,6 +160,40 @@ func TestTransportExecutesGetFolder(t *testing.T) {
 	}
 }
 
+func TestTransportRejectsRedirectWithBasicAuth(t *testing.T) {
+	var redirected bool
+	var leakedAuth bool
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		switch request.URL.Path {
+		case "/EWS/Exchange.asmx":
+			http.Redirect(response, request, "/other", http.StatusFound)
+		case "/other":
+			redirected = true
+			leakedAuth = request.Header.Get("Authorization") != ""
+			response.Header().Set("Content-Type", "text/xml")
+			_, _ = response.Write([]byte(successfulGetFolderResponse()))
+		default:
+			t.Fatalf("unexpected path: %s", request.URL.Path)
+		}
+	}))
+	defer server.Close()
+
+	client := ews.NewTransport(ews.Config{
+		EndpointURL: server.URL + "/EWS/Exchange.asmx",
+		Username:    "DOMAIN\\user",
+		SecretRef:   secret.Ref("memory:ews"),
+	}, secret.NewMemoryStore(map[string]string{"memory:ews": "password-secret"}), server.Client())
+
+	result := client.Execute(context.Background(), transport.ActionRequest{Name: "GetFolder", Payload: map[string]any{"folder_id": "inbox"}})
+
+	if result.OK || !strings.Contains(strings.ToLower(result.Error), "redirect") {
+		t.Fatalf("expected authenticated redirect to be blocked, got %#v", result)
+	}
+	if redirected || leakedAuth {
+		t.Fatalf("redirect target must not receive Basic auth, redirected=%v leaked=%v", redirected, leakedAuth)
+	}
+}
+
 func TestTransportExecutesMailSearchWithFindItem(t *testing.T) {
 	var sawFindItem bool
 	var sawAuth bool
@@ -225,6 +259,29 @@ func TestTransportExecutesMailSearchWithFindItem(t *testing.T) {
 	}
 	if first["received_at"] != "2026-05-28T07:15:00Z" || first["is_read"] != false || first["has_attachments"] != true {
 		t.Fatalf("unexpected first message metadata: %#v", first)
+	}
+}
+
+func TestTransportRejectsOversizedHighLevelEWSResponse(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		response.Header().Set("Content-Type", "text/xml")
+		_, _ = response.Write([]byte(strings.Repeat("x", transport.MaxResponseBytes+1)))
+	}))
+	defer server.Close()
+
+	client := ews.NewTransport(ews.Config{
+		EndpointURL: server.URL + "/EWS/Exchange.asmx",
+		Username:    "DOMAIN\\user",
+		SecretRef:   secret.Ref("memory:ews"),
+	}, secret.NewMemoryStore(map[string]string{"memory:ews": "password-secret"}), server.Client())
+
+	result := client.Execute(context.Background(), transport.ActionRequest{
+		Name:    "mail.search",
+		Payload: map[string]any{"folder_id": "inbox", "max": 5},
+	})
+
+	if result.OK || !strings.Contains(result.Error, "response too large") {
+		t.Fatalf("expected oversized high-level EWS response to be rejected, got %#v", result)
 	}
 }
 
