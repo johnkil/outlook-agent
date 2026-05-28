@@ -179,7 +179,7 @@ bash scripts/public-safety-check.sh
 Also run private-marker grep from the parent workspace and the temporary
 artifact check.
 
-- [ ] **Step 6: Commit, push, and update issue**
+- [x] **Step 6: Commit, push, and update issue**
 
 Commit:
 
