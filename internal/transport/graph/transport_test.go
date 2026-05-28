@@ -88,6 +88,8 @@ func TestTransportGraphCapabilitiesIncludeBodyDraftMove(t *testing.T) {
 		{name: "mail.fetch_attachment", class: policy.ReadAttachmentExplicit, level: action.LevelHighLevelMCPTool},
 		{name: "mail.create_draft", class: policy.DraftOnly, level: action.LevelHighLevelMCPTool},
 		{name: "mail.move_to_deleted_items", class: policy.ReversibleBulk, level: action.LevelHighLevelMCPTool},
+		{name: "mail.rules.list", class: policy.ReadMetadata, level: action.LevelHighLevelMCPTool},
+		{name: "mailbox.settings.get", class: policy.ReadMetadata, level: action.LevelHighLevelMCPTool},
 		{name: "calendar.list", class: policy.ReadMetadata, level: action.LevelHighLevelMCPTool},
 		{name: "calendar.availability", class: policy.ReadMetadata, level: action.LevelHighLevelMCPTool},
 	} {
@@ -563,6 +565,149 @@ func TestTransportExecutesMailMoveToDeletedItems(t *testing.T) {
 	}
 	if result.Data["moved_count"] != 1 || result.Data["reversible"] != true {
 		t.Fatalf("unexpected move response: %#v", result.Data)
+	}
+}
+
+func TestTransportExecutesMailRulesList(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		if request.Method != http.MethodGet || request.URL.Path != "/v1.0/me/mailFolders/inbox/messageRules" {
+			t.Fatalf("unexpected request: %s %s", request.Method, request.URL.String())
+		}
+		if request.Header.Get("Authorization") != "Bearer token-secret" {
+			t.Fatal("expected bearer token header")
+		}
+		response.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(response).Encode(map[string]any{
+			"value": []any{
+				map[string]any{
+					"id":          "rule-1",
+					"displayName": "Remove spam",
+					"sequence":    1,
+					"isEnabled":   true,
+					"hasError":    false,
+					"isReadOnly":  false,
+					"conditions": map[string]any{
+						"subjectContains": []string{"enter to win"},
+					},
+					"actions": map[string]any{
+						"delete":              true,
+						"stopProcessingRules": true,
+					},
+				},
+			},
+		})
+	}))
+	defer server.Close()
+
+	client := graph.NewTransport(graph.Config{
+		BaseURL:   server.URL + "/v1.0",
+		SecretRef: secret.Ref("memory:graph"),
+	}, secret.NewMemoryStore(map[string]string{"memory:graph": "token-secret"}), server.Client())
+
+	result := client.Execute(context.Background(), transport.ActionRequest{
+		Name:    "mail.rules.list",
+		Payload: map[string]any{"folder_id": "inbox"},
+	})
+
+	if !result.OK {
+		t.Fatalf("expected mail.rules.list ok, got %#v", result)
+	}
+	rules := result.Data["rules"].([]any)
+	if len(rules) != 1 {
+		t.Fatalf("expected one rule, got %#v", rules)
+	}
+	rule := rules[0].(map[string]any)
+	if rule["id"] != "rule-1" || rule["display_name"] != "Remove spam" || rule["sequence"] != 1 {
+		t.Fatalf("unexpected rule metadata: %#v", rule)
+	}
+	if rule["is_enabled"] != true || rule["has_error"] != false || rule["is_read_only"] != false {
+		t.Fatalf("unexpected rule flags: %#v", rule)
+	}
+	conditions := rule["conditions"].(map[string]any)
+	actions := rule["actions"].(map[string]any)
+	if conditions["subjectContains"] == nil || actions["delete"] != true || actions["stopProcessingRules"] != true {
+		t.Fatalf("unexpected rule conditions/actions: %#v", rule)
+	}
+}
+
+func TestTransportExecutesMailboxSettingsGet(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		if request.Method != http.MethodGet || request.URL.Path != "/v1.0/me/mailboxSettings" {
+			t.Fatalf("unexpected request: %s %s", request.Method, request.URL.String())
+		}
+		if request.Header.Get("Authorization") != "Bearer token-secret" {
+			t.Fatal("expected bearer token header")
+		}
+		response.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(response).Encode(map[string]any{
+			"timeZone":   "UTC",
+			"timeFormat": "HH:mm",
+			"language": map[string]any{
+				"locale":      "en-US",
+				"displayName": "English",
+			},
+			"workingHours": map[string]any{
+				"daysOfWeek": []string{"monday", "tuesday"},
+				"startTime":  "09:00:00.0000000",
+				"endTime":    "18:00:00.0000000",
+			},
+		})
+	}))
+	defer server.Close()
+
+	client := graph.NewTransport(graph.Config{
+		BaseURL:   server.URL + "/v1.0",
+		SecretRef: secret.Ref("memory:graph"),
+	}, secret.NewMemoryStore(map[string]string{"memory:graph": "token-secret"}), server.Client())
+
+	result := client.Execute(context.Background(), transport.ActionRequest{Name: "mailbox.settings.get"})
+
+	if !result.OK {
+		t.Fatalf("expected mailbox.settings.get ok, got %#v", result)
+	}
+	settings := result.Data["settings"].(map[string]any)
+	if settings["timeZone"] != "UTC" || settings["timeFormat"] != "HH:mm" {
+		t.Fatalf("unexpected mailbox settings: %#v", settings)
+	}
+	workingHours := settings["workingHours"].(map[string]any)
+	if workingHours["startTime"] != "09:00:00.0000000" || workingHours["endTime"] != "18:00:00.0000000" {
+		t.Fatalf("unexpected working hours: %#v", workingHours)
+	}
+}
+
+func TestTransportExecutesMailboxSettingsGetSpecificSetting(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		if request.Method != http.MethodGet || request.URL.Path != "/v1.0/me/mailboxSettings/workingHours" {
+			t.Fatalf("unexpected request: %s %s", request.Method, request.URL.String())
+		}
+		if request.Header.Get("Authorization") != "Bearer token-secret" {
+			t.Fatal("expected bearer token header")
+		}
+		response.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(response).Encode(map[string]any{
+			"daysOfWeek": []string{"monday", "tuesday"},
+			"startTime":  "09:00:00.0000000",
+			"endTime":    "18:00:00.0000000",
+		})
+	}))
+	defer server.Close()
+
+	client := graph.NewTransport(graph.Config{
+		BaseURL:   server.URL + "/v1.0",
+		SecretRef: secret.Ref("memory:graph"),
+	}, secret.NewMemoryStore(map[string]string{"memory:graph": "token-secret"}), server.Client())
+
+	result := client.Execute(context.Background(), transport.ActionRequest{
+		Name:    "mailbox.settings.get",
+		Payload: map[string]any{"setting": "workingHours"},
+	})
+
+	if !result.OK {
+		t.Fatalf("expected mailbox.settings.get specific setting ok, got %#v", result)
+	}
+	settings := result.Data["settings"].(map[string]any)
+	if settings["startTime"] != "09:00:00.0000000" || settings["endTime"] != "18:00:00.0000000" {
+		t.Fatalf("unexpected working hours setting: %#v", settings)
 	}
 }
 

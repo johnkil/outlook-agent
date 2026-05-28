@@ -187,13 +187,20 @@ Configured transports:
   OAuth enrollment uses the same `client_id`, `tenant`, and `scopes` settings
   to create the initial secret-store credential. Supported read-metadata
   actions are
-  `GetMailFolder`, `mail.search`, and `mail.fetch_metadata`, plus explicit
-  `mail.fetch_body`, explicit `mail.list_attachments`, explicit
+  `GetMailFolder`, `mail.search`, `mail.fetch_metadata`, `mail.rules.list`,
+  `mailbox.settings.get`, `calendar.list`, and `calendar.availability`, plus
+  explicit `mail.fetch_body`, explicit `mail.list_attachments`, explicit
   `mail.fetch_attachment`, `mail.create_draft`,
-  `mail.move_to_deleted_items`, `calendar.list`, and `calendar.availability`,
-  plus raw guarded `GraphRequest`; `auth check` probes
-  `/me/mailFolders/inbox`. App registration, admin consent, and live tenant
-  policy approval remain external to the public runtime in this phase.
+  `mail.move_to_deleted_items`, and raw guarded `GraphRequest`; `auth check`
+  probes `/me/mailFolders/inbox`. `mail.rules.list` uses
+  `/me/mailFolders/{folder}/messageRules`, defaulting to Inbox.
+  `mailbox.settings.get` uses `/me/mailboxSettings` or an allowlisted
+  subresource: `automaticRepliesSetting`, `dateFormat`,
+  `delegateMeetingMessageDeliveryOptions`, `language`, `timeFormat`,
+  `timeZone`, `workingHours`, or `userPurpose`. Rule/settings writes remain
+  covered only by raw guarded `GraphRequest`. App registration, admin consent,
+  and live tenant policy approval remain external to the public runtime in this
+  phase.
 
 ## Redaction
 

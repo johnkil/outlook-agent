@@ -53,6 +53,8 @@ func (client *Transport) Capabilities(context.Context) transport.CapabilitySet {
 		{Name: "mail.fetch_attachment", Transport: "graph", Class: policy.ReadAttachmentExplicit, Level: action.LevelHighLevelMCPTool},
 		{Name: "mail.create_draft", Transport: "graph", Class: policy.DraftOnly, Level: action.LevelHighLevelMCPTool},
 		{Name: "mail.move_to_deleted_items", Transport: "graph", Class: policy.ReversibleBulk, Level: action.LevelHighLevelMCPTool},
+		{Name: "mail.rules.list", Transport: "graph", Class: policy.ReadMetadata, Level: action.LevelHighLevelMCPTool},
+		{Name: "mailbox.settings.get", Transport: "graph", Class: policy.ReadMetadata, Level: action.LevelHighLevelMCPTool},
 		{Name: "calendar.list", Transport: "graph", Class: policy.ReadMetadata, Level: action.LevelHighLevelMCPTool},
 		{Name: "calendar.availability", Transport: "graph", Class: policy.ReadMetadata, Level: action.LevelHighLevelMCPTool},
 	}}
@@ -149,6 +151,18 @@ func (client *Transport) Execute(ctx context.Context, request transport.ActionRe
 			return transport.ActionResponse{OK: false, Error: err.Error()}
 		}
 		return transport.ActionResponse{OK: true, Data: map[string]any{"moved_count": len(ids), "reversible": true}}
+	case "mail.rules.list":
+		rules, err := client.listMessageRules(ctx, stringValue(request.Payload, "folder_id", "inbox"))
+		if err != nil {
+			return transport.ActionResponse{OK: false, Error: err.Error()}
+		}
+		return transport.ActionResponse{OK: true, Data: map[string]any{"rules": rules}}
+	case "mailbox.settings.get":
+		settings, err := client.getMailboxSettings(ctx, stringValue(request.Payload, "setting", ""))
+		if err != nil {
+			return transport.ActionResponse{OK: false, Error: err.Error()}
+		}
+		return transport.ActionResponse{OK: true, Data: map[string]any{"settings": settings}}
 	case "calendar.list":
 		events, err := client.listCalendarEvents(ctx, stringValue(request.Payload, "start", ""), stringValue(request.Payload, "end", ""))
 		if err != nil {
@@ -197,6 +211,21 @@ type message struct {
 	IsRead         bool      `json:"isRead"`
 	HasAttachments bool      `json:"hasAttachments"`
 	Body           itemBody  `json:"body"`
+}
+
+type messageRuleList struct {
+	Value []messageRule `json:"value"`
+}
+
+type messageRule struct {
+	ID          string         `json:"id"`
+	DisplayName string         `json:"displayName"`
+	Sequence    int            `json:"sequence"`
+	IsEnabled   bool           `json:"isEnabled"`
+	HasError    bool           `json:"hasError"`
+	IsReadOnly  bool           `json:"isReadOnly"`
+	Conditions  map[string]any `json:"conditions"`
+	Actions     map[string]any `json:"actions"`
 }
 
 type attachment struct {
@@ -456,6 +485,40 @@ func (client *Transport) moveMessagesToDeletedItems(ctx context.Context, ids []s
 		}
 	}
 	return nil
+}
+
+func (client *Transport) listMessageRules(ctx context.Context, folderID string) ([]any, error) {
+	requestURL, err := client.messageRulesURL(folderID)
+	if err != nil {
+		return nil, err
+	}
+	var response messageRuleList
+	if err := client.getJSON(ctx, requestURL, &response); err != nil {
+		return nil, err
+	}
+	rules := make([]any, 0, len(response.Value))
+	for _, item := range response.Value {
+		rules = append(rules, normalizeGraphMessageRule(item))
+	}
+	if rules == nil {
+		return []any{}, nil
+	}
+	return rules, nil
+}
+
+func (client *Transport) getMailboxSettings(ctx context.Context, setting string) (any, error) {
+	requestURL, err := client.mailboxSettingsURL(setting)
+	if err != nil {
+		return nil, err
+	}
+	var settings any
+	if err := client.getJSON(ctx, requestURL, &settings); err != nil {
+		return nil, err
+	}
+	if settings == nil {
+		return map[string]any{}, nil
+	}
+	return settings, nil
 }
 
 func (client *Transport) listCalendarEvents(ctx context.Context, start string, end string) ([]any, error) {
@@ -872,6 +935,32 @@ func (client *Transport) messageMoveURL(id string) (string, error) {
 	return base + "/me/messages/" + url.PathEscape(id) + "/move", nil
 }
 
+func (client *Transport) messageRulesURL(folderID string) (string, error) {
+	base, err := client.config.normalizedBaseURL()
+	if err != nil {
+		return "", err
+	}
+	if strings.TrimSpace(folderID) == "" {
+		folderID = "inbox"
+	}
+	return base + "/me/mailFolders/" + url.PathEscape(folderID) + "/messageRules", nil
+}
+
+func (client *Transport) mailboxSettingsURL(setting string) (string, error) {
+	base, err := client.config.normalizedBaseURL()
+	if err != nil {
+		return "", err
+	}
+	setting = strings.TrimSpace(setting)
+	if setting == "" {
+		return base + "/me/mailboxSettings", nil
+	}
+	if !allowedMailboxSetting(setting) {
+		return "", fmt.Errorf("unsupported mailbox setting %q", setting)
+	}
+	return base + "/me/mailboxSettings/" + url.PathEscape(setting), nil
+}
+
 func (client *Transport) calendarViewURL(start string, end string) (string, error) {
 	base, err := client.config.normalizedBaseURL()
 	if err != nil {
@@ -909,6 +998,27 @@ func normalizeGraphDraft(item message) map[string]any {
 		"id":      item.ID,
 		"subject": item.Subject,
 		"status":  "saved",
+	}
+}
+
+func normalizeGraphMessageRule(item messageRule) map[string]any {
+	conditions := item.Conditions
+	if conditions == nil {
+		conditions = map[string]any{}
+	}
+	actions := item.Actions
+	if actions == nil {
+		actions = map[string]any{}
+	}
+	return map[string]any{
+		"id":           item.ID,
+		"display_name": item.DisplayName,
+		"sequence":     item.Sequence,
+		"is_enabled":   item.IsEnabled,
+		"has_error":    item.HasError,
+		"is_read_only": item.IsReadOnly,
+		"conditions":   conditions,
+		"actions":      actions,
 	}
 }
 
@@ -1091,6 +1201,22 @@ func rawGraphQuery(value any) url.Values {
 		}
 	}
 	return values
+}
+
+func allowedMailboxSetting(setting string) bool {
+	switch setting {
+	case "automaticRepliesSetting",
+		"dateFormat",
+		"delegateMeetingMessageDeliveryOptions",
+		"language",
+		"timeFormat",
+		"timeZone",
+		"workingHours",
+		"userPurpose":
+		return true
+	default:
+		return false
+	}
 }
 
 func selectedResponseHeaders(headers http.Header) map[string]any {
