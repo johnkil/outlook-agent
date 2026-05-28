@@ -27,7 +27,7 @@ Status values:
 | Security and redaction | Partial for production operations | Runtime policy classes, explicit target rules, dry-run tokens, confirmation binding, unsafe requirements, dry-run count summaries for attachment/folder/rule/config payload shapes, sanitized dry-run payload examples for all 26 mutating raw OWA actions, and redaction have unit or MCP tests; CI now adds a public-safety check and dependency vulnerability scan baseline; `docs/OPERATIONS.md` documents incident response, credential revocation, organization secret scanning, and enterprise config boundaries. |
 | Workflow skills | Ready initial set | `skills/` contains mail and calendar workflow skills for triage, reply drafting, task extraction, subscription cleanup, daily brief, meeting prep, and freeing time. |
 | Release readiness | Partial | `docs/RELEASE.md`, `docs/OPERATIONS.md`, `scripts/release-build.sh`, `.github/workflows/ci.yml`, and `.github/workflows/release.yml` define cross-platform archives, checksums, optional signing, signing-key publication/rotation, upgrade validation, rollback, CI, and tag-driven publishing; publishing an enterprise installer or package-manager wrapper is still an operator-channel task. |
-| Graph/EWS adapters | Partial | EWS has an initial SOAP adapter with config wiring and a read-metadata `GetFolder` auth probe/action covered by unit tests; the tested live endpoint returned an empty/EOF response before SOAP auth completed, so environment enablement or alternate auth remains unresolved. Graph has an initial bearer-token REST adapter with config wiring and read-metadata `GetMailFolder`, `mail.search`, `mail.fetch_metadata`, `calendar.list`, and `calendar.availability` actions covered by unit tests; live Graph probing stopped at missing local Keychain token, so OAuth/admin-consent enablement remains unresolved. |
+| Graph/EWS adapters | Partial | EWS has an initial SOAP adapter with config wiring and a read-metadata `GetFolder` auth probe/action covered by unit tests; the tested live endpoint returned an empty/EOF response before SOAP auth completed, so environment enablement or alternate auth remains unresolved. Graph has an initial bearer-token REST adapter with config wiring and high-level mail/calendar workflows (`GetMailFolder`, `mail.search`, `mail.fetch_metadata`, `mail.fetch_body`, `mail.create_draft`, `mail.move_to_deleted_items`, `calendar.list`, `calendar.availability`) covered by unit tests; live Graph probing stopped at missing local Keychain token, so OAuth/admin-consent enablement remains unresolved. |
 
 ## Current Evidence
 
@@ -70,8 +70,9 @@ Status values:
     organization owners;
   - real enterprise config examples must live outside the public repository.
 - Protocol breadth:
-  - broader Graph action coverage beyond initial mail/calendar metadata reads,
-    such as explicit body fetch, draft, and move/delete workflows;
+  - broader Graph action coverage beyond initial high-level mail/calendar
+    workflows, such as attachment, rule/settings, shared mailbox, and raw
+    Graph action surfaces;
   - Graph token acquisition, refresh, and admin consent/permission enablement;
   - broader EWS action coverage beyond the initial `GetFolder` read-metadata
     probe/action;

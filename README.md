@@ -96,11 +96,14 @@ the secret store and reference it from config:
 }
 ```
 
-The initial Graph adapter supports read-metadata `GetMailFolder`, `mail.search`,
-`mail.fetch_metadata`, `calendar.list`, and `calendar.availability`. It uses
-`/me/mailFolders/inbox` as its auth probe and keeps message access
+The initial Graph adapter supports `GetMailFolder`, `mail.search`,
+`mail.fetch_metadata`, explicit `mail.fetch_body`, `mail.create_draft`,
+`mail.move_to_deleted_items`, `calendar.list`, and `calendar.availability`. It
+uses `/me/mailFolders/inbox` as its auth probe and keeps default message access
 metadata-only through `/me/mailFolders/{folder}/messages` and
-`/me/messages/{id}`. Calendar metadata uses `/me/calendarView` and
+`/me/messages/{id}`. Explicit body access requests text bodies only; draft
+creation saves without sending; move-to-Deleted-Items uses Graph's reversible
+message move. Calendar metadata uses `/me/calendarView` and
 `/me/calendar/getSchedule`. Token acquisition and admin consent stay outside
 the public repository.
 

@@ -66,7 +66,7 @@ func TestTransportAuthenticatesWithInboxMailFolder(t *testing.T) {
 	}
 }
 
-func TestTransportGraphCapabilitiesIncludeCalendarMetadata(t *testing.T) {
+func TestTransportGraphCapabilitiesIncludeBodyDraftMove(t *testing.T) {
 	client := graph.NewTransport(graph.Config{
 		BaseURL:   "https://graph.example.test/v1.0",
 		SecretRef: secret.Ref("memory:graph"),
@@ -75,19 +75,23 @@ func TestTransportGraphCapabilitiesIncludeCalendarMetadata(t *testing.T) {
 	capabilities := client.Capabilities(context.Background())
 	for _, tt := range []struct {
 		name  string
+		class policy.SafetyClass
 		level action.CoverageLevel
 	}{
-		{name: "GetMailFolder", level: action.LevelRawGuardedExecution},
-		{name: "mail.search", level: action.LevelHighLevelMCPTool},
-		{name: "mail.fetch_metadata", level: action.LevelHighLevelMCPTool},
-		{name: "calendar.list", level: action.LevelHighLevelMCPTool},
-		{name: "calendar.availability", level: action.LevelHighLevelMCPTool},
+		{name: "GetMailFolder", class: policy.ReadMetadata, level: action.LevelRawGuardedExecution},
+		{name: "mail.search", class: policy.ReadMetadata, level: action.LevelHighLevelMCPTool},
+		{name: "mail.fetch_metadata", class: policy.ReadMetadata, level: action.LevelHighLevelMCPTool},
+		{name: "mail.fetch_body", class: policy.ReadBodyExplicit, level: action.LevelHighLevelMCPTool},
+		{name: "mail.create_draft", class: policy.DraftOnly, level: action.LevelHighLevelMCPTool},
+		{name: "mail.move_to_deleted_items", class: policy.ReversibleBulk, level: action.LevelHighLevelMCPTool},
+		{name: "calendar.list", class: policy.ReadMetadata, level: action.LevelHighLevelMCPTool},
+		{name: "calendar.availability", class: policy.ReadMetadata, level: action.LevelHighLevelMCPTool},
 	} {
 		definition, ok := findGraphCapability(capabilities.Actions, tt.name)
 		if !ok {
 			t.Fatalf("expected Graph capability %q in %#v", tt.name, capabilities.Actions)
 		}
-		if definition.Transport != "graph" || definition.Class != policy.ReadMetadata || definition.Level != tt.level {
+		if definition.Transport != "graph" || definition.Class != tt.class || definition.Level != tt.level {
 			t.Fatalf("unexpected Graph capability for %q: %#v", tt.name, definition)
 		}
 	}
@@ -224,6 +228,155 @@ func TestTransportExecutesMailFetchMetadata(t *testing.T) {
 	message := result.Data["message"].(map[string]any)
 	if message["id"] != "message-1" || message["subject"] != "Planning" || message["sender"] != "Alice <alice@example.com>" {
 		t.Fatalf("unexpected message metadata: %#v", message)
+	}
+}
+
+func TestTransportExecutesMailFetchBody(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		if request.Method != http.MethodGet || request.URL.Path != "/v1.0/me/messages/message-1" {
+			t.Fatalf("unexpected request: %s %s", request.Method, request.URL.String())
+		}
+		if request.Header.Get("Prefer") != `outlook.body-content-type="text"` {
+			t.Fatalf("expected text body preference, got %q", request.Header.Get("Prefer"))
+		}
+		selectValue := request.URL.Query().Get("$select")
+		for _, field := range []string{"id", "body"} {
+			if !strings.Contains(selectValue, field) {
+				t.Fatalf("expected $select to contain %q, got %q", field, selectValue)
+			}
+		}
+		response.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(response).Encode(map[string]any{
+			"id": "message-1",
+			"body": map[string]any{
+				"contentType": "text",
+				"content":     "Hello from Graph body",
+			},
+		})
+	}))
+	defer server.Close()
+
+	client := graph.NewTransport(graph.Config{
+		BaseURL:   server.URL + "/v1.0",
+		SecretRef: secret.Ref("memory:graph"),
+	}, secret.NewMemoryStore(map[string]string{"memory:graph": "token-secret"}), server.Client())
+
+	result := client.Execute(context.Background(), transport.ActionRequest{
+		Name:    "mail.fetch_body",
+		Payload: map[string]any{"id": "message-1"},
+	})
+
+	if !result.OK {
+		t.Fatalf("expected mail.fetch_body ok, got %#v", result)
+	}
+	if result.Data["id"] != "message-1" || result.Data["body_text"] != "Hello from Graph body" {
+		t.Fatalf("unexpected body response: %#v", result.Data)
+	}
+}
+
+func TestTransportExecutesMailCreateDraft(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		if request.Method != http.MethodPost || request.URL.Path != "/v1.0/me/messages" {
+			t.Fatalf("unexpected request: %s %s", request.Method, request.URL.String())
+		}
+		var body map[string]any
+		if err := json.NewDecoder(request.Body).Decode(&body); err != nil {
+			t.Fatalf("decode request body: %v", err)
+		}
+		if body["subject"] != "Draft subject" {
+			t.Fatalf("unexpected draft subject: %#v", body)
+		}
+		messageBody := body["body"].(map[string]any)
+		if messageBody["contentType"] != "Text" || messageBody["content"] != "Draft body" {
+			t.Fatalf("unexpected draft body: %#v", body)
+		}
+		recipients := body["toRecipients"].([]any)
+		first := recipients[0].(map[string]any)
+		email := first["emailAddress"].(map[string]any)
+		if email["address"] != "alex@example.com" {
+			t.Fatalf("unexpected draft recipient: %#v", body)
+		}
+		response.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(response).Encode(graphMessageResponse("draft-1", "Draft subject", "Me", "me@example.com"))
+	}))
+	defer server.Close()
+
+	client := graph.NewTransport(graph.Config{
+		BaseURL:   server.URL + "/v1.0",
+		SecretRef: secret.Ref("memory:graph"),
+	}, secret.NewMemoryStore(map[string]string{"memory:graph": "token-secret"}), server.Client())
+
+	result := client.Execute(context.Background(), transport.ActionRequest{
+		Name: "mail.create_draft",
+		Payload: map[string]any{
+			"subject": "Draft subject",
+			"body":    "Draft body",
+			"to":      []string{"alex@example.com"},
+		},
+	})
+
+	if !result.OK {
+		t.Fatalf("expected mail.create_draft ok, got %#v", result)
+	}
+	draft := result.Data["draft"].(map[string]any)
+	if draft["id"] != "draft-1" || draft["subject"] != "Draft subject" || draft["status"] != "saved" {
+		t.Fatalf("unexpected draft response: %#v", draft)
+	}
+}
+
+func TestTransportExecutesMailMoveToDeletedItems(t *testing.T) {
+	var calls int
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		calls++
+		if request.Method != http.MethodPost || request.URL.Path != "/v1.0/me/messages/message-1/move" {
+			t.Fatalf("unexpected request: %s %s", request.Method, request.URL.String())
+		}
+		var body map[string]any
+		if err := json.NewDecoder(request.Body).Decode(&body); err != nil {
+			t.Fatalf("decode request body: %v", err)
+		}
+		if body["destinationId"] != "deleteditems" {
+			t.Fatalf("expected deleteditems destination, got %#v", body)
+		}
+		response.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(response).Encode(graphMessageResponse("message-1", "Moved", "Alice", "alice@example.com"))
+	}))
+	defer server.Close()
+
+	client := graph.NewTransport(graph.Config{
+		BaseURL:   server.URL + "/v1.0",
+		SecretRef: secret.Ref("memory:graph"),
+	}, secret.NewMemoryStore(map[string]string{"memory:graph": "token-secret"}), server.Client())
+
+	result := client.Execute(context.Background(), transport.ActionRequest{
+		Name:    "mail.move_to_deleted_items",
+		Payload: map[string]any{"ids": []any{"message-1"}},
+	})
+
+	if !result.OK {
+		t.Fatalf("expected mail.move_to_deleted_items ok, got %#v", result)
+	}
+	if calls != 1 {
+		t.Fatalf("expected one move call, got %d", calls)
+	}
+	if result.Data["moved_count"] != 1 || result.Data["reversible"] != true {
+		t.Fatalf("unexpected move response: %#v", result.Data)
+	}
+}
+
+func TestTransportDryRunMoveToDeletedItemsRequiresConfirmation(t *testing.T) {
+	client := graph.NewTransport(graph.Config{
+		BaseURL:   "https://graph.example.test/v1.0",
+		SecretRef: secret.Ref("memory:graph"),
+	}, secret.NewMemoryStore(map[string]string{"memory:graph": "token-secret"}), nil)
+
+	summary := client.DryRun(context.Background(), transport.ActionRequest{
+		Name:    "mail.move_to_deleted_items",
+		Payload: map[string]any{"ids": []any{"message-1", "message-2"}},
+	})
+
+	if summary.Action != "mail.move_to_deleted_items" || summary.Count != 2 || !summary.Reversible || !summary.RequiresConfirmation {
+		t.Fatalf("unexpected dry-run summary: %#v", summary)
 	}
 }
 

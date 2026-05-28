@@ -45,6 +45,9 @@ func (client *Transport) Capabilities(context.Context) transport.CapabilitySet {
 		{Name: "GetMailFolder", Transport: "graph", Class: policy.ReadMetadata, Level: action.LevelRawGuardedExecution},
 		{Name: "mail.search", Transport: "graph", Class: policy.ReadMetadata, Level: action.LevelHighLevelMCPTool},
 		{Name: "mail.fetch_metadata", Transport: "graph", Class: policy.ReadMetadata, Level: action.LevelHighLevelMCPTool},
+		{Name: "mail.fetch_body", Transport: "graph", Class: policy.ReadBodyExplicit, Level: action.LevelHighLevelMCPTool},
+		{Name: "mail.create_draft", Transport: "graph", Class: policy.DraftOnly, Level: action.LevelHighLevelMCPTool},
+		{Name: "mail.move_to_deleted_items", Transport: "graph", Class: policy.ReversibleBulk, Level: action.LevelHighLevelMCPTool},
 		{Name: "calendar.list", Transport: "graph", Class: policy.ReadMetadata, Level: action.LevelHighLevelMCPTool},
 		{Name: "calendar.availability", Transport: "graph", Class: policy.ReadMetadata, Level: action.LevelHighLevelMCPTool},
 	}}
@@ -81,6 +84,31 @@ func (client *Transport) Execute(ctx context.Context, request transport.ActionRe
 			return transport.ActionResponse{OK: false, Error: err.Error()}
 		}
 		return transport.ActionResponse{OK: true, Data: map[string]any{"message": normalizeGraphMessage(message)}}
+	case "mail.fetch_body":
+		messageID := strings.TrimSpace(stringValue(request.Payload, "id", ""))
+		if messageID == "" {
+			return transport.ActionResponse{OK: false, Error: "mail.fetch_body requires id"}
+		}
+		body, err := client.getMessageBody(ctx, messageID)
+		if err != nil {
+			return transport.ActionResponse{OK: false, Error: err.Error()}
+		}
+		return transport.ActionResponse{OK: true, Data: map[string]any{"id": body.ID, "body_text": body.Body.Content}}
+	case "mail.create_draft":
+		draft, err := client.createDraft(ctx, request.Payload)
+		if err != nil {
+			return transport.ActionResponse{OK: false, Error: err.Error()}
+		}
+		return transport.ActionResponse{OK: true, Data: map[string]any{"draft": normalizeGraphDraft(draft)}}
+	case "mail.move_to_deleted_items":
+		ids := stringSlice(request.Payload["ids"])
+		if len(ids) == 0 {
+			return transport.ActionResponse{OK: false, Error: "mail.move_to_deleted_items requires ids"}
+		}
+		if err := client.moveMessagesToDeletedItems(ctx, ids); err != nil {
+			return transport.ActionResponse{OK: false, Error: err.Error()}
+		}
+		return transport.ActionResponse{OK: true, Data: map[string]any{"moved_count": len(ids), "reversible": true}}
 	case "calendar.list":
 		events, err := client.listCalendarEvents(ctx, stringValue(request.Payload, "start", ""), stringValue(request.Payload, "end", ""))
 		if err != nil {
@@ -99,7 +127,10 @@ func (client *Transport) Execute(ctx context.Context, request transport.ActionRe
 }
 
 func (client *Transport) DryRun(_ context.Context, request transport.ActionRequest) transport.DryRunSummary {
-	return transport.DryRunSummary{Action: request.Name, Count: 1, Reversible: true, RequiresConfirmation: false}
+	if request.Name == "mail.move_to_deleted_items" {
+		return transport.DryRunSummary{Action: request.Name, Count: len(stringSlice(request.Payload["ids"])), Reversible: true, RequiresConfirmation: true}
+	}
+	return transport.DryRunSummary{Action: request.Name, Count: 1, Reversible: false, RequiresConfirmation: false}
 }
 
 type mailFolder struct {
@@ -122,6 +153,7 @@ type message struct {
 	Importance     string    `json:"importance"`
 	IsRead         bool      `json:"isRead"`
 	HasAttachments bool      `json:"hasAttachments"`
+	Body           itemBody  `json:"body"`
 }
 
 type recipient struct {
@@ -131,6 +163,11 @@ type recipient struct {
 type emailAddress struct {
 	Name    string `json:"name"`
 	Address string `json:"address"`
+}
+
+type itemBody struct {
+	ContentType string `json:"contentType"`
+	Content     string `json:"content"`
 }
 
 type eventList struct {
@@ -177,6 +214,7 @@ type graphErrorResponse struct {
 }
 
 const messageMetadataSelect = "id,subject,from,receivedDateTime,importance,isRead,hasAttachments"
+const messageBodySelect = "id,body"
 const eventMetadataSelect = "id,subject,start,end,location"
 
 func (client *Transport) getMailFolder(ctx context.Context, folderID string) (mailFolder, error) {
@@ -229,6 +267,60 @@ func (client *Transport) getMessage(ctx context.Context, id string) (message, er
 		return message{}, fmt.Errorf("missing Graph message response")
 	}
 	return item, nil
+}
+
+func (client *Transport) getMessageBody(ctx context.Context, id string) (message, error) {
+	requestURL, err := client.messageBodyURL(id)
+	if err != nil {
+		return message{}, err
+	}
+	var item message
+	if err := client.doJSONWithHeaders(ctx, http.MethodGet, requestURL, nil, map[string]string{"Prefer": `outlook.body-content-type="text"`}, &item); err != nil {
+		return message{}, err
+	}
+	if item.ID == "" {
+		return message{}, fmt.Errorf("missing Graph message body response")
+	}
+	return item, nil
+}
+
+func (client *Transport) createDraft(ctx context.Context, payload map[string]any) (message, error) {
+	requestURL, err := client.messagesCollectionURL()
+	if err != nil {
+		return message{}, err
+	}
+	body := map[string]any{
+		"subject": stringValue(payload, "subject", ""),
+		"body": map[string]any{
+			"contentType": "Text",
+			"content":     stringValue(payload, "body", ""),
+		},
+	}
+	if recipients := draftRecipients(payload["to"]); len(recipients) > 0 {
+		body["toRecipients"] = recipients
+	}
+	var draft message
+	if err := client.doJSON(ctx, http.MethodPost, requestURL, body, &draft); err != nil {
+		return message{}, err
+	}
+	if draft.ID == "" {
+		return message{}, fmt.Errorf("missing Graph draft response")
+	}
+	return draft, nil
+}
+
+func (client *Transport) moveMessagesToDeletedItems(ctx context.Context, ids []string) error {
+	for _, id := range ids {
+		requestURL, err := client.messageMoveURL(id)
+		if err != nil {
+			return err
+		}
+		var moved message
+		if err := client.doJSON(ctx, http.MethodPost, requestURL, map[string]any{"destinationId": "deleteditems"}, &moved); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (client *Transport) listCalendarEvents(ctx context.Context, start string, end string) ([]any, error) {
@@ -301,6 +393,10 @@ func (client *Transport) getJSON(ctx context.Context, requestURL string, output 
 }
 
 func (client *Transport) doJSON(ctx context.Context, method string, requestURL string, body any, output any) error {
+	return client.doJSONWithHeaders(ctx, method, requestURL, body, nil, output)
+}
+
+func (client *Transport) doJSONWithHeaders(ctx context.Context, method string, requestURL string, body any, headers map[string]string, output any) error {
 	if err := client.config.Validate(); err != nil {
 		return err
 	}
@@ -330,6 +426,9 @@ func (client *Transport) doJSON(ctx context.Context, method string, requestURL s
 	request.Header.Set("User-Agent", "outlook-agent")
 	if body != nil {
 		request.Header.Set("Content-Type", "application/json")
+	}
+	for key, value := range headers {
+		request.Header.Set(key, value)
 	}
 
 	response, err := client.client.Do(request)
@@ -390,6 +489,32 @@ func (client *Transport) messageURL(id string) (string, error) {
 	return base + "/me/messages/" + url.PathEscape(id) + "?" + values.Encode(), nil
 }
 
+func (client *Transport) messageBodyURL(id string) (string, error) {
+	base, err := client.config.normalizedBaseURL()
+	if err != nil {
+		return "", err
+	}
+	values := url.Values{}
+	values.Set("$select", messageBodySelect)
+	return base + "/me/messages/" + url.PathEscape(id) + "?" + values.Encode(), nil
+}
+
+func (client *Transport) messagesCollectionURL() (string, error) {
+	base, err := client.config.normalizedBaseURL()
+	if err != nil {
+		return "", err
+	}
+	return base + "/me/messages", nil
+}
+
+func (client *Transport) messageMoveURL(id string) (string, error) {
+	base, err := client.config.normalizedBaseURL()
+	if err != nil {
+		return "", err
+	}
+	return base + "/me/messages/" + url.PathEscape(id) + "/move", nil
+}
+
 func (client *Transport) calendarViewURL(start string, end string) (string, error) {
 	base, err := client.config.normalizedBaseURL()
 	if err != nil {
@@ -419,6 +544,14 @@ func normalizeGraphMessage(item message) map[string]any {
 		"importance":      item.Importance,
 		"is_read":         item.IsRead,
 		"has_attachments": item.HasAttachments,
+	}
+}
+
+func normalizeGraphDraft(item message) map[string]any {
+	return map[string]any{
+		"id":      item.ID,
+		"subject": item.Subject,
+		"status":  "saved",
 	}
 }
 
@@ -464,6 +597,22 @@ func matchesQuery(message map[string]any, query string) bool {
 	return strings.Contains(haystack, needle)
 }
 
+func draftRecipients(value any) []map[string]any {
+	addresses := stringSlice(value)
+	recipients := make([]map[string]any, 0, len(addresses))
+	for _, address := range addresses {
+		if strings.TrimSpace(address) == "" {
+			continue
+		}
+		recipients = append(recipients, map[string]any{
+			"emailAddress": map[string]any{
+				"address": address,
+			},
+		})
+	}
+	return recipients
+}
+
 func stringValue(values map[string]any, key string, fallback string) string {
 	if values == nil {
 		return fallback
@@ -490,5 +639,23 @@ func intValue(values map[string]any, key string, fallback int) int {
 		return int(typed)
 	default:
 		return fallback
+	}
+}
+
+func stringSlice(value any) []string {
+	switch typed := value.(type) {
+	case []string:
+		return typed
+	case []any:
+		output := make([]string, 0, len(typed))
+		for _, item := range typed {
+			text, ok := item.(string)
+			if ok {
+				output = append(output, text)
+			}
+		}
+		return output
+	default:
+		return nil
 	}
 }
