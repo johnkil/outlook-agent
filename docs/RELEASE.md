@@ -37,6 +37,17 @@ To build into another directory, set:
 OUTLOOK_AGENT_DIST_DIR=/tmp/outlook-agent-dist scripts/release-build.sh snapshot
 ```
 
+To prove archive generation and checksum coverage without keeping artifacts in
+the repository, run:
+
+```bash
+GOPATH=$PWD/.cache/go GOCACHE=$PWD/.cache/go-build GOMODCACHE=$PWD/.cache/go-mod scripts/release-smoke.sh
+```
+
+The smoke builds into a temporary dist directory, verifies six platform
+archives, verifies `SHA256SUMS.txt`, and removes the temporary output unless
+`OUTLOOK_AGENT_KEEP_RELEASE_SMOKE=1` is set.
+
 ## Signed Checksums
 
 Set `OUTLOOK_AGENT_SIGN_RELEASE=1` to create a detached armored GPG signature:

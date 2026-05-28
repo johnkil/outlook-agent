@@ -89,6 +89,7 @@ Use these commands before making readiness claims:
 
 ```bash
 GOPATH=$PWD/.cache/go GOCACHE=$PWD/.cache/go-build GOMODCACHE=$PWD/.cache/go-mod scripts/ci-local.sh
+GOPATH=$PWD/.cache/go GOCACHE=$PWD/.cache/go-build GOMODCACHE=$PWD/.cache/go-mod scripts/release-smoke.sh
 GOPATH=$PWD/.cache/go GOCACHE=$PWD/.cache/go-build GOMODCACHE=$PWD/.cache/go-mod go test -count=1 ./...
 GOPATH=$PWD/.cache/go GOCACHE=$PWD/.cache/go-build GOMODCACHE=$PWD/.cache/go-mod go build -o /private/tmp/outlook-agent-build-check ./cmd/outlook-agent
 rm -f /private/tmp/outlook-agent-build-check
@@ -99,6 +100,8 @@ git diff --check
 
 `scripts/ci-local.sh` mirrors the hosted GitHub Actions CI gates, including
 formatting, tests, build, whitespace, public-safety, and vulnerability scan.
+`scripts/release-smoke.sh` verifies that release archives and checksums are
+generated into a temporary directory and cleaned up afterward.
 
 Run the parent workspace public-safety grep before publishing changes. The
 workspace-local pattern set should return no matches in this repository. Keep

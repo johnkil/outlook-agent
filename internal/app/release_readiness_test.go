@@ -12,6 +12,7 @@ func TestReleaseReadinessArtifactsExist(t *testing.T) {
 		filepath.Join("..", "..", "docs", "RELEASE.md"): {
 			"# Release Process",
 			"scripts/ci-local.sh",
+			"scripts/release-smoke.sh",
 			"scripts/release-build.sh",
 			"SHA256SUMS.txt",
 			"OUTLOOK_AGENT_SIGN_RELEASE",
@@ -23,6 +24,12 @@ func TestReleaseReadinessArtifactsExist(t *testing.T) {
 			"go build",
 			"scripts/public-safety-check.sh",
 			"govulncheck",
+		},
+		filepath.Join("..", "..", "scripts", "release-smoke.sh"): {
+			"OUTLOOK_AGENT_DIST_DIR",
+			"scripts/release-build.sh",
+			"SHA256SUMS.txt",
+			"expected_archives=6",
 		},
 		filepath.Join("..", "..", "scripts", "release-build.sh"): {
 			"GOOS",
