@@ -34,6 +34,25 @@ func TestMissingSecretReturnsTypedErrorWithoutValue(t *testing.T) {
 	}
 }
 
+func TestMemoryStoreStoresSecretByReference(t *testing.T) {
+	store := secret.NewMemoryStore(nil)
+	ref := secret.Ref("memory:graph-token")
+
+	if err := store.Put(context.Background(), ref, secret.Value("fresh-secret")); err != nil {
+		t.Fatalf("put secret: %v", err)
+	}
+	value, err := store.Get(context.Background(), ref)
+	if err != nil {
+		t.Fatalf("get stored secret: %v", err)
+	}
+	if value != "fresh-secret" {
+		t.Fatalf("expected stored secret value, got %q", value)
+	}
+	if value.String() != secret.Redacted {
+		t.Fatalf("expected stored value stringer to redact, got %q", value.String())
+	}
+}
+
 func TestRefRejectsInlineSecretValue(t *testing.T) {
 	if err := secret.ValidateRef(secret.Ref("keychain:outlook/work")); err != nil {
 		t.Fatalf("expected keychain ref to be valid: %v", err)

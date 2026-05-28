@@ -19,8 +19,13 @@ func New() *Transport {
 			{Name: "mail.search", Transport: "fake", Class: policy.ReadMetadata, Level: action.LevelHighLevelMCPTool},
 			{Name: "mail.fetch_metadata", Transport: "fake", Class: policy.ReadMetadata, Level: action.LevelHighLevelMCPTool},
 			{Name: "mail.fetch_body", Transport: "fake", Class: policy.ReadBodyExplicit, Level: action.LevelHighLevelMCPTool},
+			{Name: "mail.list_attachments", Transport: "fake", Class: policy.ReadAttachmentExplicit, Level: action.LevelHighLevelMCPTool},
+			{Name: "mail.fetch_attachment", Transport: "fake", Class: policy.ReadAttachmentExplicit, Level: action.LevelHighLevelMCPTool},
 			{Name: "mail.create_draft", Transport: "fake", Class: policy.DraftOnly, Level: action.LevelHighLevelMCPTool},
 			{Name: "mail.move_to_deleted_items", Transport: "fake", Class: policy.ReversibleBulk, Level: action.LevelHighLevelMCPTool},
+			{Name: "mail.rules.list", Transport: "fake", Class: policy.ReadMetadata, Level: action.LevelHighLevelMCPTool},
+			{Name: "mail.rules.set_enabled", Transport: "fake", Class: policy.SettingsOrRules, Level: action.LevelHighLevelMCPTool},
+			{Name: "mailbox.settings.get", Transport: "fake", Class: policy.ReadMetadata, Level: action.LevelHighLevelMCPTool},
 			{Name: "calendar.list", Transport: "fake", Class: policy.ReadMetadata, Level: action.LevelHighLevelMCPTool},
 			{Name: "calendar.availability", Transport: "fake", Class: policy.ReadMetadata, Level: action.LevelHighLevelMCPTool},
 		},
@@ -76,6 +81,35 @@ func (client *Transport) Execute(_ context.Context, request transport.ActionRequ
 				"body_text": "This is fake explicit message body text for tests.",
 			},
 		}
+	case "mail.list_attachments":
+		return transport.ActionResponse{
+			OK: true,
+			Data: map[string]any{
+				"attachments": []any{
+					map[string]any{
+						"id":           "att-1",
+						"name":         "fake.txt",
+						"content_type": "text/plain",
+						"size":         15,
+						"is_inline":    false,
+					},
+				},
+			},
+		}
+	case "mail.fetch_attachment":
+		return transport.ActionResponse{
+			OK: true,
+			Data: map[string]any{
+				"attachment": map[string]any{
+					"id":             valueOrDefault(request.Payload, "attachment_id", "att-1"),
+					"name":           "fake.txt",
+					"content_type":   "text/plain",
+					"size":           15,
+					"is_inline":      false,
+					"content_base64": "ZmFrZSBhdHRhY2htZW50",
+				},
+			},
+		}
 	case "mail.create_draft":
 		return transport.ActionResponse{
 			OK: true,
@@ -93,6 +127,51 @@ func (client *Transport) Execute(_ context.Context, request transport.ActionRequ
 			Data: map[string]any{
 				"moved_count": countIDs(request.Payload),
 				"reversible":  true,
+			},
+		}
+	case "mail.rules.list":
+		return transport.ActionResponse{
+			OK: true,
+			Data: map[string]any{
+				"rules": []any{
+					map[string]any{
+						"id":           "rule-1",
+						"display_name": "Fake planning filter",
+						"sequence":     1,
+						"is_enabled":   true,
+						"has_error":    false,
+						"is_read_only": false,
+					},
+				},
+			},
+		}
+	case "mail.rules.set_enabled":
+		return transport.ActionResponse{
+			OK: true,
+			Data: map[string]any{
+				"rule": map[string]any{
+					"id":           valueOrDefault(request.Payload, "id", "rule-1"),
+					"display_name": "Fake planning filter",
+					"is_enabled":   valueOrDefault(request.Payload, "enabled", false),
+				},
+			},
+		}
+	case "mailbox.settings.get":
+		setting := valueOrDefault(request.Payload, "setting", "")
+		settings := map[string]any{
+			"timeZone": "UTC",
+			"workingHours": map[string]any{
+				"startTime": "09:00:00.0000000",
+				"endTime":   "17:00:00.0000000",
+			},
+		}
+		if setting == "timeZone" {
+			settings = map[string]any{"timeZone": "UTC"}
+		}
+		return transport.ActionResponse{
+			OK: true,
+			Data: map[string]any{
+				"settings": settings,
 			},
 		}
 	case "calendar.list":
@@ -135,10 +214,17 @@ func valueOrDefault(payload map[string]any, key string, fallback any) any {
 func (client *Transport) DryRun(_ context.Context, request transport.ActionRequest) transport.DryRunSummary {
 	return transport.DryRunSummary{
 		Action:               request.Name,
-		Count:                countIDs(request.Payload),
-		Reversible:           request.Name == "mail.move_to_deleted_items",
+		Count:                dryRunCount(request),
+		Reversible:           request.Name == "mail.move_to_deleted_items" || request.Name == "mail.rules.set_enabled",
 		RequiresConfirmation: true,
 	}
+}
+
+func dryRunCount(request transport.ActionRequest) int {
+	if request.Name == "mail.rules.set_enabled" {
+		return 1
+	}
+	return countIDs(request.Payload)
 }
 
 func countIDs(payload map[string]any) int {

@@ -9,6 +9,8 @@ import (
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
+	"github.com/johnkil/outlook-agent/internal/buildinfo"
+	"github.com/johnkil/outlook-agent/internal/capability"
 	"github.com/johnkil/outlook-agent/internal/confirm"
 	"github.com/johnkil/outlook-agent/internal/policy"
 	"github.com/johnkil/outlook-agent/internal/redact"
@@ -37,12 +39,19 @@ type AuthCheckOutput struct {
 
 type EmptyInput struct{}
 
+type CapabilityDetailOutput = capability.Detail
+
+const CompatibilityVersion = "0.1"
+
 type CapabilitiesOutput struct {
-	Actions []string `json:"actions"`
+	CompatibilityVersion string                   `json:"compatibility_version"`
+	Actions              []string                 `json:"actions"`
+	Details              []CapabilityDetailOutput `json:"details"`
 }
 
 type MailSearchInput struct {
-	Query string `json:"query,omitempty" jsonschema:"search query"`
+	Query   string `json:"query,omitempty" jsonschema:"search query"`
+	Mailbox string `json:"mailbox,omitempty" jsonschema:"optional mailbox user id or user principal name"`
 }
 
 type MailSearchOutput struct {
@@ -50,7 +59,14 @@ type MailSearchOutput struct {
 }
 
 type MessageIDInput struct {
-	ID string `json:"id" jsonschema:"message id"`
+	ID      string `json:"id" jsonschema:"message id"`
+	Mailbox string `json:"mailbox,omitempty" jsonschema:"optional mailbox user id or user principal name"`
+}
+
+type AttachmentIDInput struct {
+	MessageID    string `json:"message_id" jsonschema:"message id"`
+	AttachmentID string `json:"attachment_id" jsonschema:"attachment id"`
+	Mailbox      string `json:"mailbox,omitempty" jsonschema:"optional mailbox user id or user principal name"`
 }
 
 type MailFetchMetadataOutput struct {
@@ -62,10 +78,19 @@ type MailFetchBodyOutput struct {
 	BodyText string `json:"body_text"`
 }
 
+type MailListAttachmentsOutput struct {
+	Attachments []any `json:"attachments"`
+}
+
+type MailFetchAttachmentOutput struct {
+	Attachment any `json:"attachment"`
+}
+
 type MailCreateDraftInput struct {
 	Subject string   `json:"subject,omitempty" jsonschema:"draft subject"`
 	Body    string   `json:"body,omitempty" jsonschema:"draft body"`
 	To      []string `json:"to,omitempty" jsonschema:"draft recipients"`
+	Mailbox string   `json:"mailbox,omitempty" jsonschema:"optional mailbox user id or user principal name"`
 }
 
 type MailCreateDraftOutput struct {
@@ -75,6 +100,33 @@ type MailCreateDraftOutput struct {
 type MailMoveToDeletedItemsInput struct {
 	IDs          []string `json:"ids" jsonschema:"message ids to move"`
 	ConfirmToken string   `json:"confirm_token" jsonschema:"confirmation token from outlook.action_dry_run"`
+	Mailbox      string   `json:"mailbox,omitempty" jsonschema:"optional mailbox user id or user principal name"`
+}
+
+type MailRulesListInput struct {
+	FolderID string `json:"folder_id,omitempty" jsonschema:"optional mail folder id"`
+	Mailbox  string `json:"mailbox,omitempty" jsonschema:"optional mailbox user id or user principal name"`
+}
+
+type MailRulesListOutput struct {
+	Rules []any `json:"rules"`
+}
+
+type MailRuleSetEnabledInput struct {
+	RuleID       string `json:"rule_id" jsonschema:"message rule id"`
+	Enabled      bool   `json:"enabled" jsonschema:"whether the rule should be enabled"`
+	FolderID     string `json:"folder_id,omitempty" jsonschema:"optional mail folder id"`
+	ConfirmToken string `json:"confirm_token" jsonschema:"confirmation token from outlook.action_dry_run"`
+	Mailbox      string `json:"mailbox,omitempty" jsonschema:"optional mailbox user id or user principal name"`
+}
+
+type MailboxSettingsGetInput struct {
+	Setting string `json:"setting,omitempty" jsonschema:"optional mailbox setting name"`
+	Mailbox string `json:"mailbox,omitempty" jsonschema:"optional mailbox user id or user principal name"`
+}
+
+type MailboxSettingsGetOutput struct {
+	Settings any `json:"settings"`
 }
 
 type ActionResultOutput struct {
@@ -84,8 +136,10 @@ type ActionResultOutput struct {
 }
 
 type CalendarWindowInput struct {
-	Start string `json:"start" jsonschema:"inclusive start timestamp"`
-	End   string `json:"end" jsonschema:"exclusive end timestamp"`
+	Start   string `json:"start" jsonschema:"inclusive start timestamp"`
+	End     string `json:"end" jsonschema:"exclusive end timestamp"`
+	Email   string `json:"email,omitempty" jsonschema:"optional mailbox email for availability queries"`
+	Mailbox string `json:"mailbox,omitempty" jsonschema:"optional mailbox user id or user principal name"`
 }
 
 type CalendarListOutput struct {
@@ -105,10 +159,13 @@ type DryRunInput struct {
 
 type DryRunOutput struct {
 	Action               string `json:"action"`
+	OK                   bool   `json:"ok"`
 	Count                int    `json:"count"`
 	Reversible           bool   `json:"reversible"`
 	RequiresConfirmation bool   `json:"requires_confirmation"`
+	RequiresUnsafe       bool   `json:"requires_unsafe,omitempty"`
 	ConfirmationToken    string `json:"confirmation_token,omitempty"`
+	Error                string `json:"error,omitempty"`
 }
 
 type ActionConfirmInput struct {
@@ -131,6 +188,7 @@ type RawActionInput struct {
 type Runtime struct {
 	client  transport.Transport
 	confirm *confirm.Store
+	profile string
 }
 
 func Catalog() ToolCatalog {
@@ -141,8 +199,13 @@ func Catalog() ToolCatalog {
 			{Name: "outlook.mail_search", Description: "Search mail metadata using the configured transport."},
 			{Name: "outlook.mail_fetch_metadata", Description: "Fetch metadata for a single message."},
 			{Name: "outlook.mail_fetch_body", Description: "Fetch body text for an explicit message."},
+			{Name: "outlook.mail_list_attachments", Description: "List attachment metadata for an explicit message."},
+			{Name: "outlook.mail_fetch_attachment", Description: "Fetch a single explicit message attachment."},
 			{Name: "outlook.mail_create_draft", Description: "Create a saved draft without sending."},
 			{Name: "outlook.mail_move_to_deleted_items", Description: "Move confirmed messages to Deleted Items."},
+			{Name: "outlook.mail_rules_list", Description: "List read-only mailbox rule metadata."},
+			{Name: "outlook.mail_rule_set_enabled", Description: "Enable or disable a message rule after dry-run confirmation."},
+			{Name: "outlook.mailbox_settings_get", Description: "Get read-only mailbox settings metadata."},
 			{Name: "outlook.calendar_list", Description: "List calendar events for a bounded window."},
 			{Name: "outlook.calendar_availability", Description: "List availability windows for a bounded window."},
 			{Name: "outlook.action_dry_run", Description: "Summarize a mutating or broad action before confirmation."},
@@ -157,7 +220,15 @@ func New() *mcp.Server {
 }
 
 func RunStdio(ctx context.Context) error {
-	return normalizeRunError(New().Run(ctx, &mcp.StdioTransport{}))
+	return RunStdioWithTransport(ctx, fake.New())
+}
+
+func RunStdioWithTransport(ctx context.Context, client transport.Transport) error {
+	return normalizeRunError(NewWithTransport(client).Run(ctx, &mcp.StdioTransport{}))
+}
+
+func RunStdioWithTransportProfile(ctx context.Context, client transport.Transport, profile string) error {
+	return normalizeRunError(NewWithTransportProfile(client, profile).Run(ctx, &mcp.StdioTransport{}))
 }
 
 func normalizeRunError(err error) error {
@@ -171,9 +242,17 @@ func normalizeRunError(err error) error {
 }
 
 func NewRuntime(client transport.Transport) *Runtime {
+	return NewRuntimeWithProfile(client, "default")
+}
+
+func NewRuntimeWithProfile(client transport.Transport, profile string) *Runtime {
+	if strings.TrimSpace(profile) == "" {
+		profile = "default"
+	}
 	return &Runtime{
 		client:  client,
 		confirm: confirm.NewStore(time.Now),
+		profile: profile,
 	}
 }
 
@@ -181,16 +260,25 @@ func NewWithTransport(client transport.Transport) *mcp.Server {
 	return NewWithRuntime(NewRuntime(client))
 }
 
-func NewWithRuntime(runtime *Runtime) *mcp.Server {
-	server := mcp.NewServer(&mcp.Implementation{Name: "outlook-agent", Version: "0.1.0"}, nil)
+func NewWithTransportProfile(client transport.Transport, profile string) *mcp.Server {
+	return NewWithRuntime(NewRuntimeWithProfile(client, profile))
+}
 
-	mcp.AddTool(server, &mcp.Tool{Name: "outlook.auth_check", Description: "Check Outlook Agent authentication for the selected profile."}, authCheckHandler(runtime.client))
+func NewWithRuntime(runtime *Runtime) *mcp.Server {
+	server := mcp.NewServer(&mcp.Implementation{Name: "outlook-agent", Version: buildinfo.Version}, nil)
+
+	mcp.AddTool(server, &mcp.Tool{Name: "outlook.auth_check", Description: "Check Outlook Agent authentication for the selected profile."}, authCheckHandler(runtime))
 	mcp.AddTool(server, &mcp.Tool{Name: "outlook.capabilities", Description: "List Outlook Agent transport capabilities."}, capabilitiesHandler(runtime.client))
 	mcp.AddTool(server, &mcp.Tool{Name: "outlook.mail_search", Description: "Search mail metadata using the configured transport."}, mailSearchHandler(runtime.client))
 	mcp.AddTool(server, &mcp.Tool{Name: "outlook.mail_fetch_metadata", Description: "Fetch metadata for a single message."}, mailFetchMetadataHandler(runtime.client))
 	mcp.AddTool(server, &mcp.Tool{Name: "outlook.mail_fetch_body", Description: "Fetch body text for an explicit message."}, mailFetchBodyHandler(runtime.client))
+	mcp.AddTool(server, &mcp.Tool{Name: "outlook.mail_list_attachments", Description: "List attachment metadata for an explicit message."}, mailListAttachmentsHandler(runtime.client))
+	mcp.AddTool(server, &mcp.Tool{Name: "outlook.mail_fetch_attachment", Description: "Fetch a single explicit message attachment."}, mailFetchAttachmentHandler(runtime.client))
 	mcp.AddTool(server, &mcp.Tool{Name: "outlook.mail_create_draft", Description: "Create a saved draft without sending."}, mailCreateDraftHandler(runtime.client))
 	mcp.AddTool(server, &mcp.Tool{Name: "outlook.mail_move_to_deleted_items", Description: "Move confirmed messages to Deleted Items."}, mailMoveToDeletedItemsHandler(runtime))
+	mcp.AddTool(server, &mcp.Tool{Name: "outlook.mail_rules_list", Description: "List read-only mailbox rule metadata."}, mailRulesListHandler(runtime.client))
+	mcp.AddTool(server, &mcp.Tool{Name: "outlook.mail_rule_set_enabled", Description: "Enable or disable a message rule after dry-run confirmation."}, mailRuleSetEnabledHandler(runtime))
+	mcp.AddTool(server, &mcp.Tool{Name: "outlook.mailbox_settings_get", Description: "Get read-only mailbox settings metadata."}, mailboxSettingsGetHandler(runtime.client))
 	mcp.AddTool(server, &mcp.Tool{Name: "outlook.calendar_list", Description: "List calendar events for a bounded window."}, calendarListHandler(runtime.client))
 	mcp.AddTool(server, &mcp.Tool{Name: "outlook.calendar_availability", Description: "List availability windows for a bounded window."}, calendarAvailabilityHandler(runtime.client))
 	mcp.AddTool(server, &mcp.Tool{Name: "outlook.action_dry_run", Description: "Summarize a mutating or broad action before confirmation."}, dryRunHandler(runtime))
@@ -200,13 +288,9 @@ func NewWithRuntime(runtime *Runtime) *mcp.Server {
 	return server
 }
 
-func authCheckHandler(client transport.Transport) func(context.Context, *mcp.CallToolRequest, AuthCheckInput) (*mcp.CallToolResult, AuthCheckOutput, error) {
+func authCheckHandler(runtime *Runtime) func(context.Context, *mcp.CallToolRequest, AuthCheckInput) (*mcp.CallToolResult, AuthCheckOutput, error) {
 	return func(ctx context.Context, _ *mcp.CallToolRequest, input AuthCheckInput) (*mcp.CallToolResult, AuthCheckOutput, error) {
-		profile := input.Profile
-		if profile == "" {
-			profile = "default"
-		}
-		result := client.Authenticate(ctx, profile)
+		result := runtime.client.Authenticate(ctx, runtime.profileOrDefault(input.Profile))
 		return nil, AuthCheckOutput{OK: result.OK, Principal: result.Principal, Error: result.Error}, nil
 	}
 }
@@ -215,19 +299,25 @@ func capabilitiesHandler(client transport.Transport) func(context.Context, *mcp.
 	return func(ctx context.Context, _ *mcp.CallToolRequest, _ EmptyInput) (*mcp.CallToolResult, CapabilitiesOutput, error) {
 		capabilities := client.Capabilities(ctx)
 		actions := make([]string, 0, len(capabilities.Actions))
+		details := make([]CapabilityDetailOutput, 0, len(capabilities.Actions))
 		for _, action := range capabilities.Actions {
 			actions = append(actions, action.Name)
+			details = append(details, capability.FromDefinition(action))
 		}
-		return nil, CapabilitiesOutput{Actions: actions}, nil
+		return nil, CapabilitiesOutput{CompatibilityVersion: CompatibilityVersion, Actions: actions, Details: details}, nil
 	}
 }
 
 func mailSearchHandler(client transport.Transport) func(context.Context, *mcp.CallToolRequest, MailSearchInput) (*mcp.CallToolResult, MailSearchOutput, error) {
 	return func(ctx context.Context, _ *mcp.CallToolRequest, input MailSearchInput) (*mcp.CallToolResult, MailSearchOutput, error) {
+		payload := withMailbox(map[string]any{"query": input.Query}, input.Mailbox)
 		response := client.Execute(ctx, transport.ActionRequest{
 			Name:    "mail.search",
-			Payload: map[string]any{"query": input.Query},
+			Payload: payload,
 		})
+		if err := transportResponseError(response); err != nil {
+			return nil, MailSearchOutput{}, err
+		}
 		redacted := redact.Value(response.Data).(map[string]any)
 		messages, _ := redacted["messages"].([]any)
 		return nil, MailSearchOutput{Messages: messages}, nil
@@ -236,7 +326,10 @@ func mailSearchHandler(client transport.Transport) func(context.Context, *mcp.Ca
 
 func mailFetchMetadataHandler(client transport.Transport) func(context.Context, *mcp.CallToolRequest, MessageIDInput) (*mcp.CallToolResult, MailFetchMetadataOutput, error) {
 	return func(ctx context.Context, _ *mcp.CallToolRequest, input MessageIDInput) (*mcp.CallToolResult, MailFetchMetadataOutput, error) {
-		response := client.Execute(ctx, transport.ActionRequest{Name: "mail.fetch_metadata", Payload: map[string]any{"id": input.ID}})
+		response := client.Execute(ctx, transport.ActionRequest{Name: "mail.fetch_metadata", Payload: withMailbox(map[string]any{"id": input.ID}, input.Mailbox)})
+		if err := transportResponseError(response); err != nil {
+			return nil, MailFetchMetadataOutput{}, err
+		}
 		redacted := redact.Value(response.Data).(map[string]any)
 		return nil, MailFetchMetadataOutput{Message: redacted["message"]}, nil
 	}
@@ -244,9 +337,39 @@ func mailFetchMetadataHandler(client transport.Transport) func(context.Context, 
 
 func mailFetchBodyHandler(client transport.Transport) func(context.Context, *mcp.CallToolRequest, MessageIDInput) (*mcp.CallToolResult, MailFetchBodyOutput, error) {
 	return func(ctx context.Context, _ *mcp.CallToolRequest, input MessageIDInput) (*mcp.CallToolResult, MailFetchBodyOutput, error) {
-		response := client.Execute(ctx, transport.ActionRequest{Name: "mail.fetch_body", Payload: map[string]any{"id": input.ID}})
+		response := client.Execute(ctx, transport.ActionRequest{Name: "mail.fetch_body", Payload: withMailbox(map[string]any{"id": input.ID}, input.Mailbox)})
+		if err := transportResponseError(response); err != nil {
+			return nil, MailFetchBodyOutput{}, err
+		}
 		body, _ := response.Data["body_text"].(string)
 		return nil, MailFetchBodyOutput{ID: response.Data["id"], BodyText: body}, nil
+	}
+}
+
+func mailListAttachmentsHandler(client transport.Transport) func(context.Context, *mcp.CallToolRequest, MessageIDInput) (*mcp.CallToolResult, MailListAttachmentsOutput, error) {
+	return func(ctx context.Context, _ *mcp.CallToolRequest, input MessageIDInput) (*mcp.CallToolResult, MailListAttachmentsOutput, error) {
+		response := client.Execute(ctx, transport.ActionRequest{Name: "mail.list_attachments", Payload: withMailbox(map[string]any{"id": input.ID}, input.Mailbox)})
+		if err := transportResponseError(response); err != nil {
+			return nil, MailListAttachmentsOutput{}, err
+		}
+		attachments, _ := response.Data["attachments"].([]any)
+		return nil, MailListAttachmentsOutput{Attachments: attachments}, nil
+	}
+}
+
+func mailFetchAttachmentHandler(client transport.Transport) func(context.Context, *mcp.CallToolRequest, AttachmentIDInput) (*mcp.CallToolResult, MailFetchAttachmentOutput, error) {
+	return func(ctx context.Context, _ *mcp.CallToolRequest, input AttachmentIDInput) (*mcp.CallToolResult, MailFetchAttachmentOutput, error) {
+		response := client.Execute(ctx, transport.ActionRequest{
+			Name: "mail.fetch_attachment",
+			Payload: withMailbox(map[string]any{
+				"message_id":    input.MessageID,
+				"attachment_id": input.AttachmentID,
+			}, input.Mailbox),
+		})
+		if err := transportResponseError(response); err != nil {
+			return nil, MailFetchAttachmentOutput{}, err
+		}
+		return nil, MailFetchAttachmentOutput{Attachment: response.Data["attachment"]}, nil
 	}
 }
 
@@ -254,12 +377,15 @@ func mailCreateDraftHandler(client transport.Transport) func(context.Context, *m
 	return func(ctx context.Context, _ *mcp.CallToolRequest, input MailCreateDraftInput) (*mcp.CallToolResult, MailCreateDraftOutput, error) {
 		response := client.Execute(ctx, transport.ActionRequest{
 			Name: "mail.create_draft",
-			Payload: map[string]any{
+			Payload: withMailbox(map[string]any{
 				"subject": input.Subject,
 				"body":    input.Body,
 				"to":      input.To,
-			},
+			}, input.Mailbox),
 		})
+		if err := transportResponseError(response); err != nil {
+			return nil, MailCreateDraftOutput{}, err
+		}
 		redacted := redact.Value(response.Data).(map[string]any)
 		return nil, MailCreateDraftOutput{Draft: redacted["draft"]}, nil
 	}
@@ -270,19 +396,68 @@ func mailMoveToDeletedItemsHandler(runtime *Runtime) func(context.Context, *mcp.
 		if input.ConfirmToken == "" {
 			return nil, ActionResultOutput{OK: false, Error: "confirm_token required"}, nil
 		}
-		payload := map[string]any{"ids": stringsToAny(input.IDs)}
-		if !runtime.confirm.Consume(input.ConfirmToken, bindingFor(runtime.client, "default", "mail.move_to_deleted_items", payload, false)) {
+		payload := withMailbox(map[string]any{"ids": stringsToAny(input.IDs)}, input.Mailbox)
+		if !runtime.confirm.Consume(input.ConfirmToken, bindingFor(runtime.client, runtime.profile, "mail.move_to_deleted_items", payload, false)) {
 			return nil, ActionResultOutput{OK: false, Error: "confirmation token is invalid"}, nil
 		}
 		response := runtime.client.Execute(ctx, transport.ActionRequest{Name: "mail.move_to_deleted_items", Payload: payload})
+		return nil, actionResultFromResponse(response), nil
+	}
+}
+
+func mailRulesListHandler(client transport.Transport) func(context.Context, *mcp.CallToolRequest, MailRulesListInput) (*mcp.CallToolResult, MailRulesListOutput, error) {
+	return func(ctx context.Context, _ *mcp.CallToolRequest, input MailRulesListInput) (*mcp.CallToolResult, MailRulesListOutput, error) {
+		response := client.Execute(ctx, transport.ActionRequest{
+			Name:    "mail.rules.list",
+			Payload: withMailbox(map[string]any{"folder_id": input.FolderID}, input.Mailbox),
+		})
+		if err := transportResponseError(response); err != nil {
+			return nil, MailRulesListOutput{}, err
+		}
 		redacted := redact.Value(response.Data).(map[string]any)
-		return nil, ActionResultOutput{OK: response.OK, Data: redacted, Error: response.Error}, nil
+		rules, _ := redacted["rules"].([]any)
+		return nil, MailRulesListOutput{Rules: rules}, nil
+	}
+}
+
+func mailRuleSetEnabledHandler(runtime *Runtime) func(context.Context, *mcp.CallToolRequest, MailRuleSetEnabledInput) (*mcp.CallToolResult, ActionResultOutput, error) {
+	return func(ctx context.Context, _ *mcp.CallToolRequest, input MailRuleSetEnabledInput) (*mcp.CallToolResult, ActionResultOutput, error) {
+		if input.ConfirmToken == "" {
+			return nil, ActionResultOutput{OK: false, Error: "confirm_token required"}, nil
+		}
+		payload := withMailbox(map[string]any{
+			"id":        input.RuleID,
+			"enabled":   input.Enabled,
+			"folder_id": input.FolderID,
+		}, input.Mailbox)
+		if !runtime.confirm.Consume(input.ConfirmToken, bindingFor(runtime.client, runtime.profile, "mail.rules.set_enabled", payload, false)) {
+			return nil, ActionResultOutput{OK: false, Error: "confirmation token is invalid"}, nil
+		}
+		response := runtime.client.Execute(ctx, transport.ActionRequest{Name: "mail.rules.set_enabled", Payload: payload})
+		return nil, actionResultFromResponse(response), nil
+	}
+}
+
+func mailboxSettingsGetHandler(client transport.Transport) func(context.Context, *mcp.CallToolRequest, MailboxSettingsGetInput) (*mcp.CallToolResult, MailboxSettingsGetOutput, error) {
+	return func(ctx context.Context, _ *mcp.CallToolRequest, input MailboxSettingsGetInput) (*mcp.CallToolResult, MailboxSettingsGetOutput, error) {
+		response := client.Execute(ctx, transport.ActionRequest{
+			Name:    "mailbox.settings.get",
+			Payload: withMailbox(map[string]any{"setting": input.Setting}, input.Mailbox),
+		})
+		if err := transportResponseError(response); err != nil {
+			return nil, MailboxSettingsGetOutput{}, err
+		}
+		redacted := redact.Value(response.Data).(map[string]any)
+		return nil, MailboxSettingsGetOutput{Settings: redacted["settings"]}, nil
 	}
 }
 
 func calendarListHandler(client transport.Transport) func(context.Context, *mcp.CallToolRequest, CalendarWindowInput) (*mcp.CallToolResult, CalendarListOutput, error) {
 	return func(ctx context.Context, _ *mcp.CallToolRequest, input CalendarWindowInput) (*mcp.CallToolResult, CalendarListOutput, error) {
-		response := client.Execute(ctx, transport.ActionRequest{Name: "calendar.list", Payload: map[string]any{"start": input.Start, "end": input.End}})
+		response := client.Execute(ctx, transport.ActionRequest{Name: "calendar.list", Payload: withMailbox(map[string]any{"start": input.Start, "end": input.End}, input.Mailbox)})
+		if err := transportResponseError(response); err != nil {
+			return nil, CalendarListOutput{}, err
+		}
 		redacted := redact.Value(response.Data).(map[string]any)
 		events, _ := redacted["events"].([]any)
 		return nil, CalendarListOutput{Events: events}, nil
@@ -291,24 +466,68 @@ func calendarListHandler(client transport.Transport) func(context.Context, *mcp.
 
 func calendarAvailabilityHandler(client transport.Transport) func(context.Context, *mcp.CallToolRequest, CalendarWindowInput) (*mcp.CallToolResult, CalendarAvailabilityOutput, error) {
 	return func(ctx context.Context, _ *mcp.CallToolRequest, input CalendarWindowInput) (*mcp.CallToolResult, CalendarAvailabilityOutput, error) {
-		response := client.Execute(ctx, transport.ActionRequest{Name: "calendar.availability", Payload: map[string]any{"start": input.Start, "end": input.End}})
+		payload := withMailbox(map[string]any{"start": input.Start, "end": input.End}, input.Mailbox)
+		if strings.TrimSpace(input.Email) != "" {
+			payload["email"] = input.Email
+		}
+		response := client.Execute(ctx, transport.ActionRequest{Name: "calendar.availability", Payload: payload})
+		if err := transportResponseError(response); err != nil {
+			return nil, CalendarAvailabilityOutput{}, err
+		}
 		windows, _ := response.Data["windows"].([]any)
 		return nil, CalendarAvailabilityOutput{Windows: windows}, nil
 	}
 }
 
+func transportResponseError(response transport.ActionResponse) error {
+	if response.OK {
+		return nil
+	}
+	message := strings.TrimSpace(response.Error)
+	if message == "" {
+		message = "transport action failed"
+	}
+	return errors.New(message)
+}
+
+func actionResultFromResponse(response transport.ActionResponse) ActionResultOutput {
+	output := ActionResultOutput{OK: response.OK, Error: response.Error}
+	if !response.OK || response.Data == nil {
+		return output
+	}
+	redacted, ok := redact.Value(response.Data).(map[string]any)
+	if ok {
+		output.Data = redacted
+	}
+	return output
+}
+
 func dryRunHandler(runtime *Runtime) func(context.Context, *mcp.CallToolRequest, DryRunInput) (*mcp.CallToolResult, DryRunOutput, error) {
 	return func(ctx context.Context, _ *mcp.CallToolRequest, input DryRunInput) (*mcp.CallToolResult, DryRunOutput, error) {
 		summary := runtime.client.DryRun(ctx, transport.ActionRequest{Name: input.Action, Payload: input.Payload, UnsafeMode: input.UnsafeMode})
-		token, err := runtime.confirm.Generate(bindingFor(runtime.client, profileOrDefault(input.Profile), input.Action, input.Payload, input.UnsafeMode), 10*time.Minute)
+		decision := confirmedActionDecision(runtime.client, input.Action, input.Payload, input.UnsafeMode)
+		if !decision.Allowed {
+			return nil, DryRunOutput{
+				Action:               summary.Action,
+				OK:                   false,
+				Count:                summary.Count,
+				Reversible:           summary.Reversible,
+				RequiresConfirmation: true,
+				RequiresUnsafe:       decision.RequiresUnsafe,
+				Error:                decision.Reason,
+			}, nil
+		}
+		token, err := runtime.confirm.Generate(bindingFor(runtime.client, runtime.profileOrDefault(input.Profile), input.Action, input.Payload, input.UnsafeMode), 10*time.Minute)
 		if err != nil {
 			return nil, DryRunOutput{}, err
 		}
 		return nil, DryRunOutput{
 			Action:               summary.Action,
+			OK:                   true,
 			Count:                summary.Count,
 			Reversible:           summary.Reversible,
 			RequiresConfirmation: summary.RequiresConfirmation,
+			RequiresUnsafe:       decision.RequiresUnsafe,
 			ConfirmationToken:    token,
 		}, nil
 	}
@@ -316,18 +535,21 @@ func dryRunHandler(runtime *Runtime) func(context.Context, *mcp.CallToolRequest,
 
 func actionConfirmHandler(runtime *Runtime) func(context.Context, *mcp.CallToolRequest, ActionConfirmInput) (*mcp.CallToolResult, ActionResultOutput, error) {
 	return func(ctx context.Context, _ *mcp.CallToolRequest, input ActionConfirmInput) (*mcp.CallToolResult, ActionResultOutput, error) {
-		if !runtime.confirm.Consume(input.ConfirmToken, bindingFor(runtime.client, profileOrDefault(input.Profile), input.Action, input.Payload, input.UnsafeMode)) {
+		if !runtime.confirm.Consume(input.ConfirmToken, bindingFor(runtime.client, runtime.profileOrDefault(input.Profile), input.Action, input.Payload, input.UnsafeMode)) {
 			return nil, ActionResultOutput{OK: false, Error: "confirmation token is invalid"}, nil
 		}
+		decision := confirmedActionDecision(runtime.client, input.Action, input.Payload, input.UnsafeMode)
+		if !decision.Allowed {
+			return nil, ActionResultOutput{OK: false, Error: decision.Reason}, nil
+		}
 		response := runtime.client.Execute(ctx, transport.ActionRequest{Name: input.Action, Payload: input.Payload, UnsafeMode: input.UnsafeMode})
-		redacted := redact.Value(response.Data).(map[string]any)
-		return nil, ActionResultOutput{OK: response.OK, Data: redacted, Error: response.Error}, nil
+		return nil, actionResultFromResponse(response), nil
 	}
 }
 
 func rawActionHandler(runtime *Runtime) func(context.Context, *mcp.CallToolRequest, RawActionInput) (*mcp.CallToolResult, ActionResultOutput, error) {
 	return func(ctx context.Context, _ *mcp.CallToolRequest, input RawActionInput) (*mcp.CallToolResult, ActionResultOutput, error) {
-		class := safetyClassFor(runtime.client, input.Action)
+		class := safetyClassForPayload(runtime.client, input.Action, input.Payload)
 		decision := policy.Evaluate(policy.Request{
 			Class:          class,
 			ExplicitTarget: input.ExplicitTarget || hasExplicitTarget(input.Payload),
@@ -338,8 +560,7 @@ func rawActionHandler(runtime *Runtime) func(context.Context, *mcp.CallToolReque
 			return nil, ActionResultOutput{OK: false, Error: decision.Reason}, nil
 		}
 		response := runtime.client.Execute(ctx, transport.ActionRequest{Name: input.Action, Payload: input.Payload, UnsafeMode: input.UnsafeMode})
-		redacted := redact.Value(response.Data).(map[string]any)
-		return nil, ActionResultOutput{OK: response.OK, Data: redacted, Error: response.Error}, nil
+		return nil, actionResultFromResponse(response), nil
 	}
 }
 
@@ -353,9 +574,9 @@ func bindingFor(client transport.Transport, profile string, action string, paylo
 	}
 }
 
-func profileOrDefault(profile string) string {
-	if profile == "" {
-		return "default"
+func (runtime *Runtime) profileOrDefault(profile string) string {
+	if strings.TrimSpace(profile) == "" {
+		return runtime.profile
 	}
 	return profile
 }
@@ -369,6 +590,31 @@ func safetyClassFor(client transport.Transport, actionName string) policy.Safety
 	return policy.Unknown
 }
 
+func confirmedActionDecision(client transport.Transport, actionName string, payload map[string]any, unsafeMode bool) policy.Decision {
+	return policy.EvaluateConfirmed(policy.Request{
+		Class:          safetyClassForPayload(client, actionName, payload),
+		ExplicitTarget: hasExplicitTarget(payload),
+		UnsafeMode:     unsafeMode,
+	})
+}
+
+func safetyClassForPayload(client transport.Transport, actionName string, payload map[string]any) policy.SafetyClass {
+	class := safetyClassFor(client, actionName)
+	if class == policy.Destructive && isMoveToDeletedItems(actionName, payload) {
+		return policy.ReversibleBulk
+	}
+	return class
+}
+
+func isMoveToDeletedItems(actionName string, payload map[string]any) bool {
+	if actionName != "DeleteItem" && actionName != "DeleteFolder" {
+		return false
+	}
+	body, _ := payload["Body"].(map[string]any)
+	deleteType, _ := body["DeleteType"].(string)
+	return deleteType == "MoveToDeletedItems"
+}
+
 func hasExplicitTarget(payload map[string]any) bool {
 	if payload == nil {
 		return false
@@ -376,8 +622,18 @@ func hasExplicitTarget(payload map[string]any) bool {
 	if id, ok := payload["id"].(string); ok && id != "" {
 		return true
 	}
+	if id, ok := payload["attachment_id"].(string); ok && id != "" {
+		return true
+	}
 	ids, ok := payload["ids"].([]any)
 	return ok && len(ids) == 1
+}
+
+func withMailbox(payload map[string]any, mailbox string) map[string]any {
+	if strings.TrimSpace(mailbox) != "" {
+		payload["mailbox"] = strings.TrimSpace(mailbox)
+	}
+	return payload
 }
 
 func stringsToAny(values []string) []any {

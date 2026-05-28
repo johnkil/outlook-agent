@@ -62,16 +62,42 @@ func TestLoadEnvConfigPath(t *testing.T) {
 	}
 }
 
-func TestMissingConfigReturnsEmptyConfig(t *testing.T) {
+func TestMissingExplicitConfigReturnsError(t *testing.T) {
 	missing := filepath.Join(t.TempDir(), "missing.json")
 
-	loaded, source, err := config.Load(config.Options{ExplicitPath: missing})
-	if err != nil {
-		t.Fatalf("missing config should not fail: %v", err)
+	_, source, err := config.Load(config.Options{ExplicitPath: missing})
+	if err == nil {
+		t.Fatal("expected missing explicit config error")
 	}
 
-	if source.Found {
-		t.Fatalf("expected missing source, got %#v", source)
+	if source.Found || source.Kind != "explicit" || source.Path != missing {
+		t.Fatalf("expected explicit missing source, got %#v", source)
+	}
+}
+
+func TestMissingEnvConfigReturnsError(t *testing.T) {
+	missing := filepath.Join(t.TempDir(), "missing.json")
+	t.Setenv(config.EnvConfigPath, missing)
+
+	_, source, err := config.Load(config.Options{})
+	if err == nil {
+		t.Fatal("expected missing env config error")
+	}
+
+	if source.Found || source.Kind != "env" || source.Path != missing {
+		t.Fatalf("expected env missing source, got %#v", source)
+	}
+}
+
+func TestNoConfigReturnsEmptyConfig(t *testing.T) {
+	t.Setenv(config.EnvConfigPath, "")
+
+	loaded, source, err := config.Load(config.Options{})
+	if err != nil {
+		t.Fatalf("no config should not fail: %v", err)
+	}
+	if source.Found || source.Kind != "none" {
+		t.Fatalf("expected no source, got %#v", source)
 	}
 	if loaded.DefaultProfile != "default" {
 		t.Fatalf("expected default fallback profile, got %q", loaded.DefaultProfile)

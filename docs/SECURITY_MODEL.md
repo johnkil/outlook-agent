@@ -14,8 +14,18 @@
 - Go policy engine classifies every action before transport execution.
 - Skills are guidance only; the runtime enforces policy.
 - Dry-run tokens bind to exact normalized payloads.
+- Dry-run does not issue confirmation tokens for destructive or unknown actions
+  unless unsafe mode is explicit.
 - Unsafe mode bypasses allowlists but not confirmation gates.
-- Output redaction runs before responses leave the runtime.
+- Confirmation tokens do not bypass unsafe-mode or explicit-target policy
+  checks; confirmed actions are rechecked before transport execution.
+- Generic and raw outputs are redacted before responses leave the runtime;
+  explicit body or attachment tools may return the requested content only for
+  the caller-supplied narrow target.
+- Generic Graph raw requests are treated as destructive by default because an
+  arbitrary Microsoft Graph method can send, mutate, or delete data.
+- Generic EWS raw SOAP requests are treated as destructive by default because an
+  arbitrary EWS operation can send, mutate, or delete mailbox data.
 - Live transports must keep session material in memory unless a secret-store
   backed cache is explicitly implemented.
 
@@ -38,4 +48,3 @@ Logs must not include:
 - raw message bodies;
 - attachment contents;
 - raw session dumps.
-

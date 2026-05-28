@@ -13,8 +13,13 @@ var sensitiveKeyParts = []string{
 }
 
 var privateContentKeys = map[string]struct{}{
-	"body":    {},
-	"content": {},
+	"body":           {},
+	"body_text":      {},
+	"content":        {},
+	"contentbytes":   {},
+	"content_bytes":  {},
+	"content_base64": {},
+	"xml_text":       {},
 }
 
 func Value(input any) any {

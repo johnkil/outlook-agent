@@ -11,13 +11,20 @@ phrases such as "tomorrow" into explicit date ranges before calling tools.
 ## Workflow
 
 1. Resolve timezone and calendar scope.
-2. Use `outlook.calendar_list` for bounded time windows.
-3. Use `outlook.calendar_availability` for free/busy questions.
-4. Surface conflicts before suggesting changes.
-5. Create, reschedule, or cancel only after exact confirmation.
+2. Call `outlook.capabilities` before raw, gated, or unfamiliar calendar
+   actions.
+3. Use `outlook.calendar_list` for bounded time windows.
+4. Use `outlook.calendar_availability` for free/busy questions.
+5. Surface conflicts before suggesting changes.
+6. Use `outlook.raw_action` only for a capability-discovered transport action
+   that does not have a high-level tool.
+7. Create, reschedule, or cancel only after exact confirmation.
 
 ## Safety
 
 Preserve title, attendees, location, online meeting details, body, reminders,
 and recurrence scope unless the user asks to change them.
 
+Use `outlook.action_dry_run` and `outlook.action_confirm` for move, cancel,
+recurrence, attendee, reminder, or broad calendar mutations. Execute only the
+reviewed payload after exact confirmation.

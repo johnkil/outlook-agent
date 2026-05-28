@@ -94,6 +94,61 @@ func TestUnknownBlockedUnlessUnsafeIsExplicit(t *testing.T) {
 	}
 }
 
+func TestConfirmedBulkSendAndSettingsActionsAllowedAfterDryRun(t *testing.T) {
+	for _, class := range []policy.SafetyClass{
+		policy.ReversibleBulk,
+		policy.SendLike,
+		policy.SettingsOrRules,
+	} {
+		t.Run(string(class), func(t *testing.T) {
+			decision := policy.EvaluateConfirmed(policy.Request{Class: class})
+
+			if !decision.Allowed {
+				t.Fatalf("expected confirmed %s action to be allowed: %#v", class, decision)
+			}
+		})
+	}
+}
+
+func TestConfirmedDestructiveActionsStillRequireUnsafeMode(t *testing.T) {
+	withoutUnsafe := policy.EvaluateConfirmed(policy.Request{Class: policy.Destructive})
+	if withoutUnsafe.Allowed {
+		t.Fatalf("expected confirmed destructive action without unsafe to be blocked: %#v", withoutUnsafe)
+	}
+	if !withoutUnsafe.RequiresUnsafe || !withoutUnsafe.RequiresDryRun || !withoutUnsafe.RequiresConfirmation {
+		t.Fatalf("expected unsafe dry-run confirmation requirements: %#v", withoutUnsafe)
+	}
+
+	withUnsafe := policy.EvaluateConfirmed(policy.Request{Class: policy.Destructive, UnsafeMode: true})
+	if !withUnsafe.Allowed {
+		t.Fatalf("expected confirmed destructive action with unsafe to be allowed: %#v", withUnsafe)
+	}
+}
+
+func TestConfirmedUnknownActionsStillRequireUnsafeMode(t *testing.T) {
+	withoutUnsafe := policy.EvaluateConfirmed(policy.Request{Class: policy.Unknown})
+	if withoutUnsafe.Allowed {
+		t.Fatalf("expected confirmed unknown action without unsafe to be blocked: %#v", withoutUnsafe)
+	}
+
+	withUnsafe := policy.EvaluateConfirmed(policy.Request{Class: policy.Unknown, UnsafeMode: true})
+	if !withUnsafe.Allowed {
+		t.Fatalf("expected confirmed unknown action with unsafe to be allowed: %#v", withUnsafe)
+	}
+}
+
+func TestConfirmedExplicitReadsStillRequireExplicitTarget(t *testing.T) {
+	withoutTarget := policy.EvaluateConfirmed(policy.Request{Class: policy.ReadBodyExplicit})
+	if withoutTarget.Allowed {
+		t.Fatalf("expected confirmed body read without target to be blocked: %#v", withoutTarget)
+	}
+
+	withTarget := policy.EvaluateConfirmed(policy.Request{Class: policy.ReadBodyExplicit, ExplicitTarget: true})
+	if !withTarget.Allowed {
+		t.Fatalf("expected confirmed body read with explicit target to be allowed: %#v", withTarget)
+	}
+}
+
 func TestSafetyClassNamesAreStableForCliAndDocs(t *testing.T) {
 	names := policy.SafetyClassNames()
 

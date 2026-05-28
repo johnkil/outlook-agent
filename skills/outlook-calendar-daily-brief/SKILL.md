@@ -5,7 +5,9 @@ description: Build a one-day Outlook Calendar brief from Outlook Agent calendar 
 
 # Outlook Calendar Daily Brief
 
-Use `outlook.calendar_list` with explicit start and end timestamps for the day.
+Call `outlook.capabilities` if the calendar scope or transport path is
+unfamiliar. Use `outlook.calendar_list` with explicit start and end timestamps
+for the day; keep the window bounded to the requested date and timezone.
 
 ## Output
 
@@ -17,4 +19,3 @@ Use `outlook.calendar_list` with explicit start and end timestamps for the day.
 
 Do not imply shared-calendar details are complete when only free/busy data is
 available.
-

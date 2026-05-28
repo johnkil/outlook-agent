@@ -5,12 +5,61 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"os"
+	"runtime"
+	"strconv"
+	"strings"
 
+	"github.com/johnkil/outlook-agent/internal/action"
+	"github.com/johnkil/outlook-agent/internal/buildinfo"
+	"github.com/johnkil/outlook-agent/internal/capability"
+	"github.com/johnkil/outlook-agent/internal/config"
 	"github.com/johnkil/outlook-agent/internal/policy"
+	"github.com/johnkil/outlook-agent/internal/secret"
+	"github.com/johnkil/outlook-agent/internal/transport"
+	"github.com/johnkil/outlook-agent/internal/transport/ews"
+	"github.com/johnkil/outlook-agent/internal/transport/fake"
+	"github.com/johnkil/outlook-agent/internal/transport/graph"
+	"github.com/johnkil/outlook-agent/internal/transport/owa"
 )
 
+type Options struct {
+	ConfigPath string
+	Profile    string
+}
+
 type Runtime struct {
-	RunMCP func(context.Context) error
+	BuildTransport        func(context.Context, Options) (transport.Transport, string, error)
+	EnrollGraphDeviceCode func(context.Context, Options, func(GraphDeviceCodeChallenge)) (GraphDeviceCodeResult, error)
+	RunMCP                func(context.Context, Options) error
+}
+
+type GraphDeviceCodeChallenge struct {
+	VerificationURI string
+	UserCode        string
+	Message         string
+	ExpiresIn       int
+	Interval        int
+}
+
+type GraphDeviceCodeResult struct {
+	Profile   string
+	SecretRef string
+	TokenType string
+	Scope     string
+	ExpiresAt string
+}
+
+type owaActionDiscoverer interface {
+	DiscoverServiceActionsFromURLWithOptions(ctx context.Context, source string, options owa.DiscoveryOptions) ([]string, error)
+}
+
+type owaActionDiscoveryDiagnoser interface {
+	DiscoverServiceActionsFromURLDiagnostics(ctx context.Context, source string, options owa.DiscoveryOptions) (owa.DiscoveryDiagnostics, error)
+}
+
+type owaActionContextDiagnoser interface {
+	DiscoverServiceActionContextsFromURLDiagnostics(ctx context.Context, source string, action string, options owa.DiscoveryOptions) (owa.ActionContextDiagnostics, error)
 }
 
 // Run executes the CLI command and returns the process exit code.
@@ -19,49 +68,482 @@ func Run(args []string, stdout io.Writer, stderr io.Writer) int {
 }
 
 func RunWithRuntime(args []string, stdout io.Writer, stderr io.Writer, runtime Runtime) int {
-	if len(args) == 0 {
+	options, commandArgs, err := parseOptions(args)
+	if err != nil {
+		fmt.Fprintln(stderr, err)
+		return 1
+	}
+	if len(commandArgs) == 0 {
 		fmt.Fprintln(stderr, "missing command")
 		return 1
 	}
 
-	switch args[0] {
+	switch commandArgs[0] {
 	case "doctor":
-		return writeJSON(stdout, map[string]any{
-			"ok":         true,
-			"command":    "doctor",
-			"mcp_stdio":  true,
-			"transports": []string{"fake", "graph", "ews", "owa"},
-		})
+		return runDoctor(stdout, options)
 	case "policy":
-		if len(args) == 2 && args[1] == "explain" {
+		if len(commandArgs) == 2 && commandArgs[1] == "explain" {
 			return writeJSON(stdout, map[string]any{
 				"ok":             true,
 				"command":        "policy explain",
 				"safety_classes": policy.SafetyClassNames(),
 			})
 		}
+		if len(commandArgs) == 4 && commandArgs[1] == "explain" && commandArgs[2] == "--action" {
+			return runPolicyExplainAction(stdout, commandArgs[3])
+		}
+	case "owa":
+		if len(commandArgs) >= 2 && commandArgs[1] == "discover-actions" {
+			return runOWADiscoverActions(commandArgs[2:], options, runtime, stdout, stderr)
+		}
+		if len(commandArgs) >= 2 && commandArgs[1] == "discover-action-context" {
+			return runOWADiscoverActionContext(commandArgs[2:], options, runtime, stdout, stderr)
+		}
 	case "auth":
-		if len(args) == 2 && args[1] == "check" {
-			return writeJSON(stdout, map[string]any{
-				"ok":      false,
-				"command": "auth check",
-				"error":   "transport profile is not configured",
-			})
+		if len(commandArgs) == 2 && commandArgs[1] == "check" {
+			return runAuthCheck(stdout, options, runtime)
+		}
+		if len(commandArgs) == 2 && commandArgs[1] == "graph-device-code" {
+			return runAuthGraphDeviceCode(stdout, stderr, options, runtime)
 		}
 	case "mcp":
 		if runtime.RunMCP == nil {
 			fmt.Fprintln(stderr, "mcp runner is not configured")
 			return 4
 		}
-		if err := runtime.RunMCP(context.Background()); err != nil {
+		if err := runtime.RunMCP(context.Background(), options); err != nil {
 			fmt.Fprintf(stderr, "mcp server failed: %v\n", err)
 			return 4
 		}
 		return 0
 	}
 
-	fmt.Fprintf(stderr, "unknown command: %s\n", args[0])
+	fmt.Fprintf(stderr, "unknown command: %s\n", commandArgs[0])
 	return 1
+}
+
+type graphDeviceCodeOutput struct {
+	OK        bool   `json:"ok"`
+	Command   string `json:"command"`
+	Profile   string `json:"profile,omitempty"`
+	SecretRef string `json:"secret_ref,omitempty"`
+	TokenType string `json:"token_type,omitempty"`
+	Scope     string `json:"scope,omitempty"`
+	ExpiresAt string `json:"expires_at,omitempty"`
+	Error     string `json:"error,omitempty"`
+}
+
+type doctorConfigOutput struct {
+	Found bool   `json:"found"`
+	Kind  string `json:"kind"`
+	Path  string `json:"path,omitempty"`
+	Error string `json:"error,omitempty"`
+}
+
+type doctorSecretStoreOutput struct {
+	Kind      string `json:"kind"`
+	Available bool   `json:"available"`
+}
+
+type doctorOutput struct {
+	OK          bool                    `json:"ok"`
+	Command     string                  `json:"command"`
+	Version     string                  `json:"version"`
+	Profile     string                  `json:"profile,omitempty"`
+	Config      doctorConfigOutput      `json:"config"`
+	SecretStore doctorSecretStoreOutput `json:"secret_store"`
+	MCPStdio    bool                    `json:"mcp_stdio"`
+	Transports  []string                `json:"transports"`
+	Error       string                  `json:"error,omitempty"`
+}
+
+func runDoctor(stdout io.Writer, options Options) int {
+	loaded, source, err := config.Load(config.Options{ExplicitPath: options.ConfigPath})
+	profile := options.Profile
+	if profile == "" {
+		profile = loaded.DefaultProfile
+	}
+	output := doctorOutput{
+		OK:      err == nil,
+		Command: "doctor",
+		Version: buildinfo.Version,
+		Profile: profile,
+		Config: doctorConfigOutput{
+			Found: source.Found,
+			Kind:  source.Kind,
+			Path:  source.Path,
+		},
+		SecretStore: doctorSecretStoreOutput{
+			Kind:      "keychain",
+			Available: runtime.GOOS == "darwin",
+		},
+		MCPStdio:   true,
+		Transports: []string{"fake", "graph", "ews", "owa"},
+	}
+	if err != nil {
+		output.Error = err.Error()
+		output.Config.Error = err.Error()
+		writeJSON(stdout, output)
+		return 1
+	}
+	return writeJSON(stdout, output)
+}
+
+type policyExplainActionOutput struct {
+	OK      bool                `json:"ok"`
+	Command string              `json:"command"`
+	Action  string              `json:"action"`
+	Matches []capability.Detail `json:"matches"`
+	Unknown *capability.Detail  `json:"unknown,omitempty"`
+}
+
+func runPolicyExplainAction(stdout io.Writer, actionName string) int {
+	matches := make([]capability.Detail, 0)
+	for _, definition := range builtinActionDefinitions() {
+		if strings.EqualFold(definition.Name, actionName) {
+			matches = append(matches, capability.FromDefinition(definition))
+		}
+	}
+	output := policyExplainActionOutput{
+		OK:      true,
+		Command: "policy explain",
+		Action:  actionName,
+		Matches: matches,
+	}
+	if len(matches) == 0 {
+		unknown := capability.FromDefinition(action.Definition{
+			Name:      actionName,
+			Transport: "",
+			Class:     policy.Unknown,
+			Level:     action.LevelDiscovered,
+		})
+		output.Unknown = &unknown
+	}
+	return writeJSON(stdout, output)
+}
+
+func builtinActionDefinitions() []action.Definition {
+	clients := []transport.Transport{
+		fake.New(),
+		graph.NewTransport(graph.Config{BaseURL: "https://graph.example.test/v1.0", SecretRef: secret.Ref("keychain:graph.example.test/access-token")}, nil, nil),
+		ews.NewTransport(ews.Config{EndpointURL: "https://mail.example.test/EWS/Exchange.asmx", Username: "DOMAIN\\user", SecretRef: secret.Ref("keychain:mail.example.test/DOMAIN\\user")}, nil, nil),
+		owa.NewTransport(owa.Config{BaseURL: "https://mail.example.test", Username: "DOMAIN\\user", SecretRef: secret.Ref("keychain:mail.example.test/DOMAIN\\user")}, nil, nil),
+	}
+	definitions := make([]action.Definition, 0)
+	for _, client := range clients {
+		definitions = append(definitions, client.Capabilities(context.Background()).Actions...)
+	}
+	return definitions
+}
+
+func runAuthCheck(stdout io.Writer, options Options, runtime Runtime) int {
+	if runtime.BuildTransport == nil {
+		return writeJSON(stdout, map[string]any{
+			"ok":      false,
+			"command": "auth check",
+			"error":   "transport profile is not configured",
+		})
+	}
+	client, profile, err := runtime.BuildTransport(context.Background(), options)
+	if err != nil {
+		writeJSON(stdout, map[string]any{
+			"ok":      false,
+			"command": "auth check",
+			"error":   err.Error(),
+		})
+		return 3
+	}
+	if profile == "" {
+		profile = "default"
+	}
+	result := client.Authenticate(context.Background(), profile)
+	code := 0
+	if !result.OK {
+		code = 3
+	}
+	writeJSON(stdout, map[string]any{
+		"ok":        result.OK,
+		"command":   "auth check",
+		"principal": result.Principal,
+		"error":     result.Error,
+	})
+	return code
+}
+
+func runAuthGraphDeviceCode(stdout io.Writer, stderr io.Writer, options Options, runtime Runtime) int {
+	if runtime.EnrollGraphDeviceCode == nil {
+		return writeJSON(stdout, graphDeviceCodeOutput{
+			OK:      false,
+			Command: "auth graph-device-code",
+			Error:   "graph device-code enrollment is not configured",
+		})
+	}
+	result, err := runtime.EnrollGraphDeviceCode(context.Background(), options, func(challenge GraphDeviceCodeChallenge) {
+		if challenge.Message != "" {
+			fmt.Fprintln(stderr, challenge.Message)
+			return
+		}
+		if challenge.VerificationURI != "" || challenge.UserCode != "" {
+			fmt.Fprintf(stderr, "Open %s and enter %s.\n", challenge.VerificationURI, challenge.UserCode)
+		}
+	})
+	if err != nil {
+		writeJSON(stdout, graphDeviceCodeOutput{
+			OK:      false,
+			Command: "auth graph-device-code",
+			Profile: result.Profile,
+			Error:   err.Error(),
+		})
+		return 3
+	}
+	return writeJSON(stdout, graphDeviceCodeOutput{
+		OK:        true,
+		Command:   "auth graph-device-code",
+		Profile:   result.Profile,
+		SecretRef: result.SecretRef,
+		TokenType: result.TokenType,
+		Scope:     result.Scope,
+		ExpiresAt: result.ExpiresAt,
+	})
+}
+
+func runOWADiscoverActions(args []string, options Options, runtime Runtime, stdout io.Writer, stderr io.Writer) int {
+	sources, err := parseDiscoverActionsArgs(args)
+	if err != nil {
+		fmt.Fprintln(stderr, err)
+		return 1
+	}
+	discovered := make([]string, 0)
+	diagnosticSources := make([]owa.DiscoverySourceDiagnostics, 0)
+	for _, path := range sources.Files {
+		data, err := os.ReadFile(path)
+		if err != nil {
+			fmt.Fprintf(stderr, "read discovery file: %v\n", err)
+			return 1
+		}
+		discovered = append(discovered, owa.DiscoverServiceActions(string(data))...)
+	}
+	if len(sources.URLs) > 0 {
+		if runtime.BuildTransport == nil {
+			fmt.Fprintln(stderr, "transport profile is not configured")
+			return 4
+		}
+		client, _, err := runtime.BuildTransport(context.Background(), options)
+		if err != nil {
+			fmt.Fprintf(stderr, "build transport: %v\n", err)
+			return 4
+		}
+		for _, source := range sources.URLs {
+			options := owa.DiscoveryOptions{
+				IncludeLinkedScripts:  sources.IncludeLinkedScripts,
+				FollowNavigationHints: sources.FollowNavigationHints,
+				ContinueOnHTTPError:   sources.Diagnostics,
+				MaxSources:            sources.MaxSources,
+			}
+			var actions []string
+			var err error
+			if sources.Diagnostics {
+				diagnoser, ok := client.(owaActionDiscoveryDiagnoser)
+				if !ok {
+					fmt.Fprintln(stderr, "configured transport does not support OWA discovery diagnostics")
+					return 4
+				}
+				diagnostics, diagnosticErr := diagnoser.DiscoverServiceActionsFromURLDiagnostics(context.Background(), source, options)
+				actions = diagnostics.Actions
+				diagnosticSources = append(diagnosticSources, diagnostics.Sources...)
+				err = diagnosticErr
+			} else {
+				discoverer, ok := client.(owaActionDiscoverer)
+				if !ok {
+					fmt.Fprintln(stderr, "configured transport does not support OWA action discovery")
+					return 4
+				}
+				actions, err = discoverer.DiscoverServiceActionsFromURLWithOptions(context.Background(), source, options)
+			}
+			if err != nil {
+				fmt.Fprintf(stderr, "discover OWA actions: %v\n", err)
+				return 4
+			}
+			discovered = append(discovered, actions...)
+		}
+	}
+	report := owa.CompareDiscoveredServiceActions(discovered)
+	if sources.Diagnostics {
+		return writeJSON(stdout, struct {
+			owa.DiscoveryReport
+			Sources []owa.DiscoverySourceDiagnostics `json:"sources"`
+		}{
+			DiscoveryReport: report,
+			Sources:         diagnosticSources,
+		})
+	}
+	return writeJSON(stdout, report)
+}
+
+func runOWADiscoverActionContext(args []string, options Options, runtime Runtime, stdout io.Writer, stderr io.Writer) int {
+	sources, err := parseDiscoverActionContextArgs(args)
+	if err != nil {
+		fmt.Fprintln(stderr, err)
+		return 1
+	}
+	if runtime.BuildTransport == nil {
+		fmt.Fprintln(stderr, "transport profile is not configured")
+		return 4
+	}
+	client, _, err := runtime.BuildTransport(context.Background(), options)
+	if err != nil {
+		fmt.Fprintf(stderr, "build transport: %v\n", err)
+		return 4
+	}
+	diagnoser, ok := client.(owaActionContextDiagnoser)
+	if !ok {
+		fmt.Fprintln(stderr, "configured transport does not support OWA action context discovery")
+		return 4
+	}
+	output := owa.ActionContextDiagnostics{
+		Action:  sources.Action,
+		Sources: []owa.ActionContextSourceDiagnostics{},
+	}
+	for _, source := range sources.URLs {
+		diagnostics, err := diagnoser.DiscoverServiceActionContextsFromURLDiagnostics(context.Background(), source, sources.Action, owa.DiscoveryOptions{
+			IncludeLinkedScripts:  sources.IncludeLinkedScripts,
+			FollowNavigationHints: sources.FollowNavigationHints,
+			ContinueOnHTTPError:   true,
+			MaxSources:            sources.MaxSources,
+		})
+		if err != nil {
+			fmt.Fprintf(stderr, "discover OWA action context: %v\n", err)
+			return 4
+		}
+		output.Sources = append(output.Sources, diagnostics.Sources...)
+	}
+	return writeJSON(stdout, output)
+}
+
+type discoverActionSources struct {
+	Files                 []string
+	URLs                  []string
+	IncludeLinkedScripts  bool
+	FollowNavigationHints bool
+	Diagnostics           bool
+	MaxSources            int
+}
+
+type discoverActionContextSources struct {
+	Action                string
+	URLs                  []string
+	IncludeLinkedScripts  bool
+	FollowNavigationHints bool
+	MaxSources            int
+}
+
+func parseDiscoverActionsArgs(args []string) (discoverActionSources, error) {
+	var sources discoverActionSources
+	for index := 0; index < len(args); index++ {
+		switch args[index] {
+		case "--file":
+			index++
+			if index >= len(args) {
+				return discoverActionSources{}, fmt.Errorf("--file requires a value")
+			}
+			sources.Files = append(sources.Files, args[index])
+		case "--url":
+			index++
+			if index >= len(args) {
+				return discoverActionSources{}, fmt.Errorf("--url requires a value")
+			}
+			sources.URLs = append(sources.URLs, args[index])
+		case "--include-linked-scripts":
+			sources.IncludeLinkedScripts = true
+		case "--follow-navigation-hints":
+			sources.FollowNavigationHints = true
+		case "--diagnostics":
+			sources.Diagnostics = true
+		case "--max-sources":
+			index++
+			if index >= len(args) {
+				return discoverActionSources{}, fmt.Errorf("--max-sources requires a value")
+			}
+			value, err := strconv.Atoi(args[index])
+			if err != nil || value <= 0 {
+				return discoverActionSources{}, fmt.Errorf("--max-sources requires a positive integer")
+			}
+			sources.MaxSources = value
+		default:
+			return discoverActionSources{}, fmt.Errorf("unknown discover-actions argument: %s", args[index])
+		}
+	}
+	if len(sources.Files) == 0 && len(sources.URLs) == 0 {
+		return discoverActionSources{}, fmt.Errorf("owa discover-actions requires --file or --url")
+	}
+	return sources, nil
+}
+
+func parseDiscoverActionContextArgs(args []string) (discoverActionContextSources, error) {
+	var sources discoverActionContextSources
+	for index := 0; index < len(args); index++ {
+		switch args[index] {
+		case "--action":
+			index++
+			if index >= len(args) {
+				return discoverActionContextSources{}, fmt.Errorf("--action requires a value")
+			}
+			sources.Action = args[index]
+		case "--url":
+			index++
+			if index >= len(args) {
+				return discoverActionContextSources{}, fmt.Errorf("--url requires a value")
+			}
+			sources.URLs = append(sources.URLs, args[index])
+		case "--include-linked-scripts":
+			sources.IncludeLinkedScripts = true
+		case "--follow-navigation-hints":
+			sources.FollowNavigationHints = true
+		case "--max-sources":
+			index++
+			if index >= len(args) {
+				return discoverActionContextSources{}, fmt.Errorf("--max-sources requires a value")
+			}
+			value, err := strconv.Atoi(args[index])
+			if err != nil || value <= 0 {
+				return discoverActionContextSources{}, fmt.Errorf("--max-sources requires a positive integer")
+			}
+			sources.MaxSources = value
+		default:
+			return discoverActionContextSources{}, fmt.Errorf("unknown discover-action-context argument: %s", args[index])
+		}
+	}
+	if sources.Action == "" {
+		return discoverActionContextSources{}, fmt.Errorf("owa discover-action-context requires --action")
+	}
+	if len(sources.URLs) == 0 {
+		return discoverActionContextSources{}, fmt.Errorf("owa discover-action-context requires --url")
+	}
+	return sources, nil
+}
+
+func parseOptions(args []string) (Options, []string, error) {
+	var options Options
+	commandArgs := make([]string, 0, len(args))
+	for index := 0; index < len(args); index++ {
+		switch args[index] {
+		case "--config":
+			index++
+			if index >= len(args) {
+				return Options{}, nil, fmt.Errorf("--config requires a value")
+			}
+			options.ConfigPath = args[index]
+		case "--profile":
+			index++
+			if index >= len(args) {
+				return Options{}, nil, fmt.Errorf("--profile requires a value")
+			}
+			options.Profile = args[index]
+		default:
+			commandArgs = append(commandArgs, args[index])
+		}
+	}
+	return options, commandArgs, nil
 }
 
 func writeJSON(stdout io.Writer, payload any) int {

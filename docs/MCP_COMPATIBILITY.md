@@ -1,0 +1,124 @@
+# MCP Compatibility Policy
+
+Compatibility version: 0.1
+
+This policy defines the public MCP contract for local agents such as OpenCode,
+Codex, and other MCP-capable clients. It is generic and public-safe: enterprise
+hosts, accounts, credentials, cookies, canary values, and mailbox content do not
+belong in this document.
+
+## Stable Tool Surface
+
+Compatibility version `0.1` includes these tool names:
+
+- `outlook.auth_check`
+- `outlook.capabilities`
+- `outlook.mail_search`
+- `outlook.mail_fetch_metadata`
+- `outlook.mail_fetch_body`
+- `outlook.mail_list_attachments`
+- `outlook.mail_fetch_attachment`
+- `outlook.mail_create_draft`
+- `outlook.mail_move_to_deleted_items`
+- `outlook.mail_rules_list`
+- `outlook.mailbox_settings_get`
+- `outlook.calendar_list`
+- `outlook.calendar_availability`
+- `outlook.action_dry_run`
+- `outlook.action_confirm`
+- `outlook.raw_action`
+
+Tool names are stable for the compatibility version. A client that can call this
+surface can discover transport-specific actions through `outlook.capabilities`
+without hard-coding private transport details.
+
+## Additive Changes
+
+The following changes are additive within a compatibility version:
+
+- adding optional input fields;
+- adding output fields;
+- adding new tools;
+- adding new raw transport actions to `outlook.capabilities`;
+- adding new capability detail fields;
+- adding new safety classes only when older clients can treat them as
+  `unknown`.
+
+Compatibility version `0.1` includes the additive optional `mailbox` input on
+high-level mail and calendar tools. Transports that support delegated or shared
+mailbox targeting may use it; transports that do not support it keep their
+existing behavior or return a normal transport error.
+
+Compatibility version `0.1` also includes additive tools for mailbox rules and
+mailbox settings: read-metadata `outlook.mail_rules_list`,
+dry-run-confirmed settings/rules `outlook.mail_rule_set_enabled`, and
+read-metadata `outlook.mailbox_settings_get`. The set-enabled helper exposes a
+narrow existing-rule toggle without opening arbitrary rule/settings writes.
+
+Clients must ignore unknown output fields and unknown capability detail fields.
+Servers must keep existing fields present with compatible meanings.
+
+## Breaking Changes
+
+The following changes require a new compatibility version:
+
+- removing or renaming a stable tool;
+- changing a required input field name or type;
+- changing the meaning of an existing output field;
+- relaxing confirmation, unsafe-mode, explicit-target, or redaction
+  requirements in a way that changes safety expectations;
+- changing confirmation-token binding semantics;
+- changing default transport selection in a way that can silently hit a private
+  mailbox instead of the fake transport.
+
+Breaking changes must be documented in `docs/SPEC.md` and in this compatibility
+policy before release.
+
+## Deprecation Policy
+
+Deprecated tools or fields must stay available for at least one compatibility
+version after the replacement is documented. The replacement path must include:
+
+- the new tool or field name;
+- expected agent migration steps;
+- whether the old path remains safe to call;
+- whether `outlook.capabilities` exposes enough metadata for clients to choose
+  the new path.
+
+Deprecation must not remove dry-run, confirmation, unsafe-mode, redaction, or
+explicit-target protections.
+
+## Capability Metadata
+
+`outlook.capabilities` must remain the discovery entrypoint. It returns:
+
+- `compatibility_version`: the stable MCP contract version implemented by this
+  server, currently `0.1`;
+- `actions`: a backwards-compatible name-only list;
+- `details`: policy-aware entries with `name`, `transport`, `safety_class`,
+  `level`, direct-execution gates, explicit-target/intent requirements, and
+  `execution_route`.
+
+Agents should prefer `details` when available and fall back to `actions` only
+for display or simple availability checks.
+
+## Raw Action Policy
+
+Raw transport actions are part of the compatibility contract through
+`outlook.raw_action`, `outlook.action_dry_run`, and `outlook.action_confirm`.
+The raw action list itself can grow as transports discover more actions.
+
+Compatibility guarantees:
+
+- read-only raw actions may execute directly when policy allows;
+- body and attachment reads require explicit targets;
+- broad reversible actions require dry-run and confirmation;
+- destructive and unknown actions require explicit unsafe mode where policy says
+  so;
+- payload-sensitive reversible forms, such as raw `DeleteItem` or
+  `DeleteFolder` with `DeleteType=MoveToDeletedItems`, may use the reversible
+  dry-run/confirm route while hard-delete and soft-delete forms stay
+  destructive;
+- confirmation tokens are exact-action, exact-payload, transport, profile,
+  unsafe-mode, and expiry bound;
+- raw responses must pass redaction before returning through MCP.

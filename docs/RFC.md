@@ -87,6 +87,16 @@ Unknown or unsafe actions must not be silently blocked forever. They should be
 available through explicit unsafe mode plus dry-run/confirmation when mutation
 risk exists.
 
+## MVP Boundary
+
+`docs/MVP_READINESS.md` defines the boundary between the public core MVP and
+external enterprise rollout gates. In short, the public core owns the Go
+CLI/MCP runtime, safety policy, fake transport, generic Graph/EWS adapters,
+generic OWA-like action registry, workflow skills, release artifacts, and
+public-safe verification. Tenant-specific authorization, admin consent,
+enterprise distribution, and organization-managed secret scanning remain
+deployment responsibilities.
+
 ## Open Questions
 
 - Whether the first public release includes Graph/EWS adapters or only fake plus
@@ -94,4 +104,3 @@ risk exists.
 - Whether the private OWA adapter is compiled into a private binary or loaded as
   a separate module/process.
 - Which repository owner should host the long-lived GitHub repository.
-
