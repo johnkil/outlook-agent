@@ -255,6 +255,71 @@ func TestActionConfirmAllowsRawDeleteItemMoveToDeletedItemsWithoutUnsafe(t *test
 	}
 }
 
+func TestActionConfirmReturnsTransportFailureWithoutData(t *testing.T) {
+	client := newFailingResponseTransport(action.Definition{Name: "mail.move_to_deleted_items", Transport: "test", Class: policy.ReversibleBulk, Level: action.LevelHighLevelMCPTool})
+	runtime := NewRuntime(client)
+	payload := map[string]any{"ids": []any{"msg-1"}}
+	token, err := runtime.confirm.Generate(bindingFor(client, "default", "mail.move_to_deleted_items", payload, false), 10*time.Minute)
+	if err != nil {
+		t.Fatalf("generate confirmation token: %v", err)
+	}
+
+	_, output, err := actionConfirmHandler(runtime)(context.Background(), nil, ActionConfirmInput{
+		ConfirmToken: token,
+		Action:       "mail.move_to_deleted_items",
+		Payload:      payload,
+	})
+	if err != nil {
+		t.Fatalf("confirm handler: %v", err)
+	}
+	if output.OK || output.Error != "transport failed" || output.Data != nil {
+		t.Fatalf("expected transport failure without data to be returned, got %#v", output)
+	}
+}
+
+func TestMailMoveToDeletedItemsReturnsTransportFailureWithoutData(t *testing.T) {
+	client := newFailingResponseTransport(action.Definition{Name: "mail.move_to_deleted_items", Transport: "test", Class: policy.ReversibleBulk, Level: action.LevelHighLevelMCPTool})
+	runtime := NewRuntime(client)
+	payload := map[string]any{"ids": []any{"msg-1"}}
+	token, err := runtime.confirm.Generate(bindingFor(client, "default", "mail.move_to_deleted_items", payload, false), 10*time.Minute)
+	if err != nil {
+		t.Fatalf("generate confirmation token: %v", err)
+	}
+
+	_, output, err := mailMoveToDeletedItemsHandler(runtime)(context.Background(), nil, MailMoveToDeletedItemsInput{
+		IDs:          []string{"msg-1"},
+		ConfirmToken: token,
+	})
+	if err != nil {
+		t.Fatalf("move handler: %v", err)
+	}
+	if output.OK || output.Error != "transport failed" || output.Data != nil {
+		t.Fatalf("expected transport failure without data to be returned, got %#v", output)
+	}
+}
+
+func TestMailRuleSetEnabledReturnsTransportFailureWithoutData(t *testing.T) {
+	client := newFailingResponseTransport(action.Definition{Name: "mail.rules.set_enabled", Transport: "test", Class: policy.SettingsOrRules, Level: action.LevelHighLevelMCPTool})
+	runtime := NewRuntime(client)
+	payload := map[string]any{"id": "rule-1", "enabled": false, "folder_id": ""}
+	token, err := runtime.confirm.Generate(bindingFor(client, "default", "mail.rules.set_enabled", payload, false), 10*time.Minute)
+	if err != nil {
+		t.Fatalf("generate confirmation token: %v", err)
+	}
+
+	_, output, err := mailRuleSetEnabledHandler(runtime)(context.Background(), nil, MailRuleSetEnabledInput{
+		RuleID:       "rule-1",
+		Enabled:      false,
+		ConfirmToken: token,
+	})
+	if err != nil {
+		t.Fatalf("rule set-enabled handler: %v", err)
+	}
+	if output.OK || output.Error != "transport failed" || output.Data != nil {
+		t.Fatalf("expected transport failure without data to be returned, got %#v", output)
+	}
+}
+
 func TestCapabilitiesHandlerReturnsPolicyMetadata(t *testing.T) {
 	client := newRecordingTransport(action.Definition{
 		Name:      "DeleteItem",
@@ -375,6 +440,21 @@ func TestRawActionAllowsSafeMetadataAction(t *testing.T) {
 	}
 }
 
+func TestRawActionReturnsTransportFailureWithoutData(t *testing.T) {
+	runtime := NewRuntime(newFailingResponseTransport(action.Definition{Name: "mail.fetch_metadata", Transport: "test", Class: policy.ReadMetadata, Level: action.LevelHighLevelMCPTool}))
+
+	_, output, err := rawActionHandler(runtime)(context.Background(), nil, RawActionInput{
+		Action:  "mail.fetch_metadata",
+		Payload: map[string]any{"id": "msg-1"},
+	})
+	if err != nil {
+		t.Fatalf("raw action handler: %v", err)
+	}
+	if output.OK || output.Error != "transport failed" || output.Data != nil {
+		t.Fatalf("expected transport failure without data to be returned, got %#v", output)
+	}
+}
+
 type recordingTransport struct {
 	definition action.Definition
 	executed   bool
@@ -402,5 +482,33 @@ func (client *recordingTransport) Execute(context.Context, transport.ActionReque
 }
 
 func (client *recordingTransport) DryRun(context.Context, transport.ActionRequest) transport.DryRunSummary {
+	return transport.DryRunSummary{Action: client.definition.Name, Count: 1, RequiresConfirmation: true}
+}
+
+type failingResponseTransport struct {
+	definition action.Definition
+}
+
+func newFailingResponseTransport(definition action.Definition) *failingResponseTransport {
+	return &failingResponseTransport{definition: definition}
+}
+
+func (client *failingResponseTransport) Name() string {
+	return "test"
+}
+
+func (client *failingResponseTransport) Authenticate(context.Context, string) transport.AuthResult {
+	return transport.AuthResult{OK: true}
+}
+
+func (client *failingResponseTransport) Capabilities(context.Context) transport.CapabilitySet {
+	return transport.CapabilitySet{Actions: []action.Definition{client.definition}}
+}
+
+func (client *failingResponseTransport) Execute(context.Context, transport.ActionRequest) transport.ActionResponse {
+	return transport.ActionResponse{OK: false, Error: "transport failed"}
+}
+
+func (client *failingResponseTransport) DryRun(context.Context, transport.ActionRequest) transport.DryRunSummary {
 	return transport.DryRunSummary{Action: client.definition.Name, Count: 1, RequiresConfirmation: true}
 }

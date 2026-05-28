@@ -401,8 +401,7 @@ func mailMoveToDeletedItemsHandler(runtime *Runtime) func(context.Context, *mcp.
 			return nil, ActionResultOutput{OK: false, Error: "confirmation token is invalid"}, nil
 		}
 		response := runtime.client.Execute(ctx, transport.ActionRequest{Name: "mail.move_to_deleted_items", Payload: payload})
-		redacted := redact.Value(response.Data).(map[string]any)
-		return nil, ActionResultOutput{OK: response.OK, Data: redacted, Error: response.Error}, nil
+		return nil, actionResultFromResponse(response), nil
 	}
 }
 
@@ -435,8 +434,7 @@ func mailRuleSetEnabledHandler(runtime *Runtime) func(context.Context, *mcp.Call
 			return nil, ActionResultOutput{OK: false, Error: "confirmation token is invalid"}, nil
 		}
 		response := runtime.client.Execute(ctx, transport.ActionRequest{Name: "mail.rules.set_enabled", Payload: payload})
-		redacted := redact.Value(response.Data).(map[string]any)
-		return nil, ActionResultOutput{OK: response.OK, Data: redacted, Error: response.Error}, nil
+		return nil, actionResultFromResponse(response), nil
 	}
 }
 
@@ -492,6 +490,18 @@ func transportResponseError(response transport.ActionResponse) error {
 	return errors.New(message)
 }
 
+func actionResultFromResponse(response transport.ActionResponse) ActionResultOutput {
+	output := ActionResultOutput{OK: response.OK, Error: response.Error}
+	if !response.OK || response.Data == nil {
+		return output
+	}
+	redacted, ok := redact.Value(response.Data).(map[string]any)
+	if ok {
+		output.Data = redacted
+	}
+	return output
+}
+
 func dryRunHandler(runtime *Runtime) func(context.Context, *mcp.CallToolRequest, DryRunInput) (*mcp.CallToolResult, DryRunOutput, error) {
 	return func(ctx context.Context, _ *mcp.CallToolRequest, input DryRunInput) (*mcp.CallToolResult, DryRunOutput, error) {
 		summary := runtime.client.DryRun(ctx, transport.ActionRequest{Name: input.Action, Payload: input.Payload, UnsafeMode: input.UnsafeMode})
@@ -533,8 +543,7 @@ func actionConfirmHandler(runtime *Runtime) func(context.Context, *mcp.CallToolR
 			return nil, ActionResultOutput{OK: false, Error: decision.Reason}, nil
 		}
 		response := runtime.client.Execute(ctx, transport.ActionRequest{Name: input.Action, Payload: input.Payload, UnsafeMode: input.UnsafeMode})
-		redacted := redact.Value(response.Data).(map[string]any)
-		return nil, ActionResultOutput{OK: response.OK, Data: redacted, Error: response.Error}, nil
+		return nil, actionResultFromResponse(response), nil
 	}
 }
 
@@ -551,8 +560,7 @@ func rawActionHandler(runtime *Runtime) func(context.Context, *mcp.CallToolReque
 			return nil, ActionResultOutput{OK: false, Error: decision.Reason}, nil
 		}
 		response := runtime.client.Execute(ctx, transport.ActionRequest{Name: input.Action, Payload: input.Payload, UnsafeMode: input.UnsafeMode})
-		redacted := redact.Value(response.Data).(map[string]any)
-		return nil, ActionResultOutput{OK: response.OK, Data: redacted, Error: response.Error}, nil
+		return nil, actionResultFromResponse(response), nil
 	}
 }
 
