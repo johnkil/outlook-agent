@@ -51,7 +51,17 @@ policy outside this repository.
 
 ## Tag Release
 
-Run the local checks first:
+Run the local CI mirror first. It matches the hosted CI gates and is the
+authoritative fallback when GitHub Actions cannot start:
+
+```bash
+GOPATH=$PWD/.cache/go GOCACHE=$PWD/.cache/go-build GOMODCACHE=$PWD/.cache/go-mod scripts/ci-local.sh
+```
+
+The script runs formatting, tests, build, whitespace, public-safety, and
+`govulncheck` gates.
+
+For manual debugging, the equivalent core checks are:
 
 ```bash
 scripts/public-safety-check.sh

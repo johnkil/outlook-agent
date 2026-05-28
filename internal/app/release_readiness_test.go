@@ -11,9 +11,18 @@ func TestReleaseReadinessArtifactsExist(t *testing.T) {
 	requiredFiles := map[string][]string{
 		filepath.Join("..", "..", "docs", "RELEASE.md"): {
 			"# Release Process",
+			"scripts/ci-local.sh",
 			"scripts/release-build.sh",
 			"SHA256SUMS.txt",
 			"OUTLOOK_AGENT_SIGN_RELEASE",
+		},
+		filepath.Join("..", "..", "scripts", "ci-local.sh"): {
+			"-path \"./.cache\"",
+			"gofmt -l",
+			"go test -count=1 ./...",
+			"go build",
+			"scripts/public-safety-check.sh",
+			"govulncheck",
 		},
 		filepath.Join("..", "..", "scripts", "release-build.sh"): {
 			"GOOS",
