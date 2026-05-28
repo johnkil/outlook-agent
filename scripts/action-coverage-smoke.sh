@@ -109,6 +109,27 @@ if [[ -n "${OUTLOOK_AGENT_OPENCODE_LIVE_DIR:-}" ]]; then
     done <<< "$forbidden_tools"
     exit 1
   fi
+  jq -s -e '
+    def part: .part // .;
+    def dry_run_call($unsafe):
+      [
+        .[]
+        | select(.type == "tool_use" or .type == "tool")
+        | (part) as $part
+        | select($part.tool == "outlook-agent_outlook_action_dry_run")
+        | select($part.state.status == "completed")
+        | select($part.state.input.action == "raw.DeleteItem")
+        | select($part.state.input.payload.Body.DeleteType == "HardDelete")
+        | select($part.state.input.payload.Body.ItemIds[0].Id == "dry-run-item")
+        | select($part.state.input.unsafe_mode == $unsafe)
+      ]
+      | length;
+    dry_run_call(false) >= 1
+    and dry_run_call(true) >= 1
+  ' "$opencode_jsonl" >/dev/null || {
+    echo "missing destructive DeleteItem dry-run checks" >&2
+    exit 1
+  }
   opencode_ok="true"
 fi
 
