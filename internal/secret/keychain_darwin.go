@@ -28,6 +28,21 @@ var securityFindGenericPassword = func(ctx context.Context, service string, acco
 	).Output()
 }
 
+var securityAddGenericPassword = func(ctx context.Context, service string, account string, value Value) error {
+	return exec.CommandContext(
+		ctx,
+		"/usr/bin/security",
+		"add-generic-password",
+		"-U",
+		"-s",
+		service,
+		"-a",
+		account,
+		"-w",
+		string(value),
+	).Run()
+}
+
 func (store *KeychainStore) Get(ctx context.Context, ref Ref) (Value, error) {
 	parsed, err := ParseKeychainRef(ref)
 	if err != nil {
@@ -38,4 +53,15 @@ func (store *KeychainStore) Get(ctx context.Context, ref Ref) (Value, error) {
 		return "", fmt.Errorf("%w: %s", ErrNotFound, ref)
 	}
 	return Value(strings.TrimRight(string(output), "\r\n")), nil
+}
+
+func (store *KeychainStore) Put(ctx context.Context, ref Ref, value Value) error {
+	parsed, err := ParseKeychainRef(ref)
+	if err != nil {
+		return err
+	}
+	if err := securityAddGenericPassword(ctx, parsed.Service, parsed.Account, value); err != nil {
+		return fmt.Errorf("store keychain secret: %s", ref)
+	}
+	return nil
 }

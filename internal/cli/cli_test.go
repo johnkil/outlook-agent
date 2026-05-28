@@ -745,3 +745,66 @@ func TestAuthCheckReportsTransportBuildError(t *testing.T) {
 		t.Fatalf("unexpected error: %#v", payload)
 	}
 }
+
+func TestAuthGraphDeviceCodeDispatchesRuntime(t *testing.T) {
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	var gotOptions Options
+	var sawChallenge bool
+
+	code := RunWithRuntime([]string{"auth", "graph-device-code", "--config", "/tmp/outlook-agent.json", "--profile", "work"}, &stdout, &stderr, Runtime{
+		EnrollGraphDeviceCode: func(_ context.Context, options Options, onChallenge func(GraphDeviceCodeChallenge)) (GraphDeviceCodeResult, error) {
+			gotOptions = options
+			onChallenge(GraphDeviceCodeChallenge{
+				VerificationURI: "https://microsoft.com/devicelogin",
+				UserCode:        "ABCD-EFGH",
+				Message:         "Open https://microsoft.com/devicelogin and enter ABCD-EFGH.",
+				ExpiresIn:       900,
+				Interval:        5,
+			})
+			sawChallenge = true
+			return GraphDeviceCodeResult{
+				Profile:   "work",
+				SecretRef: "keychain:graph.microsoft.com/access-token",
+				TokenType: "Bearer",
+				Scope:     "offline_access Mail.Read Calendars.Read",
+				ExpiresAt: "2026-01-02T15:04:05Z",
+			}, nil
+		},
+	})
+
+	if code != 0 {
+		t.Fatalf("expected exit code 0, got %d, stderr=%s", code, stderr.String())
+	}
+	if gotOptions.ConfigPath != "/tmp/outlook-agent.json" || gotOptions.Profile != "work" {
+		t.Fatalf("expected graph device-code options to be forwarded, got %#v", gotOptions)
+	}
+	if !sawChallenge {
+		t.Fatal("expected device-code challenge sink to be called")
+	}
+	if !strings.Contains(stderr.String(), "https://microsoft.com/devicelogin") || !strings.Contains(stderr.String(), "ABCD-EFGH") {
+		t.Fatalf("expected human device-code instructions on stderr, got %q", stderr.String())
+	}
+
+	var payload struct {
+		OK        bool   `json:"ok"`
+		Command   string `json:"command"`
+		Profile   string `json:"profile"`
+		SecretRef string `json:"secret_ref"`
+		TokenType string `json:"token_type"`
+		Scope     string `json:"scope"`
+		ExpiresAt string `json:"expires_at"`
+	}
+	if err := json.Unmarshal(stdout.Bytes(), &payload); err != nil {
+		t.Fatalf("device-code output is not JSON: %v; output=%s", err, stdout.String())
+	}
+	if !payload.OK || payload.Command != "auth graph-device-code" || payload.Profile != "work" {
+		t.Fatalf("unexpected device-code output: %#v", payload)
+	}
+	if payload.SecretRef != "keychain:graph.microsoft.com/access-token" || payload.TokenType != "Bearer" {
+		t.Fatalf("unexpected sanitized token metadata: %#v", payload)
+	}
+	if strings.Contains(stdout.String(), "access_token") || strings.Contains(stdout.String(), "refresh_token") {
+		t.Fatalf("device-code output must not contain raw token fields: %s", stdout.String())
+	}
+}

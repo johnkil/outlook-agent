@@ -29,8 +29,25 @@ type Options struct {
 }
 
 type Runtime struct {
-	BuildTransport func(context.Context, Options) (transport.Transport, string, error)
-	RunMCP         func(context.Context, Options) error
+	BuildTransport        func(context.Context, Options) (transport.Transport, string, error)
+	EnrollGraphDeviceCode func(context.Context, Options, func(GraphDeviceCodeChallenge)) (GraphDeviceCodeResult, error)
+	RunMCP                func(context.Context, Options) error
+}
+
+type GraphDeviceCodeChallenge struct {
+	VerificationURI string
+	UserCode        string
+	Message         string
+	ExpiresIn       int
+	Interval        int
+}
+
+type GraphDeviceCodeResult struct {
+	Profile   string
+	SecretRef string
+	TokenType string
+	Scope     string
+	ExpiresAt string
 }
 
 type owaActionDiscoverer interface {
@@ -86,6 +103,9 @@ func RunWithRuntime(args []string, stdout io.Writer, stderr io.Writer, runtime R
 		if len(commandArgs) == 2 && commandArgs[1] == "check" {
 			return runAuthCheck(stdout, options, runtime)
 		}
+		if len(commandArgs) == 2 && commandArgs[1] == "graph-device-code" {
+			return runAuthGraphDeviceCode(stdout, stderr, options, runtime)
+		}
 	case "mcp":
 		if runtime.RunMCP == nil {
 			fmt.Fprintln(stderr, "mcp runner is not configured")
@@ -100,6 +120,17 @@ func RunWithRuntime(args []string, stdout io.Writer, stderr io.Writer, runtime R
 
 	fmt.Fprintf(stderr, "unknown command: %s\n", commandArgs[0])
 	return 1
+}
+
+type graphDeviceCodeOutput struct {
+	OK        bool   `json:"ok"`
+	Command   string `json:"command"`
+	Profile   string `json:"profile,omitempty"`
+	SecretRef string `json:"secret_ref,omitempty"`
+	TokenType string `json:"token_type,omitempty"`
+	Scope     string `json:"scope,omitempty"`
+	ExpiresAt string `json:"expires_at,omitempty"`
+	Error     string `json:"error,omitempty"`
 }
 
 type doctorConfigOutput struct {
@@ -237,6 +268,43 @@ func runAuthCheck(stdout io.Writer, options Options, runtime Runtime) int {
 		"error":     result.Error,
 	})
 	return code
+}
+
+func runAuthGraphDeviceCode(stdout io.Writer, stderr io.Writer, options Options, runtime Runtime) int {
+	if runtime.EnrollGraphDeviceCode == nil {
+		return writeJSON(stdout, graphDeviceCodeOutput{
+			OK:      false,
+			Command: "auth graph-device-code",
+			Error:   "graph device-code enrollment is not configured",
+		})
+	}
+	result, err := runtime.EnrollGraphDeviceCode(context.Background(), options, func(challenge GraphDeviceCodeChallenge) {
+		if challenge.Message != "" {
+			fmt.Fprintln(stderr, challenge.Message)
+			return
+		}
+		if challenge.VerificationURI != "" || challenge.UserCode != "" {
+			fmt.Fprintf(stderr, "Open %s and enter %s.\n", challenge.VerificationURI, challenge.UserCode)
+		}
+	})
+	if err != nil {
+		writeJSON(stdout, graphDeviceCodeOutput{
+			OK:      false,
+			Command: "auth graph-device-code",
+			Profile: result.Profile,
+			Error:   err.Error(),
+		})
+		return 3
+	}
+	return writeJSON(stdout, graphDeviceCodeOutput{
+		OK:        true,
+		Command:   "auth graph-device-code",
+		Profile:   result.Profile,
+		SecretRef: result.SecretRef,
+		TokenType: result.TokenType,
+		Scope:     result.Scope,
+		ExpiresAt: result.ExpiresAt,
+	})
 }
 
 func runOWADiscoverActions(args []string, options Options, runtime Runtime, stdout io.Writer, stderr io.Writer) int {

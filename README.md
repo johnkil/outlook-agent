@@ -108,9 +108,21 @@ from config:
 `settings.client_id`, `settings.tenant`, and `settings.scopes` are used only
 when the referenced secret contains a JSON token credential whose access token
 has expired. `settings.scopes` may be a JSON array or a space-separated string.
-`settings.token_url` is also supported for advanced operators and tests; normal
-tenant profiles derive the Microsoft identity platform token URL from
-`settings.tenant`.
+`settings.token_url` and `settings.device_code_url` are also supported for
+advanced operators and tests; normal tenant profiles derive the Microsoft
+identity platform token URLs from `settings.tenant`.
+
+To acquire the initial token credential for a private Graph profile, run:
+
+```bash
+outlook-agent --config .local/outlook-agent.json --profile work auth graph-device-code
+outlook-agent --config .local/outlook-agent.json --profile work auth check
+```
+
+The command writes device-code sign-in instructions to stderr, polls the
+Microsoft identity platform token endpoint, and stores the resulting JSON token
+credential behind `secret_ref`. Stdout contains sanitized metadata only:
+profile, secret reference, token type, scope, and expiration.
 
 The JSON token credential shape belongs in the referenced secret store only,
 never in the profile file:
@@ -144,8 +156,9 @@ creation saves without sending; move-to-Deleted-Items uses Graph's reversible
 message move. Calendar metadata uses `/me/calendarView` and
 `/me/calendar/getSchedule`. Raw `GraphRequest` is intentionally classified as
 destructive and requires unsafe dry-run plus exact confirmation because an
-arbitrary Graph request can send, mutate, or delete data. Token acquisition and
-admin consent stay outside the public repository.
+arbitrary Graph request can send, mutate, or delete data. App registration,
+admin consent, and live tenant policy approval stay outside the public
+repository.
 
 ## Product Shape
 

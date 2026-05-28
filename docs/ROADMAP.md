@@ -70,13 +70,14 @@ Status: implemented initial slice.
 
 - Fake transport for tests and examples.
 - Graph transport where delegated OAuth is available: initial bearer-token
-  compatibility, refresh-capable JSON token credential handling,
-  `GetMailFolder`, `mail.search`, `mail.fetch_metadata`, `mail.fetch_body`,
-  `mail.list_attachments`, `mail.fetch_attachment`, `mail.create_draft`,
-  `mail.move_to_deleted_items`, `calendar.list`, and `calendar.availability`
-  actions implemented; guarded raw `GraphRequest` implemented as an unsafe
-  dry-run/confirm escape hatch; OAuth acquisition, admin consent, live token
-  storage, and typed rule/settings/shared-mailbox shortcuts remain.
+  compatibility, device-code OAuth acquisition, refresh-capable JSON token
+  credential handling, `GetMailFolder`, `mail.search`, `mail.fetch_metadata`,
+  `mail.fetch_body`, `mail.list_attachments`, `mail.fetch_attachment`,
+  `mail.create_draft`, `mail.move_to_deleted_items`, `calendar.list`, and
+  `calendar.availability` actions implemented; guarded raw `GraphRequest`
+  implemented as an unsafe dry-run/confirm escape hatch; admin consent, live
+  token storage validation, and typed rule/settings/shared-mailbox shortcuts
+  remain.
 - EWS transport where Exchange policy allows it: initial SOAP `GetFolder`
   read-metadata probe/action implemented; guarded raw `EWSRequest` implemented
   as an unsafe dry-run/confirm escape hatch; typed high-level EWS workflows and

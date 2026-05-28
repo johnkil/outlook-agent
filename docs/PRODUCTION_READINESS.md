@@ -32,7 +32,7 @@ Status values:
 | Security and redaction | Partial for production operations | Runtime policy classes, explicit target rules, dry-run tokens, confirmation binding, unsafe requirements, dry-run count summaries for attachment/folder/rule/config payload shapes, sanitized dry-run payload examples for all 26 mutating raw OWA actions, raw Graph/EWS response content redaction, and redaction have unit or MCP tests; CI now adds a public-safety check and dependency vulnerability scan baseline; `docs/OPERATIONS.md` documents incident response, credential revocation, organization secret scanning, and enterprise config boundaries. |
 | Workflow skills | Ready initial set | `skills/` contains mail and calendar workflow skills for triage, reply drafting, task extraction, subscription cleanup, daily brief, meeting prep, and freeing time. |
 | Release readiness | Partial | `docs/RELEASE.md`, `docs/OPERATIONS.md`, `scripts/release-build.sh`, `.github/workflows/ci.yml`, and `.github/workflows/release.yml` define cross-platform archives, checksums, optional signing, signing-key publication/rotation, upgrade validation, rollback, CI, and tag-driven publishing; publishing an enterprise installer or package-manager wrapper is still an operator-channel task. |
-| Graph/EWS adapters | Partial | EWS has an initial SOAP adapter with config wiring, a read-metadata `GetFolder` auth probe/action, and a guarded raw `EWSRequest` SOAP escape hatch covered by unit tests; the tested live endpoint returned an empty/EOF response before SOAP auth completed, so environment enablement or alternate auth remains unresolved. Graph has an initial REST adapter with config wiring, static bearer-token compatibility, refresh-capable JSON token credential handling, high-level mail/calendar workflows (`GetMailFolder`, `mail.search`, `mail.fetch_metadata`, `mail.fetch_body`, `mail.list_attachments`, `mail.fetch_attachment`, `mail.create_draft`, `mail.move_to_deleted_items`, `calendar.list`, `calendar.availability`), and a guarded raw `GraphRequest` escape hatch covered by unit tests; token refresh is unit-tested, but live Graph probing remains blocked on app registration, admin consent, and live token storage. |
+| Graph/EWS adapters | Partial | EWS has an initial SOAP adapter with config wiring, a read-metadata `GetFolder` auth probe/action, and a guarded raw `EWSRequest` SOAP escape hatch covered by unit tests; the tested live endpoint returned an empty/EOF response before SOAP auth completed, so environment enablement or alternate auth remains unresolved. Graph has an initial REST adapter with config wiring, static bearer-token compatibility, device-code OAuth enrollment, refresh-capable JSON token credential handling, high-level mail/calendar workflows (`GetMailFolder`, `mail.search`, `mail.fetch_metadata`, `mail.fetch_body`, `mail.list_attachments`, `mail.fetch_attachment`, `mail.create_draft`, `mail.move_to_deleted_items`, `calendar.list`, `calendar.availability`), and a guarded raw `GraphRequest` escape hatch covered by unit tests; token acquisition/storage and refresh are unit-tested, but live Graph smoke evidence still requires enterprise app approval, admin consent, and controlled live token storage. |
 
 ## Current Evidence
 
@@ -80,8 +80,8 @@ listed in `docs/PRODUCTION_BACKLOG.md`.
 - Protocol breadth:
   - typed Graph high-level workflows beyond the initial mail/calendar set,
     such as rule/settings and shared mailbox shortcuts;
-  - Graph token acquisition, live token storage, and admin
-    consent/permission enablement;
+  - Graph live token storage, `auth check`, read-only smoke evidence, and
+    admin consent/permission enablement;
   - typed EWS high-level workflows beyond the initial `GetFolder`
     read-metadata probe/action and raw `EWSRequest` escape hatch;
   - EWS live environment/auth enablement for the tested endpoint.

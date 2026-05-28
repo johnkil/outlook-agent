@@ -40,3 +40,29 @@ func TestKeychainStoreTrimsTrailingNewlines(t *testing.T) {
 		t.Fatalf("expected trimmed secret value, got %q", value)
 	}
 }
+
+func TestKeychainStorePutStoresGenericPassword(t *testing.T) {
+	original := securityAddGenericPassword
+	t.Cleanup(func() { securityAddGenericPassword = original })
+
+	var gotService string
+	var gotAccount string
+	var gotValue Value
+	securityAddGenericPassword = func(_ context.Context, service string, account string, value Value) error {
+		gotService = service
+		gotAccount = account
+		gotValue = value
+		return nil
+	}
+
+	err := NewKeychainStore().Put(context.Background(), Ref("keychain:svc/account"), Value("secret-value"))
+	if err != nil {
+		t.Fatalf("put keychain secret: %v", err)
+	}
+	if gotService != "svc" || gotAccount != "account" || gotValue != "secret-value" {
+		t.Fatalf("unexpected keychain put args: service=%q account=%q value=%q", gotService, gotAccount, gotValue)
+	}
+	if gotValue.String() != Redacted {
+		t.Fatalf("expected keychain value stringer to redact, got %q", gotValue.String())
+	}
+}

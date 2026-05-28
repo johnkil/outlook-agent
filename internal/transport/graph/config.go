@@ -17,10 +17,11 @@ type Config struct {
 }
 
 type OAuthConfig struct {
-	Tenant   string
-	ClientID string
-	Scopes   []string
-	TokenURL string
+	Tenant        string
+	ClientID      string
+	Scopes        []string
+	TokenURL      string
+	DeviceCodeURL string
 }
 
 func (config Config) Validate() error {
@@ -53,13 +54,25 @@ func (config Config) normalizedBaseURL() (string, error) {
 
 func (config OAuthConfig) validate() error {
 	if strings.TrimSpace(config.TokenURL) != "" {
-		parsed, err := url.Parse(strings.TrimSpace(config.TokenURL))
-		if err != nil {
-			return fmt.Errorf("oauth token url: %w", err)
+		if err := validateAbsoluteURL("oauth token url", config.TokenURL); err != nil {
+			return err
 		}
-		if parsed.Scheme == "" || parsed.Host == "" {
-			return fmt.Errorf("oauth token url must be absolute")
+	}
+	if strings.TrimSpace(config.DeviceCodeURL) != "" {
+		if err := validateAbsoluteURL("oauth device-code url", config.DeviceCodeURL); err != nil {
+			return err
 		}
+	}
+	return nil
+}
+
+func validateAbsoluteURL(label string, raw string) error {
+	parsed, err := url.Parse(strings.TrimSpace(raw))
+	if err != nil {
+		return fmt.Errorf("%s: %w", label, err)
+	}
+	if parsed.Scheme == "" || parsed.Host == "" {
+		return fmt.Errorf("%s must be absolute", label)
 	}
 	return nil
 }
@@ -73,4 +86,15 @@ func (config OAuthConfig) tokenURL() (string, error) {
 		return "", fmt.Errorf("graph oauth refresh requires tenant or token_url")
 	}
 	return "https://login.microsoftonline.com/" + url.PathEscape(tenant) + "/oauth2/v2.0/token", nil
+}
+
+func (config OAuthConfig) deviceCodeURL() (string, error) {
+	if raw := strings.TrimSpace(config.DeviceCodeURL); raw != "" {
+		return raw, nil
+	}
+	tenant := strings.Trim(strings.TrimSpace(config.Tenant), "/")
+	if tenant == "" {
+		return "", fmt.Errorf("graph device-code enrollment requires tenant or device_code_url")
+	}
+	return "https://login.microsoftonline.com/" + url.PathEscape(tenant) + "/oauth2/v2.0/devicecode", nil
 }

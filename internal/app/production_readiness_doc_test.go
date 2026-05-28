@@ -156,17 +156,53 @@ func TestDocsTrackGraphOAuthTokenCacheEvidence(t *testing.T) {
 		filepath.Join("..", "..", "docs", "SPEC.md"): {
 			"refresh-capable JSON token credential",
 			"`settings.token_url`",
-			"Token acquisition and admin consent remain external",
+			"live tenant",
 		},
 		filepath.Join("..", "..", "docs", "PRODUCTION_BACKLOG.md"): {
 			"Graph OAuth and live smoke enablement",
 			"refresh-capable token-cache handling",
-			"app registration, admin consent, live token storage, `auth check`, and controlled read-only smoke evidence",
+			"live enterprise app approval, admin consent, controlled live token storage, `auth check`, and controlled read-only smoke evidence",
 		},
 		filepath.Join("..", "..", "docs", "PRODUCTION_READINESS.md"): {
 			"refresh-capable JSON token credential",
-			"token refresh is unit-tested",
-			"live Graph probing remains blocked",
+			"token acquisition/storage and refresh are unit-tested",
+			"live Graph smoke evidence still requires enterprise app approval",
+		},
+	}
+
+	for path, required := range documents {
+		data, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatalf("read %s: %v", path, err)
+		}
+		text := string(data)
+		for _, marker := range required {
+			if !strings.Contains(text, marker) {
+				t.Fatalf("expected %s to contain %q", path, marker)
+			}
+		}
+	}
+}
+
+func TestDocsTrackGraphDeviceCodeEnrollmentEvidence(t *testing.T) {
+	documents := map[string][]string{
+		filepath.Join("..", "..", "README.md"): {
+			"auth graph-device-code",
+			"`settings.device_code_url`",
+			"device-code sign-in instructions",
+		},
+		filepath.Join("..", "..", "docs", "SPEC.md"): {
+			"`auth graph-device-code`",
+			"device-code OAuth enrollment",
+			"`settings.device_code_url`",
+		},
+		filepath.Join("..", "..", "docs", "PRODUCTION_BACKLOG.md"): {
+			"Device-code OAuth acquisition and secret-store persistence",
+			"live enterprise app approval",
+		},
+		filepath.Join("..", "..", "docs", "PRODUCTION_READINESS.md"): {
+			"device-code OAuth enrollment",
+			"live Graph smoke evidence still requires enterprise app approval",
 		},
 	}
 

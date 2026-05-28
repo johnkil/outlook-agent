@@ -16,3 +16,7 @@ func NewKeychainStore() *KeychainStore {
 func (store *KeychainStore) Get(context.Context, Ref) (Value, error) {
 	return "", fmt.Errorf("keychain store is unsupported on this platform")
 }
+
+func (store *KeychainStore) Put(context.Context, Ref, Value) error {
+	return fmt.Errorf("keychain store is unsupported on this platform")
+}

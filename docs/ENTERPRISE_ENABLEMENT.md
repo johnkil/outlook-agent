@@ -22,12 +22,16 @@ Operator checklist:
    release artifacts.
 5. Configure a Graph profile with `secret_ref`, `settings.client_id`,
    `settings.tenant`, and `settings.scopes` matching `docs/SPEC.md`. Use
-   `settings.token_url` only for an approved non-default token endpoint or a
-   test fixture.
-6. When refresh is required, store the JSON token credential in the referenced
-   secret-store entry; keep `access_token` and `refresh_token` out of config.
-7. Run `outlook-agent --config <private-config> auth check`.
-8. Run read-only Graph smoke checks before any draft, move, send-like, or raw
+   `settings.token_url` or `settings.device_code_url` only for an approved
+   non-default token endpoint or a test fixture.
+6. Run `outlook-agent --config <private-config> --profile <graph-profile> auth
+   graph-device-code` to perform device-code OAuth acquisition. Follow the
+   device-code sign-in instructions on stderr; the command stores the JSON
+   token credential behind `secret_ref` and prints sanitized metadata only.
+7. Keep `access_token` and `refresh_token` out of config, shell history, issue
+   comments, and release artifacts.
+8. Run `outlook-agent --config <private-config> auth check`.
+9. Run read-only Graph smoke checks before any draft, move, send-like, or raw
    GraphRequest workflow.
 
 ## EWS Enablement

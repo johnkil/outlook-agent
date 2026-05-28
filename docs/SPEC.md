@@ -12,6 +12,7 @@ config paths fail fast instead of silently falling back to fake data.
 ```text
 outlook-agent doctor [--json]
 outlook-agent --config <path> auth check [--profile <name>]
+outlook-agent --config <path> auth graph-device-code [--profile <name>]
 outlook-agent policy explain [--action <name>]
 outlook-agent owa discover-actions --file <path>
 outlook-agent --config <path> owa discover-actions --url <path-or-url> [--include-linked-scripts] [--follow-navigation-hints] [--diagnostics] [--max-sources <positive-int>]
@@ -42,6 +43,13 @@ includes:
 If an explicit or environment config path is missing or invalid, `doctor`
 returns exit code `1`, `ok=false`, and a sanitized `error` mirrored under
 `config.error`.
+
+`auth graph-device-code` performs device-code OAuth enrollment for a configured
+Graph profile. The command prints human device-code sign-in instructions to
+stderr, polls the Microsoft identity platform token endpoint, stores the
+resulting JSON token credential behind the profile `secret_ref`, and writes only
+sanitized metadata to stdout. It must not print `device_code`, `access_token`,
+or `refresh_token`.
 
 `policy explain` without arguments returns the stable safety-class list.
 `policy explain --action <name>` returns all built-in transport capability
@@ -174,15 +182,18 @@ Configured transports:
   `settings.base_url` and `secret_ref` for either a raw bearer access token or
   a refresh-capable JSON token credential stored outside config. Refresh uses
   `settings.client_id`, optional `settings.tenant`, `settings.scopes` as a JSON
-  array or space-separated string, and optional `settings.token_url` for
-  advanced operators and tests. Supported read-metadata actions are
+  array or space-separated string, optional `settings.token_url`, and optional
+  `settings.device_code_url` for advanced operators and tests. Device-code
+  OAuth enrollment uses the same `client_id`, `tenant`, and `scopes` settings
+  to create the initial secret-store credential. Supported read-metadata
+  actions are
   `GetMailFolder`, `mail.search`, and `mail.fetch_metadata`, plus explicit
   `mail.fetch_body`, explicit `mail.list_attachments`, explicit
   `mail.fetch_attachment`, `mail.create_draft`,
   `mail.move_to_deleted_items`, `calendar.list`, and `calendar.availability`,
   plus raw guarded `GraphRequest`; `auth check` probes
-  `/me/mailFolders/inbox`. Token acquisition and admin consent remain external
-  to the public runtime in this phase.
+  `/me/mailFolders/inbox`. App registration, admin consent, and live tenant
+  policy approval remain external to the public runtime in this phase.
 
 ## Redaction
 

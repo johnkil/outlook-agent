@@ -95,7 +95,7 @@ Implemented high-level OWA mappings:
 | dry-run settings/rules gate | `UpdateUserConfiguration` | stdio MCP dry-run live smoke-tested after auth; token issued without unsafe and without execution |
 | dry-run mutating summaries | attachment/folder/rule/config payload shapes | unit-tested for plural and singular OWA body keys; stdio MCP dry-run live smoke-tested for representative variants; no confirmation executed |
 | dry-run payload catalog | 26 mutating raw OWA actions | sanitized example payload exists for every raw `reversible_bulk`, `destructive`, `send_like`, and `settings_or_rules` action; each example produces a non-zero dry-run count without network calls and is live stdio MCP smoke-tested after auth without confirmation |
-| raw Graph escape hatch | `GraphRequest` | implemented and unit-tested as a destructive raw action with a dry-run summary requiring unsafe mode plus exact confirmation; refresh-capable token cache is unit-tested; live Graph enablement remains blocked on app registration/admin consent/live token storage |
+| raw Graph escape hatch | `GraphRequest` | implemented and unit-tested as a destructive raw action with a dry-run summary requiring unsafe mode plus exact confirmation; device-code token acquisition and refresh-capable token cache are unit-tested; live Graph enablement remains blocked on app registration/admin consent/live token storage |
 | raw EWS SOAP escape hatch | `EWSRequest` | implemented and unit-tested as a destructive raw action for caller-provided SOAP XML envelopes with a dry-run summary requiring unsafe mode plus exact confirmation; live EWS enablement remains blocked on endpoint/auth policy |
 
 Important OWA compatibility note: high-level OWA JSON payloads use ordered JSON

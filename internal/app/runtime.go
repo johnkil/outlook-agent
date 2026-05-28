@@ -1,6 +1,7 @@
 package app
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 	"strings"
@@ -25,6 +26,14 @@ type TransportResult struct {
 	Client  transport.Transport
 	Source  config.Source
 	Profile string
+}
+
+type GraphDeviceCodeEnrollmentResult struct {
+	Profile   string
+	SecretRef string
+	TokenType string
+	Scope     string
+	ExpiresAt string
 }
 
 func BuildTransport(options Options) (transport.Transport, config.Source, error) {
@@ -118,20 +127,62 @@ func buildGraphTransport(profile config.Profile, options Options) (transport.Tra
 	if secrets == nil {
 		secrets = secret.NewKeychainStore()
 	}
-	config := graph.Config{
-		BaseURL:   stringSetting(profile.Settings, "base_url"),
-		SecretRef: secret.Ref(profile.SecretRef),
-		OAuth: graph.OAuthConfig{
-			Tenant:   stringSetting(profile.Settings, "tenant"),
-			ClientID: stringSetting(profile.Settings, "client_id"),
-			Scopes:   stringSliceSetting(profile.Settings, "scopes"),
-			TokenURL: stringSetting(profile.Settings, "token_url"),
-		},
-	}
+	config := graphConfigFromProfile(profile)
 	if err := config.Validate(); err != nil {
 		return nil, err
 	}
 	return graph.NewTransport(config, secrets, options.HTTPClient), nil
+}
+
+func EnrollGraphDeviceCode(ctx context.Context, options Options, onChallenge func(graph.DeviceCodeChallenge)) (GraphDeviceCodeEnrollmentResult, error) {
+	loaded, _, err := config.Load(config.Options{ExplicitPath: options.ConfigPath})
+	if err != nil {
+		return GraphDeviceCodeEnrollmentResult{}, err
+	}
+	profileName := options.Profile
+	if profileName == "" {
+		profileName = loaded.DefaultProfile
+	}
+	profile, ok := loaded.Profiles[profileName]
+	if !ok {
+		return GraphDeviceCodeEnrollmentResult{}, fmt.Errorf("profile %q is not configured", profileName)
+	}
+	if profile.Transport != "graph" {
+		return GraphDeviceCodeEnrollmentResult{}, fmt.Errorf("profile %q is not a graph profile", profileName)
+	}
+	secrets := options.Secrets
+	if secrets == nil {
+		secrets = secret.NewKeychainStore()
+	}
+	writable, ok := secrets.(secret.WritableStore)
+	if !ok {
+		return GraphDeviceCodeEnrollmentResult{}, fmt.Errorf("secret store is not writable")
+	}
+	enrollment, err := graph.EnrollDeviceCode(ctx, graphConfigFromProfile(profile), writable, options.HTTPClient, onChallenge)
+	if err != nil {
+		return GraphDeviceCodeEnrollmentResult{Profile: profileName}, err
+	}
+	return GraphDeviceCodeEnrollmentResult{
+		Profile:   profileName,
+		SecretRef: enrollment.SecretRef,
+		TokenType: enrollment.TokenType,
+		Scope:     enrollment.Scope,
+		ExpiresAt: enrollment.ExpiresAt,
+	}, nil
+}
+
+func graphConfigFromProfile(profile config.Profile) graph.Config {
+	return graph.Config{
+		BaseURL:   stringSetting(profile.Settings, "base_url"),
+		SecretRef: secret.Ref(profile.SecretRef),
+		OAuth: graph.OAuthConfig{
+			Tenant:        stringSetting(profile.Settings, "tenant"),
+			ClientID:      stringSetting(profile.Settings, "client_id"),
+			Scopes:        stringSliceSetting(profile.Settings, "scopes"),
+			TokenURL:      stringSetting(profile.Settings, "token_url"),
+			DeviceCodeURL: stringSetting(profile.Settings, "device_code_url"),
+		},
+	}
 }
 
 func stringSetting(settings map[string]any, key string) string {

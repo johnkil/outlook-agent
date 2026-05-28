@@ -15,6 +15,7 @@ import (
 	"github.com/johnkil/outlook-agent/internal/app"
 	"github.com/johnkil/outlook-agent/internal/secret"
 	"github.com/johnkil/outlook-agent/internal/transport"
+	"github.com/johnkil/outlook-agent/internal/transport/graph"
 )
 
 func TestBuildTransportDefaultsToFakeWithoutConfig(t *testing.T) {
@@ -314,6 +315,97 @@ func TestBuildTransportCreatesGraphProfileWithOAuthRefreshSettings(t *testing.T)
 	}
 	if !sawRefresh || !sawFreshBearer {
 		t.Fatalf("expected refresh and fresh bearer usage, refresh=%v bearer=%v", sawRefresh, sawFreshBearer)
+	}
+}
+
+func TestEnrollGraphDeviceCodeUsesConfiguredGraphProfile(t *testing.T) {
+	var challenge graph.DeviceCodeChallenge
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		switch request.URL.Path {
+		case "/oauth/devicecode":
+			if err := request.ParseForm(); err != nil {
+				t.Fatalf("parse device-code form: %v", err)
+			}
+			if request.Form.Get("client_id") != "client-id" {
+				t.Fatalf("unexpected client_id: %q", request.Form.Get("client_id"))
+			}
+			if request.Form.Get("scope") != "offline_access Mail.Read Calendars.Read" {
+				t.Fatalf("unexpected scope: %q", request.Form.Get("scope"))
+			}
+			response.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(response).Encode(map[string]any{
+				"device_code":      "private-device-code",
+				"user_code":        "ABCD-EFGH",
+				"verification_uri": "https://microsoft.com/devicelogin",
+				"expires_in":       900,
+				"interval":         0,
+				"message":          "Open https://microsoft.com/devicelogin and enter ABCD-EFGH.",
+			})
+		case "/oauth/token":
+			if err := request.ParseForm(); err != nil {
+				t.Fatalf("parse token form: %v", err)
+			}
+			if request.Form.Get("grant_type") != "urn:ietf:params:oauth:grant-type:device_code" {
+				t.Fatalf("unexpected grant_type: %q", request.Form.Get("grant_type"))
+			}
+			if request.Form.Get("device_code") != "private-device-code" {
+				t.Fatalf("unexpected device_code")
+			}
+			response.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(response).Encode(map[string]any{
+				"token_type":    "Bearer",
+				"access_token":  "fresh-access-token",
+				"refresh_token": "fresh-refresh-token",
+				"expires_in":    3600,
+				"scope":         "offline_access Mail.Read Calendars.Read",
+			})
+		default:
+			t.Fatalf("unexpected path: %s", request.URL.Path)
+		}
+	}))
+	defer server.Close()
+
+	path := writeConfig(t, fmt.Sprintf(`{
+		"default_profile": "work",
+		"profiles": {
+			"work": {
+				"transport": "graph",
+				"secret_ref": "memory:graph-token",
+				"settings": {
+					"base_url": "https://graph.example.test/v1.0",
+					"client_id": "client-id",
+					"device_code_url": %q,
+					"token_url": %q,
+					"scopes": "offline_access Mail.Read Calendars.Read"
+				}
+			}
+		}
+	}`, server.URL+"/oauth/devicecode", server.URL+"/oauth/token"))
+
+	store := secret.NewMemoryStore(nil)
+	enrollment, err := app.EnrollGraphDeviceCode(context.Background(), app.Options{
+		ConfigPath: path,
+		Profile:    "work",
+		Secrets:    store,
+		HTTPClient: server.Client(),
+	}, func(next graph.DeviceCodeChallenge) {
+		challenge = next
+	})
+	if err != nil {
+		t.Fatalf("enroll graph device code: %v", err)
+	}
+	if challenge.UserCode != "ABCD-EFGH" || challenge.VerificationURI != "https://microsoft.com/devicelogin" {
+		t.Fatalf("unexpected challenge: %#v", challenge)
+	}
+	if enrollment.Profile != "work" || enrollment.SecretRef != "memory:graph-token" || enrollment.TokenType != "Bearer" {
+		t.Fatalf("unexpected enrollment: %#v", enrollment)
+	}
+	stored, err := store.Get(context.Background(), secret.Ref("memory:graph-token"))
+	if err != nil {
+		t.Fatalf("get stored graph token credential: %v", err)
+	}
+	if !strings.Contains(string(stored), `"refresh_token":"fresh-refresh-token"`) {
+		t.Fatalf("expected refresh token to be stored only in secret store, got %s", stored)
 	}
 }
 
