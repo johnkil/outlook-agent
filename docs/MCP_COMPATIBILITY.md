@@ -79,6 +79,8 @@ explicit-target protections.
 
 `outlook.capabilities` must remain the discovery entrypoint. It returns:
 
+- `compatibility_version`: the stable MCP contract version implemented by this
+  server, currently `0.1`;
 - `actions`: a backwards-compatible name-only list;
 - `details`: policy-aware entries with `name`, `transport`, `safety_class`,
   `level`, direct-execution gates, explicit-target/intent requirements, and

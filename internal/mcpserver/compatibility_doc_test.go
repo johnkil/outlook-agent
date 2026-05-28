@@ -26,6 +26,7 @@ func TestMCPCompatibilityPolicyDocumentsCurrentToolSurface(t *testing.T) {
 		"## Deprecation Policy",
 		"## Capability Metadata",
 		"## Raw Action Policy",
+		"`compatibility_version`",
 	} {
 		if !strings.Contains(text, required) {
 			t.Fatalf("expected MCP compatibility policy to contain %q", required)

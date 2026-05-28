@@ -147,9 +147,10 @@ missing explicit config path fails startup with `config file not found` instead
 of silently starting the fake transport.
 
 Agents should call `outlook.capabilities` before raw transport calls. The
-response keeps a backwards-compatible `actions` name list and adds `details`
-entries with `name`, `transport`, `safety_class`, and numeric coverage `level`
-plus `allowed_direct`, `requires_dry_run`, `requires_confirmation`, and
+response includes `compatibility_version` so clients can verify the MCP contract,
+keeps a backwards-compatible `actions` name list, and adds `details` entries
+with `name`, `transport`, `safety_class`, and numeric coverage `level` plus
+`allowed_direct`, `requires_dry_run`, `requires_confirmation`, and
 `requires_unsafe` policy gates. Details may also include
 `requires_explicit_target` or `requires_explicit_intent` so agents can ask for
 or preserve the missing condition before attempting execution. The

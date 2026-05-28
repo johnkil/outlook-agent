@@ -74,9 +74,10 @@ outlook.raw_action
 
 Key tool inputs:
 
-- `outlook.capabilities`: returns `actions` for backwards-compatible name-only
-  clients and `details` for policy-aware clients. Each `details` entry contains
-  `name`, `transport`, `safety_class`, numeric coverage `level`,
+- `outlook.capabilities`: returns `compatibility_version` for runtime contract
+  checks, `actions` for backwards-compatible name-only clients, and `details`
+  for policy-aware clients. Each `details` entry contains `name`, `transport`,
+  `safety_class`, numeric coverage `level`,
   `allowed_direct`, `requires_dry_run`, `requires_confirmation`, and
   `requires_unsafe`. Explicit read or mutation requirements are exposed through
   `requires_explicit_target` and `requires_explicit_intent`. The

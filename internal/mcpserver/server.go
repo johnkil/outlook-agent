@@ -41,9 +41,12 @@ type EmptyInput struct{}
 
 type CapabilityDetailOutput = capability.Detail
 
+const CompatibilityVersion = "0.1"
+
 type CapabilitiesOutput struct {
-	Actions []string                 `json:"actions"`
-	Details []CapabilityDetailOutput `json:"details"`
+	CompatibilityVersion string                   `json:"compatibility_version"`
+	Actions              []string                 `json:"actions"`
+	Details              []CapabilityDetailOutput `json:"details"`
 }
 
 type MailSearchInput struct {
@@ -263,7 +266,7 @@ func capabilitiesHandler(client transport.Transport) func(context.Context, *mcp.
 			actions = append(actions, action.Name)
 			details = append(details, capability.FromDefinition(action))
 		}
-		return nil, CapabilitiesOutput{Actions: actions, Details: details}, nil
+		return nil, CapabilitiesOutput{CompatibilityVersion: CompatibilityVersion, Actions: actions, Details: details}, nil
 	}
 }
 

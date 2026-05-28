@@ -227,6 +227,9 @@ func TestMCPAgentFlowDiscoversPolicyGateAndConfirmsBulkAction(t *testing.T) {
 		t.Fatalf("call capabilities: %v", err)
 	}
 	capabilities := decodeStructured[mcpserver.CapabilitiesOutput](t, capabilitiesResult)
+	if capabilities.CompatibilityVersion != "0.1" {
+		t.Fatalf("expected compatibility version 0.1, got %#v", capabilities)
+	}
 	var moveDetail mcpserver.CapabilityDetailOutput
 	for _, detail := range capabilities.Details {
 		if detail.Name == "mail.move_to_deleted_items" {
