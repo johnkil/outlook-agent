@@ -81,16 +81,27 @@ if [[ -n "${OUTLOOK_AGENT_OPENCODE_LIVE_DIR:-}" ]]; then
       > "$opencode_jsonl"
   )
   jq -s -e '
-    ([.[] | select(.type == "tool_use" and .part.tool == "outlook-agent_outlook_auth_check" and .part.state.status == "completed")] | length) == 1
-    and ([.[] | select(.type == "tool_use" and .part.tool == "outlook-agent_outlook_capabilities" and .part.state.status == "completed")] | length) == 1
-    and ([.[] | select(.type == "tool_use" and .part.tool == "outlook-agent_outlook_action_dry_run" and .part.state.status == "completed")] | length) >= 2
+    def event_part: .part // .;
+    def completed($tool):
+      [
+        .[]
+        | select(.type == "tool_use" or .type == "tool")
+        | (event_part) as $part
+        | select($part.tool == $tool and $part.state.status == "completed")
+      ]
+      | length;
+    completed("outlook-agent_outlook_auth_check") == 1
+    and completed("outlook-agent_outlook_capabilities") == 1
+    and completed("outlook-agent_outlook_action_dry_run") >= 2
   ' "$opencode_jsonl" >/dev/null
   forbidden_tools="$(
     jq -r -s '
+      def event_part: .part // .;
       [
         .[]
-        | select(.type == "tool_use")
-        | (.part.tool // empty)
+        | select(.type == "tool_use" or .type == "tool")
+        | (event_part) as $part
+        | ($part.tool // empty)
         | select(startswith("outlook-agent_outlook_"))
         | select(
             . != "outlook-agent_outlook_auth_check"

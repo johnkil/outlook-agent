@@ -132,6 +132,59 @@ JSONL
 	}
 }
 
+func TestActionCoverageSmokeRejectsForbiddenTopLevelOpencodeToolCalls(t *testing.T) {
+	if _, err := exec.LookPath("bash"); err != nil {
+		t.Skip("bash is required for action coverage smoke")
+	}
+	if _, err := exec.LookPath("jq"); err != nil {
+		t.Skip("jq is required for action coverage smoke")
+	}
+
+	repoRoot := filepath.Join("..", "..")
+	tempDir := t.TempDir()
+	coveragePath := filepath.Join(tempDir, "coverage.json")
+	fakeAgentPath := filepath.Join(tempDir, "outlook-agent")
+	fakeOpencodePath := filepath.Join(tempDir, "opencode")
+	liveDir := filepath.Join(tempDir, "opencode-live")
+	if err := os.MkdirAll(liveDir, 0o755); err != nil {
+		t.Fatalf("create fake opencode live dir: %v", err)
+	}
+
+	writeCoverageFixture(t, coveragePath)
+	fakeAgent := "#!/usr/bin/env bash\nset -euo pipefail\nif [[ \"$*\" == \"policy coverage\" ]]; then\n  cat " + shellQuote(coveragePath) + "\nelse\n  echo \"unexpected fake outlook-agent args: $*\" >&2\n  exit 2\nfi\n"
+	if err := os.WriteFile(fakeAgentPath, []byte(fakeAgent), 0o755); err != nil {
+		t.Fatalf("write fake outlook-agent: %v", err)
+	}
+	fakeOpencode := `#!/usr/bin/env bash
+set -euo pipefail
+cat <<'JSONL'
+{"type":"tool_use","part":{"tool":"outlook-agent_outlook_auth_check","state":{"status":"completed","input":{}}}}
+{"type":"tool_use","part":{"tool":"outlook-agent_outlook_capabilities","state":{"status":"completed","input":{}}}}
+{"type":"tool_use","part":{"tool":"outlook-agent_outlook_action_dry_run","state":{"status":"completed","input":{"action":"DeleteItem","payload":{"Body":{"ItemIds":[{"Id":"dry-run-item"}],"DeleteType":"HardDelete"}},"unsafe_mode":false}}}}
+{"type":"tool_use","part":{"tool":"outlook-agent_outlook_action_dry_run","state":{"status":"completed","input":{"action":"DeleteItem","payload":{"Body":{"ItemIds":[{"Id":"dry-run-item"}],"DeleteType":"HardDelete"}},"unsafe_mode":true}}}}
+{"type":"tool","tool":"outlook-agent_outlook_action_confirm","state":{"status":"completed","input":{}}}
+JSONL
+`
+	if err := os.WriteFile(fakeOpencodePath, []byte(fakeOpencode), 0o755); err != nil {
+		t.Fatalf("write fake opencode: %v", err)
+	}
+
+	command := exec.Command("bash", filepath.Join("scripts", "action-coverage-smoke.sh"))
+	command.Dir = repoRoot
+	command.Env = append(os.Environ(),
+		"OUTLOOK_AGENT_BIN="+fakeAgentPath,
+		"OUTLOOK_AGENT_OPENCODE_LIVE_DIR="+liveDir,
+		"PATH="+tempDir+string(os.PathListSeparator)+os.Getenv("PATH"),
+	)
+	output, err := command.CombinedOutput()
+	if err == nil {
+		t.Fatalf("expected action coverage smoke to reject forbidden top-level opencode tool call, output=%s", string(output))
+	}
+	if !strings.Contains(string(output), "forbidden opencode tool calls") {
+		t.Fatalf("expected forbidden opencode tool call error, got err=%v output=%s", err, string(output))
+	}
+}
+
 func TestActionCoverageSmokeRequiresDestructiveDryRunInputs(t *testing.T) {
 	if _, err := exec.LookPath("bash"); err != nil {
 		t.Skip("bash is required for action coverage smoke")
