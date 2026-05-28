@@ -24,6 +24,7 @@ func TestCatalogContainsInitialTools(t *testing.T) {
 		"outlook.mail_search",
 		"outlook.mail_fetch_metadata",
 		"outlook.mail_fetch_body",
+		"outlook.mail_list_attachments",
 		"outlook.mail_fetch_attachment",
 		"outlook.mail_create_draft",
 		"outlook.mail_move_to_deleted_items",
@@ -93,6 +94,7 @@ func TestMCPClientCanListAndCallInitialTools(t *testing.T) {
 	}{
 		{name: "outlook.mail_fetch_metadata", arguments: map[string]any{"id": "msg-1"}},
 		{name: "outlook.mail_fetch_body", arguments: map[string]any{"id": "msg-1"}},
+		{name: "outlook.mail_list_attachments", arguments: map[string]any{"id": "msg-1"}},
 		{name: "outlook.mail_fetch_attachment", arguments: map[string]any{"message_id": "msg-1", "attachment_id": "att-1"}},
 		{name: "outlook.mail_create_draft", arguments: map[string]any{"subject": "Draft", "body": "Hello"}},
 		{name: "outlook.calendar_list", arguments: map[string]any{"start": "2026-05-27T00:00:00+02:00", "end": "2026-05-28T00:00:00+02:00"}},

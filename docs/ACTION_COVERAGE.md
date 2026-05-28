@@ -27,6 +27,7 @@ level 5: workflow skill guidance
 | Mail | `outlook.mail_search` | 4 |
 | Mail | `outlook.mail_fetch_metadata` | 4 |
 | Mail | `outlook.mail_fetch_body` | 4 |
+| Mail | `outlook.mail_list_attachments` | 4 |
 | Mail | `outlook.mail_fetch_attachment` | 4 |
 | Mail | `outlook.mail_create_draft` | 4 |
 | Mail | `outlook.mail_move_to_deleted_items` | 4 |
@@ -79,6 +80,7 @@ Implemented high-level OWA mappings:
 | `mail.search` | `FindItem` | implemented and live smoke-tested |
 | `mail.fetch_metadata` | `GetItem` | implemented and live smoke-tested through a real inbox item id |
 | `mail.fetch_body` | `GetItem` | implemented and live MCP smoke-tested only against an explicit draft fixture target |
+| `mail.list_attachments` | `GetItem` | implemented and unit-tested as metadata-only for explicit message ids; live fixture smoke remains a follow-up |
 | `mail.fetch_attachment` | `GetAttachment` | implemented and unit-tested for explicit attachment ids; live fixture smoke remains a follow-up |
 | `mail.create_draft` | `CreateItem` | implemented as `SaveOnly` draft and live MCP smoke-tested with a fixture |
 | `mail.move_to_deleted_items` | `DeleteItem` | implemented as `MoveToDeletedItems` and live MCP smoke-tested through dry-run/confirmation cleanup of the draft fixture |

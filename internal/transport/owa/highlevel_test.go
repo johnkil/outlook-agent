@@ -298,6 +298,7 @@ func TestCapabilitiesIncludeOWAHighLevelReadActions(t *testing.T) {
 		"mail.search",
 		"mail.fetch_metadata",
 		"mail.fetch_body",
+		"mail.list_attachments",
 		"mail.fetch_attachment",
 		"mail.create_draft",
 		"mail.move_to_deleted_items",
@@ -392,6 +393,71 @@ func TestHighLevelMailFetchBodyCallsGetItemForExplicitBody(t *testing.T) {
 	}
 	if response.Data["id"] != "msg-1" || response.Data["body_text"] != "Hello from body" {
 		t.Fatalf("unexpected body response: %#v", response.Data)
+	}
+}
+
+func TestHighLevelMailListAttachmentsCallsGetItemForExplicitMessage(t *testing.T) {
+	var calls []recordedServiceCall
+	server := newOWAServiceServer(t, &calls, map[string]any{
+		"Body": map[string]any{
+			"ResponseMessages": map[string]any{
+				"Items": []any{
+					map[string]any{
+						"Items": []any{
+							map[string]any{
+								"ItemId": map[string]any{"Id": "msg-1"},
+								"Attachments": []any{
+									map[string]any{
+										"AttachmentId": map[string]any{"Id": "att-1"},
+										"Name":         "notes.txt",
+										"ContentType":  "text/plain",
+										"Size":         12,
+										"IsInline":     false,
+										"Content":      "SHOULD_NOT_LEAK",
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+	})
+	defer server.Close()
+	client := newTestTransport(server)
+
+	response := client.Execute(context.Background(), transport.ActionRequest{
+		Name:    "mail.list_attachments",
+		Payload: map[string]any{"id": "msg-1"},
+	})
+
+	if !response.OK {
+		t.Fatalf("expected mail.list_attachments ok: %#v", response)
+	}
+	if calls[0].Action != "GetItem" {
+		t.Fatalf("expected GetItem, got %q", calls[0].Action)
+	}
+	body := calls[0].Body["Body"].(map[string]any)
+	itemIDs := body["ItemIds"].([]any)
+	if itemIDs[0].(map[string]any)["Id"] != "msg-1" {
+		t.Fatalf("expected explicit message id, got %#v", itemIDs)
+	}
+	itemShape := body["ItemShape"].(map[string]any)
+	properties := itemShape["AdditionalProperties"].([]any)
+	fieldURIs := make([]string, 0, len(properties))
+	for _, property := range properties {
+		fieldURIs = append(fieldURIs, property.(map[string]any)["FieldURI"].(string))
+	}
+	if !slices.Contains(fieldURIs, "item:Attachments") {
+		t.Fatalf("expected item:Attachments in %#v", fieldURIs)
+	}
+	attachments := response.Data["attachments"].([]any)
+	attachment := attachments[0].(map[string]any)
+	if attachment["id"] != "att-1" || attachment["name"] != "notes.txt" || attachment["content_type"] != "text/plain" {
+		t.Fatalf("unexpected attachment metadata: %#v", attachment)
+	}
+	if _, ok := attachment["content_base64"]; ok {
+		t.Fatalf("list attachments must not return content: %#v", attachment)
 	}
 }
 

@@ -60,6 +60,7 @@ func TestFakeTransportExecutesInitialHighLevelActions(t *testing.T) {
 	}{
 		{name: "mail.fetch_metadata", key: "message"},
 		{name: "mail.fetch_body", key: "body_text"},
+		{name: "mail.list_attachments", key: "attachments"},
 		{name: "mail.fetch_attachment", key: "attachment"},
 		{name: "mail.create_draft", key: "draft"},
 		{name: "mail.move_to_deleted_items", key: "moved_count"},

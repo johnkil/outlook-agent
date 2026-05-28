@@ -49,6 +49,12 @@ func (client *Transport) executeHighLevel(ctx context.Context, request transport
 		item := firstMap(extractItems(response.Data))
 		itemID := itemID(item)
 		return transport.ActionResponse{OK: true, Data: map[string]any{"id": itemID["id"], "body_text": bodyText(item)}}, true
+	case "mail.list_attachments":
+		response := client.executeService(ctx, "GetItem", client.buildListAttachmentsRequest(stringValue(request.Payload, "id")), false)
+		if !response.OK {
+			return response, true
+		}
+		return transport.ActionResponse{OK: true, Data: map[string]any{"attachments": normalizeAttachmentMetadata(extractAttachments(response.Data))}}, true
 	case "mail.fetch_attachment":
 		response := client.executeService(ctx, "GetAttachment", client.buildGetAttachmentRequest(stringValue(request.Payload, "attachment_id")), false)
 		if !response.OK {
@@ -187,6 +193,26 @@ func (client *Transport) buildGetItemRequest(id string, includeBody bool) any {
 		field("Body", object(
 			field("__type", "GetItemRequest:#Exchange"),
 			field("ItemShape", object(itemShapeFields...)),
+			field("ItemIds", []any{
+				object(field("__type", "ItemId:#Exchange"), field("Id", id)),
+			}),
+		)),
+	)
+}
+
+func (client *Transport) buildListAttachmentsRequest(id string) any {
+	return object(
+		field("__type", "GetItemJsonRequest:#Exchange"),
+		field("Header", client.requestHeaderPayload("Exchange2013")),
+		field("Body", object(
+			field("__type", "GetItemRequest:#Exchange"),
+			field("ItemShape", object(
+				field("__type", "ItemResponseShape:#Exchange"),
+				field("BaseShape", "IdOnly"),
+				field("AdditionalProperties", []any{
+					propertyURI("item:Attachments"),
+				}),
+			)),
 			field("ItemIds", []any{
 				object(field("__type", "ItemId:#Exchange"), field("Id", id)),
 			}),
@@ -388,6 +414,25 @@ func normalizeAttachments(items []any) []any {
 			continue
 		}
 		output = append(output, normalizeAttachment(itemMap))
+	}
+	return output
+}
+
+func normalizeAttachmentMetadata(items []any) []any {
+	output := make([]any, 0, len(items))
+	for _, item := range items {
+		itemMap, ok := item.(map[string]any)
+		if !ok {
+			continue
+		}
+		id := attachmentID(itemMap)
+		output = append(output, map[string]any{
+			"id":           id["id"],
+			"name":         stringValue(itemMap, "Name"),
+			"content_type": stringValue(itemMap, "ContentType"),
+			"size":         intValue(itemMap, "Size", 0),
+			"is_inline":    boolValue(itemMap, "IsInline"),
+		})
 	}
 	return output
 }

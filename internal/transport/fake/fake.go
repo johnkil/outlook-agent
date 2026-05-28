@@ -19,6 +19,7 @@ func New() *Transport {
 			{Name: "mail.search", Transport: "fake", Class: policy.ReadMetadata, Level: action.LevelHighLevelMCPTool},
 			{Name: "mail.fetch_metadata", Transport: "fake", Class: policy.ReadMetadata, Level: action.LevelHighLevelMCPTool},
 			{Name: "mail.fetch_body", Transport: "fake", Class: policy.ReadBodyExplicit, Level: action.LevelHighLevelMCPTool},
+			{Name: "mail.list_attachments", Transport: "fake", Class: policy.ReadAttachmentExplicit, Level: action.LevelHighLevelMCPTool},
 			{Name: "mail.fetch_attachment", Transport: "fake", Class: policy.ReadAttachmentExplicit, Level: action.LevelHighLevelMCPTool},
 			{Name: "mail.create_draft", Transport: "fake", Class: policy.DraftOnly, Level: action.LevelHighLevelMCPTool},
 			{Name: "mail.move_to_deleted_items", Transport: "fake", Class: policy.ReversibleBulk, Level: action.LevelHighLevelMCPTool},
@@ -75,6 +76,21 @@ func (client *Transport) Execute(_ context.Context, request transport.ActionRequ
 			Data: map[string]any{
 				"id":        valueOrDefault(request.Payload, "id", "msg-1"),
 				"body_text": "This is fake explicit message body text for tests.",
+			},
+		}
+	case "mail.list_attachments":
+		return transport.ActionResponse{
+			OK: true,
+			Data: map[string]any{
+				"attachments": []any{
+					map[string]any{
+						"id":           "att-1",
+						"name":         "fake.txt",
+						"content_type": "text/plain",
+						"size":         15,
+						"is_inline":    false,
+					},
+				},
 			},
 		}
 	case "mail.fetch_attachment":

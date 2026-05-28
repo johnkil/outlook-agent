@@ -82,6 +82,10 @@ type MailFetchBodyOutput struct {
 	BodyText string `json:"body_text"`
 }
 
+type MailListAttachmentsOutput struct {
+	Attachments []any `json:"attachments"`
+}
+
 type MailFetchAttachmentOutput struct {
 	Attachment any `json:"attachment"`
 }
@@ -170,6 +174,7 @@ func Catalog() ToolCatalog {
 			{Name: "outlook.mail_search", Description: "Search mail metadata using the configured transport."},
 			{Name: "outlook.mail_fetch_metadata", Description: "Fetch metadata for a single message."},
 			{Name: "outlook.mail_fetch_body", Description: "Fetch body text for an explicit message."},
+			{Name: "outlook.mail_list_attachments", Description: "List attachment metadata for an explicit message."},
 			{Name: "outlook.mail_fetch_attachment", Description: "Fetch a single explicit message attachment."},
 			{Name: "outlook.mail_create_draft", Description: "Create a saved draft without sending."},
 			{Name: "outlook.mail_move_to_deleted_items", Description: "Move confirmed messages to Deleted Items."},
@@ -239,6 +244,7 @@ func NewWithRuntime(runtime *Runtime) *mcp.Server {
 	mcp.AddTool(server, &mcp.Tool{Name: "outlook.mail_search", Description: "Search mail metadata using the configured transport."}, mailSearchHandler(runtime.client))
 	mcp.AddTool(server, &mcp.Tool{Name: "outlook.mail_fetch_metadata", Description: "Fetch metadata for a single message."}, mailFetchMetadataHandler(runtime.client))
 	mcp.AddTool(server, &mcp.Tool{Name: "outlook.mail_fetch_body", Description: "Fetch body text for an explicit message."}, mailFetchBodyHandler(runtime.client))
+	mcp.AddTool(server, &mcp.Tool{Name: "outlook.mail_list_attachments", Description: "List attachment metadata for an explicit message."}, mailListAttachmentsHandler(runtime.client))
 	mcp.AddTool(server, &mcp.Tool{Name: "outlook.mail_fetch_attachment", Description: "Fetch a single explicit message attachment."}, mailFetchAttachmentHandler(runtime.client))
 	mcp.AddTool(server, &mcp.Tool{Name: "outlook.mail_create_draft", Description: "Create a saved draft without sending."}, mailCreateDraftHandler(runtime.client))
 	mcp.AddTool(server, &mcp.Tool{Name: "outlook.mail_move_to_deleted_items", Description: "Move confirmed messages to Deleted Items."}, mailMoveToDeletedItemsHandler(runtime))
@@ -336,6 +342,14 @@ func mailFetchBodyHandler(client transport.Transport) func(context.Context, *mcp
 		response := client.Execute(ctx, transport.ActionRequest{Name: "mail.fetch_body", Payload: map[string]any{"id": input.ID}})
 		body, _ := response.Data["body_text"].(string)
 		return nil, MailFetchBodyOutput{ID: response.Data["id"], BodyText: body}, nil
+	}
+}
+
+func mailListAttachmentsHandler(client transport.Transport) func(context.Context, *mcp.CallToolRequest, MessageIDInput) (*mcp.CallToolResult, MailListAttachmentsOutput, error) {
+	return func(ctx context.Context, _ *mcp.CallToolRequest, input MessageIDInput) (*mcp.CallToolResult, MailListAttachmentsOutput, error) {
+		response := client.Execute(ctx, transport.ActionRequest{Name: "mail.list_attachments", Payload: map[string]any{"id": input.ID}})
+		attachments, _ := response.Data["attachments"].([]any)
+		return nil, MailListAttachmentsOutput{Attachments: attachments}, nil
 	}
 }
 

@@ -10,6 +10,7 @@ func highLevelCapabilities() []action.Definition {
 		{Name: "mail.search", Transport: "owa", Class: policy.ReadMetadata, Level: action.LevelHighLevelMCPTool},
 		{Name: "mail.fetch_metadata", Transport: "owa", Class: policy.ReadMetadata, Level: action.LevelHighLevelMCPTool},
 		{Name: "mail.fetch_body", Transport: "owa", Class: policy.ReadBodyExplicit, Level: action.LevelHighLevelMCPTool},
+		{Name: "mail.list_attachments", Transport: "owa", Class: policy.ReadAttachmentExplicit, Level: action.LevelHighLevelMCPTool},
 		{Name: "mail.fetch_attachment", Transport: "owa", Class: policy.ReadAttachmentExplicit, Level: action.LevelHighLevelMCPTool},
 		{Name: "mail.create_draft", Transport: "owa", Class: policy.DraftOnly, Level: action.LevelHighLevelMCPTool},
 		{Name: "mail.move_to_deleted_items", Transport: "owa", Class: policy.ReversibleBulk, Level: action.LevelHighLevelMCPTool},
