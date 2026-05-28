@@ -107,6 +107,41 @@ func TestFileStorePersistsSecretsWithUserOnlyPermissions(t *testing.T) {
 	}
 }
 
+func TestFileStoreReplacesPermissiveExistingFile(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "outlook-agent-secret")
+	if err := os.WriteFile(path, []byte("old-secret"), 0o644); err != nil {
+		t.Fatalf("write existing file: %v", err)
+	}
+	before, err := os.Stat(path)
+	if err != nil {
+		t.Fatalf("stat existing file: %v", err)
+	}
+
+	store := secret.NewFileStore()
+	ref := secret.Ref("file:" + path)
+	if err := store.Put(context.Background(), ref, secret.Value("fresh-secret")); err != nil {
+		t.Fatalf("put file secret: %v", err)
+	}
+
+	after, err := os.Stat(path)
+	if err != nil {
+		t.Fatalf("stat updated file: %v", err)
+	}
+	if os.SameFile(before, after) {
+		t.Fatal("expected existing permissive file to be replaced instead of rewritten in place")
+	}
+	if after.Mode().Perm()&0o077 != 0 {
+		t.Fatalf("expected user-only permissions, got %o", after.Mode().Perm())
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read updated file: %v", err)
+	}
+	if string(data) != "fresh-secret" {
+		t.Fatalf("expected updated secret value, got %q", string(data))
+	}
+}
+
 func TestRefRejectsInlineSecretValue(t *testing.T) {
 	if err := secret.ValidateRef(secret.Ref("keychain:outlook/work")); err != nil {
 		t.Fatalf("expected keychain ref to be valid: %v", err)

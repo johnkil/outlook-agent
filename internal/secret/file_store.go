@@ -51,15 +51,36 @@ func (store *FileStore) Put(_ context.Context, ref Ref, value Value) error {
 	if err != nil {
 		return err
 	}
-	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+	dir := filepath.Dir(path)
+	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return fmt.Errorf("create file secret directory: %w", err)
 	}
-	if err := os.WriteFile(path, []byte(value), 0o600); err != nil {
+	temp, err := os.CreateTemp(dir, ".outlook-agent-secret-*")
+	if err != nil {
+		return fmt.Errorf("create temporary file secret: %s", ref)
+	}
+	tempPath := temp.Name()
+	keepTemp := true
+	defer func() {
+		if keepTemp {
+			_ = os.Remove(tempPath)
+		}
+	}()
+	if err := temp.Chmod(0o600); err != nil {
+		_ = temp.Close()
+		return fmt.Errorf("set temporary file secret permissions: %s", ref)
+	}
+	if _, err := temp.Write([]byte(value)); err != nil {
+		_ = temp.Close()
 		return fmt.Errorf("store file secret: %s", ref)
 	}
-	if err := os.Chmod(path, 0o600); err != nil {
-		return fmt.Errorf("set file secret permissions: %s", ref)
+	if err := temp.Close(); err != nil {
+		return fmt.Errorf("close file secret: %s", ref)
 	}
+	if err := os.Rename(tempPath, path); err != nil {
+		return fmt.Errorf("store file secret: %s", ref)
+	}
+	keepTemp = false
 	return nil
 }
 

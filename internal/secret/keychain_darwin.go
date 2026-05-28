@@ -29,6 +29,7 @@ var securityFindGenericPassword = func(ctx context.Context, service string, acco
 }
 
 var securityAddGenericPassword = func(ctx context.Context, service string, account string, value Value) error {
+	// security(1) treats trailing "-w" without a value as prompt mode; stdin keeps the secret out of argv.
 	args := []string{
 		"add-generic-password",
 		"-U",
