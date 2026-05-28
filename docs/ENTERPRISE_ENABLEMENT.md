@@ -124,18 +124,6 @@ Rollout checklist:
 Distribution wraps the public release artifact without embedding private
 profiles.
 
-Initial pilot channel:
-
-- Use checksum-verified direct archive install from the latest approved GitHub
-  release for the first enterprise pilot group.
-- Release owner: the public repository maintainer owns public release artifacts,
-  checksums, and release notes.
-- Rollback owner: the enterprise deployment operator owns restoring the
-  previous approved archive/package and removing the MCP entry when rollback is
-  required.
-- The private config/profile owner remains separate from the public release
-  owner and keeps tenant-specific profiles outside this repository.
-
 Acceptable channels:
 
 - internal package-manager manifest;

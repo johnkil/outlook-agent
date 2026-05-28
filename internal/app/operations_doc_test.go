@@ -62,28 +62,6 @@ func TestEnterpriseEnablementPlaybookDocumentsExternalGates(t *testing.T) {
 	}
 }
 
-func TestEnterpriseEnablementDocumentsInitialDistributionDecision(t *testing.T) {
-	path := filepath.Join("..", "..", "docs", "ENTERPRISE_ENABLEMENT.md")
-	data, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatalf("read enterprise enablement playbook: %v", err)
-	}
-	text := string(data)
-
-	for _, required := range []string{
-		"Initial pilot channel",
-		"checksum-verified direct archive install",
-		"Release owner",
-		"Rollback owner",
-		"public release artifacts",
-		"private config/profile owner",
-	} {
-		if !strings.Contains(text, required) {
-			t.Fatalf("expected enterprise enablement playbook to contain %q", required)
-		}
-	}
-}
-
 func TestSecurityPolicyDocumentsReportingAndBoundaries(t *testing.T) {
 	path := filepath.Join("..", "..", "SECURITY.md")
 	data, err := os.ReadFile(path)
