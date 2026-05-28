@@ -152,7 +152,7 @@ bash scripts/public-safety-check.sh
 
 Also run the private-marker grep and temporary artifact check.
 
-- [ ] **Step 3: Commit, push, and update GitHub**
+- [x] **Step 3: Commit, push, and update GitHub**
 
 Commit:
 
