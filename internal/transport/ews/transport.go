@@ -88,17 +88,24 @@ func (client *Transport) Execute(ctx context.Context, request transport.ActionRe
 			"response_code":      metadata.ResponseCode,
 		}}}
 	case "mail.search":
-		limit := intValue(request.Payload, "max", 150)
-		result, err := client.findItems(ctx, stringValue(request.Payload, "folder_id", "inbox"), limit, stringValue(request.Payload, "query", ""))
+		limit, err := transport.ClampPageSize(request.Payload["max"], transport.DefaultPageSize, transport.MaxPageSize)
 		if err != nil {
 			return transport.ActionResponse{OK: false, Error: err.Error()}
 		}
-		return transport.ActionResponse{OK: true, Data: map[string]any{
+		result, err := client.findItems(ctx, stringValue(request.Payload, "folder_id", "inbox"), limit.Value, stringValue(request.Payload, "query", ""))
+		if err != nil {
+			return transport.ActionResponse{OK: false, Error: err.Error()}
+		}
+		data := map[string]any{
 			"messages":  result.Messages,
 			"returned":  len(result.Messages),
-			"limit":     limit,
+			"limit":     limit.Value,
 			"truncated": result.Truncated,
-		}}
+		}
+		if limit.Clamped {
+			data["limit_clamped"] = true
+		}
+		return transport.ActionResponse{OK: true, Data: data}
 	case "mail.fetch_metadata":
 		messageID := strings.TrimSpace(stringValue(request.Payload, "id", ""))
 		if messageID == "" {
@@ -120,11 +127,19 @@ func (client *Transport) Execute(ctx context.Context, request transport.ActionRe
 		}
 		return transport.ActionResponse{OK: true, Data: map[string]any{"id": message.ID, "body_text": message.Body}}
 	case "calendar.list":
-		events, err := client.listCalendarEvents(ctx, stringValue(request.Payload, "start", ""), stringValue(request.Payload, "end", ""), intValue(request.Payload, "max", 150))
+		limit, err := transport.ClampPageSize(request.Payload["max"], transport.DefaultPageSize, transport.MaxPageSize)
 		if err != nil {
 			return transport.ActionResponse{OK: false, Error: err.Error()}
 		}
-		return transport.ActionResponse{OK: true, Data: map[string]any{"events": events}}
+		events, err := client.listCalendarEvents(ctx, stringValue(request.Payload, "start", ""), stringValue(request.Payload, "end", ""), limit.Value)
+		if err != nil {
+			return transport.ActionResponse{OK: false, Error: err.Error()}
+		}
+		data := map[string]any{"events": events, "limit": limit.Value}
+		if limit.Clamped {
+			data["limit_clamped"] = true
+		}
+		return transport.ActionResponse{OK: true, Data: data}
 	case "calendar.availability":
 		windows, err := client.getAvailability(ctx, request.Payload)
 		if err != nil {

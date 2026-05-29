@@ -262,6 +262,39 @@ func TestTransportExecutesMailSearchWithFindItem(t *testing.T) {
 	}
 }
 
+func TestTransportMailSearchClampsHugePageSize(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		body, err := io.ReadAll(request.Body)
+		if err != nil {
+			t.Fatalf("read body: %v", err)
+		}
+		if !strings.Contains(string(body), `<m:IndexedPageItemView MaxEntriesReturned="250" Offset="0" BasePoint="Beginning"/>`) {
+			t.Fatalf("expected clamped EWS page size, got %s", string(body))
+		}
+		response.Header().Set("Content-Type", "text/xml")
+		_, _ = response.Write([]byte(successfulFindItemResponse()))
+	}))
+	defer server.Close()
+
+	client := ews.NewTransport(ews.Config{
+		EndpointURL: server.URL + "/EWS/Exchange.asmx",
+		Username:    "DOMAIN\\user",
+		SecretRef:   secret.Ref("memory:ews"),
+	}, secret.NewMemoryStore(map[string]string{"memory:ews": "password-secret"}), server.Client())
+
+	result := client.Execute(context.Background(), transport.ActionRequest{
+		Name:    "mail.search",
+		Payload: map[string]any{"folder_id": "inbox", "max": 1_000_000},
+	})
+
+	if !result.OK {
+		t.Fatalf("expected mail.search ok, got %#v", result)
+	}
+	if result.Data["limit"] != transport.MaxPageSize || result.Data["limit_clamped"] != true {
+		t.Fatalf("expected clamped limit metadata, got %#v", result.Data)
+	}
+}
+
 func TestTransportRejectsOversizedHighLevelEWSResponse(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
 		response.Header().Set("Content-Type", "text/xml")
@@ -553,6 +586,43 @@ func TestTransportExecutesCalendarListWithCalendarView(t *testing.T) {
 	}
 	if first["start"] != "2026-05-28T09:00:00Z" || first["end"] != "2026-05-28T09:30:00Z" {
 		t.Fatalf("unexpected first event time fields: %#v", first)
+	}
+}
+
+func TestTransportCalendarListClampsHugePageSize(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		body, err := io.ReadAll(request.Body)
+		if err != nil {
+			t.Fatalf("read body: %v", err)
+		}
+		if !strings.Contains(string(body), `<m:CalendarView MaxEntriesReturned="250" StartDate="2026-05-28T00:00:00Z" EndDate="2026-05-29T00:00:00Z"/>`) {
+			t.Fatalf("expected clamped EWS calendar page size, got %s", string(body))
+		}
+		response.Header().Set("Content-Type", "text/xml")
+		_, _ = response.Write([]byte(successfulFindCalendarItemsResponse()))
+	}))
+	defer server.Close()
+
+	client := ews.NewTransport(ews.Config{
+		EndpointURL: server.URL + "/EWS/Exchange.asmx",
+		Username:    "DOMAIN\\user",
+		SecretRef:   secret.Ref("memory:ews"),
+	}, secret.NewMemoryStore(map[string]string{"memory:ews": "password-secret"}), server.Client())
+
+	result := client.Execute(context.Background(), transport.ActionRequest{
+		Name: "calendar.list",
+		Payload: map[string]any{
+			"start": "2026-05-28T00:00:00Z",
+			"end":   "2026-05-29T00:00:00Z",
+			"max":   "1000000",
+		},
+	})
+
+	if !result.OK {
+		t.Fatalf("expected calendar.list ok, got %#v", result)
+	}
+	if result.Data["limit"] != transport.MaxPageSize || result.Data["limit_clamped"] != true {
+		t.Fatalf("expected clamped limit metadata, got %#v", result.Data)
 	}
 }
 

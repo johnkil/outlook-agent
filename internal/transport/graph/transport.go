@@ -95,16 +95,22 @@ func (client *Transport) Execute(ctx context.Context, request transport.ActionRe
 		}
 		return transport.ActionResponse{OK: ok, Data: data, Error: errorText}
 	case "mail.search":
-		limit := intValue(request.Payload, "max", 150)
-		result, err := client.listMessages(ctx, mailbox, stringValue(request.Payload, "folder_id", "inbox"), limit, stringValue(request.Payload, "query", ""))
+		limit, err := transport.ClampPageSize(request.Payload["max"], transport.DefaultPageSize, transport.MaxPageSize)
+		if err != nil {
+			return transport.ActionResponse{OK: false, Error: err.Error()}
+		}
+		result, err := client.listMessages(ctx, mailbox, stringValue(request.Payload, "folder_id", "inbox"), limit.Value, stringValue(request.Payload, "query", ""))
 		if err != nil {
 			return transport.ActionResponse{OK: false, Error: err.Error()}
 		}
 		data := map[string]any{
 			"messages":  result.Messages,
 			"returned":  len(result.Messages),
-			"limit":     limit,
+			"limit":     limit.Value,
 			"truncated": result.NextLink != "",
+		}
+		if limit.Clamped {
+			data["limit_clamped"] = true
 		}
 		if result.NextLink != "" {
 			data["next_link"] = result.NextLink
@@ -1036,7 +1042,10 @@ func (client *Transport) messagesURL(mailbox string, folderID string, maxItems i
 		folderID = "inbox"
 	}
 	if maxItems <= 0 {
-		maxItems = 150
+		maxItems = transport.DefaultPageSize
+	}
+	if maxItems > transport.MaxPageSize {
+		maxItems = transport.MaxPageSize
 	}
 	values := url.Values{}
 	values.Set("$top", strconv.Itoa(maxItems))

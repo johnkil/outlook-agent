@@ -343,6 +343,34 @@ func TestTransportExecutesMailSearchMetadata(t *testing.T) {
 	}
 }
 
+func TestTransportMailSearchClampsHugePageSize(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		if request.URL.Query().Get("$top") != "250" {
+			t.Fatalf("expected clamped $top=250, got %q", request.URL.Query().Get("$top"))
+		}
+		response.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(response).Encode(map[string]any{"value": []any{}})
+	}))
+	defer server.Close()
+
+	client := graph.NewTransport(graph.Config{
+		BaseURL:   server.URL + "/v1.0",
+		SecretRef: secret.Ref("memory:graph"),
+	}, secret.NewMemoryStore(map[string]string{"memory:graph": "token-secret"}), server.Client())
+
+	result := client.Execute(context.Background(), transport.ActionRequest{
+		Name:    "mail.search",
+		Payload: map[string]any{"max": "1000000"},
+	})
+
+	if !result.OK {
+		t.Fatalf("expected mail.search ok, got %#v", result)
+	}
+	if result.Data["limit"] != transport.MaxPageSize || result.Data["limit_clamped"] != true {
+		t.Fatalf("expected clamped limit metadata, got %#v", result.Data)
+	}
+}
+
 func TestTransportExecutesMailSearchForMailboxTarget(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
 		if request.Method != http.MethodGet || request.URL.Path != "/v1.0/users/shared@example.com/mailFolders/inbox/messages" {
