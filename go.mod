@@ -2,7 +2,10 @@ module github.com/johnkil/outlook-agent
 
 go 1.26.3
 
-require github.com/modelcontextprotocol/go-sdk v1.6.1
+require (
+	github.com/modelcontextprotocol/go-sdk v1.6.1
+	github.com/tailscale/hujson v0.0.0-20260302212456-ecc657c15afd
+)
 
 require (
 	github.com/google/jsonschema-go v0.4.3 // indirect

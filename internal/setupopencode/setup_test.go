@@ -208,11 +208,13 @@ func TestPlanUsesExistingJSONCConfig(t *testing.T) {
 		"$schema": "https://opencode.ai/config.json",
 		"custom": true,
 		"mcp": {
+			// Local Outlook MCP bridge.
 			"outlook-agent": {
 				"type": "local",
 				"command": ["go", "run", "./cmd/outlook-agent", "mcp"],
 				"enabled": false,
 				"environment": {
+					// Keep this local path project-specific.
 					"OUTLOOK_AGENT_CONFIG": ".local/custom.json",
 				},
 				"timeout": 30,
@@ -229,9 +231,19 @@ func TestPlanUsesExistingJSONCConfig(t *testing.T) {
 	}
 	assertNoTarget(t, plan, "opencode.json")
 	target := assertTarget(t, plan, "opencode.jsonc", "config", StatusBlocked)
+	plannedContent := string(target.content)
+	for _, requiredComment := range []string{
+		"// Existing project OpenCode config.",
+		"// Local Outlook MCP bridge.",
+		"// Keep this local path project-specific.",
+	} {
+		if !strings.Contains(plannedContent, requiredComment) {
+			t.Fatalf("expected planned JSONC to preserve comment %q, got:\n%s", requiredComment, plannedContent)
+		}
+	}
 	var payload map[string]any
-	if err := json.Unmarshal(target.content, &payload); err != nil {
-		t.Fatalf("planned config is not JSON: %v; content=%s", err, string(target.content))
+	if err := decodeConfigContent("opencode.jsonc", target.content, &payload); err != nil {
+		t.Fatalf("planned config is not JSONC: %v; content=%s", err, string(target.content))
 	}
 	if payload["custom"] != true {
 		t.Fatalf("expected custom field to be preserved, got %#v", payload)
@@ -249,6 +261,42 @@ func TestPlanUsesExistingJSONCConfig(t *testing.T) {
 	}
 	if !strings.Contains(Diff(plan), "target opencode.jsonc (config): blocked") {
 		t.Fatalf("expected diff to show opencode.jsonc target, got:\n%s", Diff(plan))
+	}
+}
+
+func TestPlanLeavesCurrentJSONCConfigUnchanged(t *testing.T) {
+	root := t.TempDir()
+	existing := `{
+		// Keep project notes in JSONC.
+		"$schema": "https://opencode.ai/config.json",
+		"mcp": {
+			"outlook-agent": {
+				"type": "local",
+				"command": [
+					"outlook-agent",
+					"--config",
+					".local/outlook-agent.json",
+					"mcp"
+				],
+				"enabled": true,
+				"environment": {
+					"OUTLOOK_AGENT_CONFIG": ".local/custom.json",
+				},
+			},
+		},
+	}
+`
+	if err := os.WriteFile(filepath.Join(root, "opencode.jsonc"), []byte(existing), 0o644); err != nil {
+		t.Fatalf("write existing opencode config: %v", err)
+	}
+
+	plan, err := BuildPlan(Options{RepoRoot: root, Binary: "outlook-agent", ConfigPath: ".local/outlook-agent.json", Now: fixedTime()})
+	if err != nil {
+		t.Fatalf("BuildPlan returned error: %v", err)
+	}
+	target := assertTarget(t, plan, "opencode.jsonc", "config", StatusUnchanged)
+	if string(target.content) != existing {
+		t.Fatalf("expected current JSONC config to remain byte-for-byte unchanged, got:\n%s", string(target.content))
 	}
 }
 

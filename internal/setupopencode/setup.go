@@ -14,6 +14,7 @@ import (
 	"time"
 
 	skillassets "github.com/johnkil/outlook-agent/skills"
+	"github.com/tailscale/hujson"
 )
 
 const (
@@ -250,11 +251,126 @@ func buildConfigContent(root string, binary string, configPath string) (string, 
 	mcp["outlook-agent"] = server
 	existing["mcp"] = mcp
 
+	if strings.HasSuffix(configTarget, ".jsonc") && len(bytes.TrimSpace(existingContent)) > 0 {
+		content, err := patchOpenCodeJSONCConfig(existingContent, existing)
+		if err != nil {
+			return "", nil, fmt.Errorf("patch %s: %w", configTarget, err)
+		}
+		return configTarget, ensureTrailingNewline(content), nil
+	}
+
 	content, err := json.MarshalIndent(existing, "", "  ")
 	if err != nil {
 		return "", nil, fmt.Errorf("marshal %s: %w", configTarget, err)
 	}
-	return configTarget, append(content, '\n'), nil
+	return configTarget, ensureTrailingNewline(content), nil
+}
+
+func ensureTrailingNewline(content []byte) []byte {
+	if len(content) == 0 || content[len(content)-1] != '\n' {
+		return append(append([]byte(nil), content...), '\n')
+	}
+	return append([]byte(nil), content...)
+}
+
+func patchOpenCodeJSONCConfig(content []byte, config map[string]any) ([]byte, error) {
+	value, err := hujson.Parse(content)
+	if err != nil {
+		return nil, err
+	}
+	mcp, _ := config["mcp"].(map[string]any)
+	server, _ := mcp["outlook-agent"].(map[string]any)
+	if server == nil {
+		return nil, errors.New("missing outlook-agent MCP server")
+	}
+
+	operations := []map[string]any{}
+	if !hujsonObjectAt(&value, "/mcp") {
+		operations = append(operations, map[string]any{
+			"op":    jsoncPatchOp(&value, "/mcp"),
+			"path":  "/mcp",
+			"value": map[string]any{"outlook-agent": server},
+		})
+	} else if !hujsonObjectAt(&value, "/mcp/outlook-agent") {
+		operations = append(operations, map[string]any{
+			"op":    jsoncPatchOp(&value, "/mcp/outlook-agent"),
+			"path":  "/mcp/outlook-agent",
+			"value": server,
+		})
+	} else {
+		for _, key := range []string{"type", "command", "enabled"} {
+			path := "/mcp/outlook-agent/" + escapeJSONPointerToken(key)
+			if found := value.Find(path); found != nil && hujsonValueEqualGo(found, server[key]) {
+				continue
+			}
+			operations = append(operations, map[string]any{
+				"op":    jsoncPatchOp(&value, path),
+				"path":  path,
+				"value": server[key],
+			})
+		}
+	}
+	if len(operations) == 0 {
+		return append([]byte(nil), content...), nil
+	}
+
+	patch, err := json.Marshal(operations)
+	if err != nil {
+		return nil, err
+	}
+	if err := value.Patch(patch); err != nil {
+		return nil, err
+	}
+	return value.Pack(), nil
+}
+
+func jsoncPatchOp(value *hujson.Value, path string) string {
+	if value.Find(path) == nil {
+		return "add"
+	}
+	return "replace"
+}
+
+func hujsonObjectAt(value *hujson.Value, path string) bool {
+	found := value.Find(path)
+	if found == nil {
+		return false
+	}
+	_, ok := found.Value.(*hujson.Object)
+	return ok
+}
+
+func hujsonValueEqualGo(value *hujson.Value, expected any) bool {
+	actual, err := hujson.Standardize(append([]byte(nil), value.Pack()...))
+	if err != nil {
+		return false
+	}
+	expectedJSON, err := json.Marshal(expected)
+	if err != nil {
+		return false
+	}
+	actualCompact, err := compactJSON(actual)
+	if err != nil {
+		return false
+	}
+	expectedCompact, err := compactJSON(expectedJSON)
+	if err != nil {
+		return false
+	}
+	return bytes.Equal(actualCompact, expectedCompact)
+}
+
+func compactJSON(content []byte) ([]byte, error) {
+	var buffer bytes.Buffer
+	if err := json.Compact(&buffer, content); err != nil {
+		return nil, err
+	}
+	return buffer.Bytes(), nil
+}
+
+func escapeJSONPointerToken(token string) string {
+	token = strings.ReplaceAll(token, "~", "~0")
+	return strings.ReplaceAll(token, "/", "~1")
 }
 
 func existingConfigTarget(root string) (string, []byte, error) {
@@ -286,116 +402,16 @@ func decodeConfigContent(configPath string, content []byte, target *map[string]a
 	}
 	data := trimmed
 	if strings.HasSuffix(configPath, ".jsonc") {
-		data = stripJSONCTrailingCommas(stripJSONCComments(data))
+		var err error
+		data, err = hujson.Standardize(append([]byte(nil), data...))
+		if err != nil {
+			return fmt.Errorf("parse %s: %w", configPath, err)
+		}
 	}
 	if err := json.Unmarshal(data, target); err != nil {
 		return fmt.Errorf("parse %s: %w", configPath, err)
 	}
 	return nil
-}
-
-func stripJSONCComments(content []byte) []byte {
-	var builder bytes.Buffer
-	inString := false
-	escaped := false
-	inLineComment := false
-	inBlockComment := false
-	for index := 0; index < len(content); index++ {
-		character := content[index]
-		if inLineComment {
-			if character == '\n' {
-				inLineComment = false
-				builder.WriteByte(character)
-			}
-			continue
-		}
-		if inBlockComment {
-			if character == '\n' {
-				builder.WriteByte(character)
-				continue
-			}
-			if character == '*' && index+1 < len(content) && content[index+1] == '/' {
-				inBlockComment = false
-				index++
-			}
-			continue
-		}
-		if inString {
-			builder.WriteByte(character)
-			if escaped {
-				escaped = false
-				continue
-			}
-			if character == '\\' {
-				escaped = true
-			} else if character == '"' {
-				inString = false
-			}
-			continue
-		}
-		if character == '"' {
-			inString = true
-			builder.WriteByte(character)
-			continue
-		}
-		if character == '/' && index+1 < len(content) {
-			next := content[index+1]
-			if next == '/' {
-				inLineComment = true
-				index++
-				continue
-			}
-			if next == '*' {
-				inBlockComment = true
-				index++
-				continue
-			}
-		}
-		builder.WriteByte(character)
-	}
-	return builder.Bytes()
-}
-
-func stripJSONCTrailingCommas(content []byte) []byte {
-	var builder bytes.Buffer
-	inString := false
-	escaped := false
-	for index := 0; index < len(content); index++ {
-		character := content[index]
-		if inString {
-			builder.WriteByte(character)
-			if escaped {
-				escaped = false
-				continue
-			}
-			if character == '\\' {
-				escaped = true
-			} else if character == '"' {
-				inString = false
-			}
-			continue
-		}
-		if character == '"' {
-			inString = true
-			builder.WriteByte(character)
-			continue
-		}
-		if character == ',' {
-			lookahead := index + 1
-			for lookahead < len(content) && isJSONWhitespace(content[lookahead]) {
-				lookahead++
-			}
-			if lookahead < len(content) && (content[lookahead] == '}' || content[lookahead] == ']') {
-				continue
-			}
-		}
-		builder.WriteByte(character)
-	}
-	return builder.Bytes()
-}
-
-func isJSONWhitespace(character byte) bool {
-	return character == ' ' || character == '\n' || character == '\r' || character == '\t'
 }
 
 func planTarget(root string, relativePath string, kind string, content []byte) (Target, error) {
