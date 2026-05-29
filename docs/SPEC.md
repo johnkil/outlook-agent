@@ -120,11 +120,13 @@ Key tool inputs:
   for policy-aware clients. Each `details` entry contains `name`, `transport`,
   `safety_class`, numeric coverage `level`,
   `allowed_direct`, `requires_dry_run`, `requires_confirmation`, and
-  `requires_unsafe`. Explicit read or mutation requirements are exposed through
-  `requires_explicit_target` and `requires_explicit_intent`. The
+  `requires_unsafe`. High-risk entries also expose `requires_approval` and
+  `approval_mode` when payload-bound host approval is required. Explicit read
+  or mutation requirements are exposed through `requires_explicit_target` and
+  `requires_explicit_intent`. The `approval` section exposes the global
+  approval mode and whether high-risk actions require approval. The
   `execution_route` field is one of `direct`, `direct_explicit_target`,
-  `direct_explicit_intent`, `dry_run_confirm`, or
-  `unsafe_dry_run_confirm`.
+  `direct_explicit_intent`, `dry_run_confirm`, or `unsafe_dry_run_confirm`.
 - High-level mail and calendar tools accept optional `mailbox` for transports
   that support delegated or shared mailbox targeting. Graph uses that value as
   `/users/{id|userPrincipalName}`; when omitted, Graph uses `/me`.
@@ -143,25 +145,29 @@ Key tool inputs:
   Returns read-only mailbox rule metadata when the selected transport supports
   `mail.rules.list`.
 - `outlook.mail_rule_set_enabled`: `rule_id`, `enabled`, `confirm_token`,
-  optional `approval_token`, optional `folder_id`, and optional `mailbox`. The
-  action maps to
+  optional `approval_challenge_id`, optional `approval_token`, optional
+  `folder_id`, and optional `mailbox`. The action maps to
   `mail.rules.set_enabled`, is classified as `settings_or_rules`, and requires
   a matching `outlook.action_dry_run` confirmation token before execution.
 - `outlook.mail_move_to_deleted_items`: `ids`, `confirm_token`, optional
-  `approval_token`, and optional `mailbox`. Responses include `succeeded` and
-  `failed` partial-result fields in addition to `moved_count`.
+  `approval_challenge_id`, optional `approval_token`, and optional `mailbox`.
+  Responses include `succeeded` and `failed` partial-result fields in addition
+  to `moved_count`.
 - `outlook.mailbox_settings_get`: optional `setting` and optional `mailbox`.
   Returns read-only mailbox settings metadata when the selected transport
   supports `mailbox.settings.get`.
 - `outlook.action_dry_run`: returns `ok=false`, `error`, and no
   `confirmation_token` when the requested confirmed action is not permitted in
   the selected mode. For example, destructive and unknown actions require
-  `unsafe_mode=true`.
+  `unsafe_mode=true`. Successful dry-runs return a review packet and, in
+  required approval mode for high-risk actions, `requires_approval=true` plus
+  `approval_challenge`.
 - `outlook.action_confirm`: validates the exact confirmation token binding and
-  then applies confirmed-action policy again before transport execution. When
-  the host sets `OUTLOOK_AGENT_APPROVAL_TOKEN`, confirm tools also require an
-  `approval_token` supplied out-of-band by the host after user approval; dry-run
-  output does not reveal that token.
+  then applies confirmed-action policy again before transport execution. In
+  required approval mode, high-risk actions also require
+  `approval_challenge_id` and an HMAC `approval_token` for the exact dry-run
+  challenge. `OUTLOOK_AGENT_APPROVAL_TOKEN` is retained only as optional legacy
+  static-token compatibility and is not production-grade approval.
 - Raw `GraphRequest`: transport action for a relative Microsoft Graph path
   with `method`, `path`, optional `query`, optional safe custom `headers`, and
   optional JSON `body`. It is intentionally classified as `destructive`, so MCP

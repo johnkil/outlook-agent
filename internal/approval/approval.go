@@ -126,6 +126,20 @@ func (store *Store) Consume(challengeID string, token string, secret string, bin
 	store.mu.Lock()
 	defer store.mu.Unlock()
 
+	if err := store.validateLocked(challengeID, token, secret, binding); err != nil {
+		return err
+	}
+	delete(store.records, challengeID)
+	return nil
+}
+
+func (store *Store) Validate(challengeID string, token string, secret string, binding Binding) error {
+	store.mu.Lock()
+	defer store.mu.Unlock()
+	return store.validateLocked(challengeID, token, secret, binding)
+}
+
+func (store *Store) validateLocked(challengeID string, token string, secret string, binding Binding) error {
 	stored, ok := store.records[challengeID]
 	if !ok {
 		return errors.New("approval challenge is invalid")
@@ -137,11 +151,7 @@ func (store *Store) Consume(challengeID string, token string, secret string, bin
 	if stored.challenge.Binding != binding {
 		return errors.New("approval challenge binding mismatch")
 	}
-	if err := ValidateChallengeToken(strings.TrimSpace(secret), stored.challenge, token); err != nil {
-		return err
-	}
-	delete(store.records, challengeID)
-	return nil
+	return ValidateChallengeToken(strings.TrimSpace(secret), stored.challenge, token)
 }
 
 func SignChallenge(secret string, challenge Challenge) (string, error) {
@@ -186,7 +196,8 @@ func parseMode(value string, fallback Mode) Mode {
 }
 
 func defaultModeForTransport(transportName string) Mode {
-	if strings.EqualFold(strings.TrimSpace(transportName), "fake") {
+	normalized := strings.ToLower(strings.TrimSpace(transportName))
+	if normalized == "fake" || normalized == "test" || normalized == "capture" || normalized == "failing" {
 		return ModeDev
 	}
 	return ModeRequired

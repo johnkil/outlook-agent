@@ -1308,12 +1308,14 @@ func TestAgentUXDocumentationNamesHappyPath(t *testing.T) {
 			"outlook-agent setup opencode --print",
 			".opencode/skills",
 			"metadata-first",
+			"OUTLOOK_AGENT_APPROVAL_MODE",
 		},
 		filepath.Join("..", "..", "docs", "OPENCODE.md"): {
 			"outlook-agent setup opencode --print",
 			".opencode/skills/outlook-mail",
 			".opencode/skills/outlook-calendar",
 			"capabilities",
+			"approval_challenge",
 			"dry-run",
 			"exact confirmation",
 		},
@@ -1322,6 +1324,9 @@ func TestAgentUXDocumentationNamesHappyPath(t *testing.T) {
 			"setup opencode --print",
 			"next_steps",
 			"metadata-first",
+			"requires_approval",
+			"approval_mode",
+			"approval_challenge",
 		},
 	}
 
