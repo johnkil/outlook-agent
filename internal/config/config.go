@@ -108,7 +108,7 @@ func containsInlineSecret(value any) bool {
 			}
 		}
 	case string:
-		return containsURLUserinfo(typed)
+		return containsURLUserinfo(typed) || containsSensitiveURLMaterial(typed)
 	}
 	return false
 }
@@ -157,4 +157,43 @@ func containsURLUserinfo(value string) bool {
 		return false
 	}
 	return parsed.Scheme != "" && parsed.Host != ""
+}
+
+func containsSensitiveURLMaterial(value string) bool {
+	parsed, err := url.Parse(strings.TrimSpace(value))
+	if err != nil || parsed == nil || parsed.Scheme == "" || parsed.Host == "" {
+		return false
+	}
+	if containsSensitiveURLValues(parsed.RawQuery) {
+		return true
+	}
+	return containsSensitiveURLValues(parsed.Fragment)
+}
+
+func containsSensitiveURLValues(encoded string) bool {
+	if strings.TrimSpace(encoded) == "" {
+		return false
+	}
+	values, err := url.ParseQuery(encoded)
+	if err != nil {
+		return containsSensitiveURLFallback(encoded)
+	}
+	for key := range values {
+		if isInlineSecretKey(key) {
+			return true
+		}
+	}
+	return false
+}
+
+func containsSensitiveURLFallback(encoded string) bool {
+	for _, part := range strings.FieldsFunc(encoded, func(r rune) bool {
+		return r == '&' || r == ';'
+	}) {
+		key, _, ok := strings.Cut(part, "=")
+		if ok && isInlineSecretKey(key) {
+			return true
+		}
+	}
+	return false
 }

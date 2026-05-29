@@ -164,6 +164,20 @@ func TestConfigRejectsSecretLikeKeysAndURLUserinfo(t *testing.T) {
 				}
 			}`,
 		},
+		{
+			name: "sensitive query value",
+			body: `{
+				"profiles": {
+					"bad": {
+						"transport": "fake",
+						"secret_ref": "keychain:outlook/work",
+						"settings": {
+							"base_url": "https://mail.example.com/owa?access_token=do-not-store-this"
+						}
+					}
+				}
+			}`,
+		},
 	}
 
 	for _, tt := range tests {

@@ -227,6 +227,34 @@ func TestTransportRejectsOversizedRawGraphResponse(t *testing.T) {
 	}
 }
 
+func TestTransportRejectsOversizedHighLevelGraphBodyResponse(t *testing.T) {
+	oversizedBody := strings.Repeat("x", transport.MaxResponseBytes+1)
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		response.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(response).Encode(map[string]any{
+			"id": "msg-1",
+			"body": map[string]any{
+				"content": oversizedBody,
+			},
+		})
+	}))
+	defer server.Close()
+
+	client := graph.NewTransport(graph.Config{
+		BaseURL:   server.URL + "/v1.0",
+		SecretRef: secret.Ref("memory:graph"),
+	}, secret.NewMemoryStore(map[string]string{"memory:graph": "token-secret"}), server.Client())
+
+	result := client.Execute(context.Background(), transport.ActionRequest{
+		Name:    "mail.fetch_body",
+		Payload: map[string]any{"id": "msg-1"},
+	})
+
+	if result.OK || !strings.Contains(result.Error, "response too large") {
+		t.Fatalf("expected oversized high-level Graph response to be rejected, ok=%v error=%q", result.OK, result.Error)
+	}
+}
+
 func TestTransportRejectsRawGraphRequestAbsoluteURL(t *testing.T) {
 	client := graph.NewTransport(graph.Config{
 		BaseURL:   "https://graph.example.test/v1.0",
@@ -1286,6 +1314,47 @@ func TestTransportRefreshesExpiredOAuthTokenSecret(t *testing.T) {
 	expiresAt, _ := time.Parse(time.RFC3339, credential["expires_at"].(string))
 	if !expiresAt.After(time.Now().UTC()) {
 		t.Fatalf("expected future expires_at, got %s", expiresAt.Format(time.RFC3339))
+	}
+}
+
+func TestTransportRejectsOversizedOAuthRefreshResponse(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		response.Header().Set("Content-Type", "application/json")
+		switch request.URL.Path {
+		case "/oauth/token":
+			_ = json.NewEncoder(response).Encode(map[string]any{
+				"token_type":   "Bearer",
+				"access_token": "fresh-token",
+				"scope":        strings.Repeat("x", transport.MaxResponseBytes+1),
+			})
+		case "/v1.0/me/mailFolders/inbox":
+			_ = json.NewEncoder(response).Encode(graphFolderResponse())
+		default:
+			t.Fatalf("unexpected path: %s", request.URL.Path)
+		}
+	}))
+	defer server.Close()
+
+	store := secret.NewMemoryStore(map[string]string{
+		"memory:graph": `{
+			"token_type": "Bearer",
+			"access_token": "expired-token",
+			"refresh_token": "refresh-secret",
+			"expires_at": "2000-01-01T00:00:00Z"
+		}`,
+	})
+	client := graph.NewTransport(graph.Config{
+		BaseURL:   server.URL + "/v1.0",
+		SecretRef: secret.Ref("memory:graph"),
+		OAuth: graph.OAuthConfig{
+			ClientID: "client-id",
+			TokenURL: server.URL + "/oauth/token",
+		},
+	}, store, server.Client())
+
+	auth := client.Authenticate(context.Background(), "work")
+	if auth.OK || !strings.Contains(auth.Error, "response too large") {
+		t.Fatalf("expected oversized refresh response to be rejected, ok=%v error=%q", auth.OK, auth.Error)
 	}
 }
 

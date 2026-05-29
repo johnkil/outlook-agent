@@ -117,7 +117,7 @@ func requestDeviceCode(ctx context.Context, config OAuthConfig, client *http.Cli
 	defer response.Body.Close()
 
 	var challenge deviceCodeResponse
-	if err := json.NewDecoder(response.Body).Decode(&challenge); err != nil {
+	if err := decodeLimitedJSON(response.Body, &challenge); err != nil {
 		return deviceCodeResponse{}, err
 	}
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
@@ -201,7 +201,7 @@ func pollDeviceCodeTokenOnce(ctx context.Context, config OAuthConfig, client *ht
 	defer response.Body.Close()
 
 	var token tokenRefreshResponse
-	if err := json.NewDecoder(response.Body).Decode(&token); err != nil {
+	if err := decodeLimitedJSON(response.Body, &token); err != nil {
 		return tokenCredential{}, false, interval, err
 	}
 	if response.StatusCode < 200 || response.StatusCode >= 300 {

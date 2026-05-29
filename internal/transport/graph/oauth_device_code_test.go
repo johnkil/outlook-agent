@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/johnkil/outlook-agent/internal/secret"
+	"github.com/johnkil/outlook-agent/internal/transport"
 	"github.com/johnkil/outlook-agent/internal/transport/graph"
 )
 
@@ -117,6 +118,42 @@ func TestEnrollDeviceCodeStoresTokenCredential(t *testing.T) {
 	}
 	if !expiresAt.After(time.Now().UTC()) {
 		t.Fatalf("expected future expires_at, got %s", expiresAt.Format(time.RFC3339))
+	}
+}
+
+func TestEnrollDeviceCodeRejectsOversizedDeviceCodeResponse(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		response.Header().Set("Content-Type", "application/json")
+		switch request.URL.Path {
+		case "/oauth2/v2.0/devicecode":
+			_ = json.NewEncoder(response).Encode(map[string]any{
+				"device_code":      strings.Repeat("x", transport.MaxResponseBytes+1),
+				"user_code":        "ABCD-EFGH",
+				"verification_uri": "https://microsoft.com/devicelogin",
+				"expires_in":       900,
+			})
+		case "/oauth2/v2.0/token":
+			_ = json.NewEncoder(response).Encode(map[string]any{
+				"token_type":   "Bearer",
+				"access_token": "fresh-access-token",
+			})
+		default:
+			t.Fatalf("unexpected path: %s", request.URL.Path)
+		}
+	}))
+	defer server.Close()
+
+	_, err := graph.EnrollDeviceCode(context.Background(), graph.Config{
+		SecretRef: secret.Ref("memory:graph-token"),
+		OAuth: graph.OAuthConfig{
+			ClientID:      "client-id",
+			DeviceCodeURL: server.URL + "/oauth2/v2.0/devicecode",
+			TokenURL:      server.URL + "/oauth2/v2.0/token",
+			Scopes:        []string{"offline_access", "Mail.Read"},
+		},
+	}, secret.NewMemoryStore(nil), server.Client(), func(graph.DeviceCodeChallenge) {})
+	if err == nil || !strings.Contains(err.Error(), "response too large") {
+		t.Fatalf("expected oversized device-code response to be rejected, got %v", err)
 	}
 }
 

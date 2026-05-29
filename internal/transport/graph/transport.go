@@ -703,13 +703,13 @@ func (client *Transport) doJSONWithHeaders(ctx context.Context, method string, r
 
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
 		var errorPayload graphErrorResponse
-		_ = json.NewDecoder(response.Body).Decode(&errorPayload)
+		_ = decodeLimitedJSON(response.Body, &errorPayload)
 		if errorPayload.Error.Code != "" {
 			return fmt.Errorf("graph returned HTTP %d: %s", response.StatusCode, errorPayload.Error.Code)
 		}
 		return fmt.Errorf("graph returned HTTP %d", response.StatusCode)
 	}
-	if err := json.NewDecoder(response.Body).Decode(output); err != nil {
+	if err := decodeLimitedJSON(response.Body, output); err != nil {
 		return err
 	}
 	return nil
@@ -871,7 +871,7 @@ func (client *Transport) refreshTokenCredential(ctx context.Context, credential 
 	defer response.Body.Close()
 
 	var refreshed tokenRefreshResponse
-	if err := json.NewDecoder(response.Body).Decode(&refreshed); err != nil {
+	if err := decodeLimitedJSON(response.Body, &refreshed); err != nil {
 		return tokenCredential{}, err
 	}
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
