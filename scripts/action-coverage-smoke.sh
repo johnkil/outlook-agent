@@ -83,7 +83,11 @@ if [[ -n "${OUTLOOK_AGENT_OPENCODE_LIVE_DIR:-}" ]]; then
   }
 }
 JSON
-  model="${OUTLOOK_AGENT_OPENCODE_MODEL:-alfagen/MiniMaxAI/MiniMax}"
+  if [[ -z "${OUTLOOK_AGENT_OPENCODE_MODEL:-}" ]]; then
+    echo "OUTLOOK_AGENT_OPENCODE_MODEL is required when OUTLOOK_AGENT_OPENCODE_LIVE_DIR is set" >&2
+    exit 1
+  fi
+  model="$OUTLOOK_AGENT_OPENCODE_MODEL"
   (
     cd "$OUTLOOK_AGENT_OPENCODE_LIVE_DIR"
     env -u OPENCODE_CONFIG OPENCODE_CONFIG_DIR="$opencode_config_dir" opencode run \

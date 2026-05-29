@@ -31,7 +31,7 @@ fi
 pattern="${OUTLOOK_AGENT_PUBLIC_SAFETY_PATTERN:-}"
 if [[ -n "$pattern" ]]; then
   if command -v rg >/dev/null 2>&1; then
-    if rg -n "$pattern" . -g "!/.git/**" -g "!/.cache/**" -g "!/.worktrees/**" -g "!dist/**"; then
+    if rg --hidden -n "$pattern" . -g "!/.git/**" -g "!/.cache/**" -g "!/.worktrees/**" -g "!dist/**"; then
       echo "OUTLOOK_AGENT_PUBLIC_SAFETY_PATTERN matched repository content" >&2
       exit 1
     fi
