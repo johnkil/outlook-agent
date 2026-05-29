@@ -5,11 +5,15 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
+	"path"
 	"path/filepath"
 	"sort"
 	"strings"
 	"time"
+
+	skillassets "github.com/johnkil/outlook-agent/skills"
 )
 
 const (
@@ -50,6 +54,11 @@ type Target struct {
 	content        []byte
 }
 
+type skillFile struct {
+	name    string
+	content []byte
+}
+
 func BuildPlan(options Options) (Plan, error) {
 	if options.RepoRoot == "" {
 		options.RepoRoot = "."
@@ -79,18 +88,13 @@ func BuildPlan(options Options) (Plan, error) {
 	}
 	targets = append(targets, configTarget)
 
-	skills, err := sourceSkills(root)
+	skills, err := sourceSkills()
 	if err != nil {
 		return Plan{}, err
 	}
 	for _, skill := range skills {
-		sourcePath := filepath.Join(root, "skills", skill, "SKILL.md")
-		content, err := os.ReadFile(sourcePath)
-		if err != nil {
-			return Plan{}, fmt.Errorf("read source skill %s: %w", skill, err)
-		}
-		relativeTarget := filepath.Join(".opencode", "skills", skill, "SKILL.md")
-		target, err := planTarget(root, relativeTarget, "skill", content)
+		relativeTarget := filepath.Join(".opencode", "skills", skill.name, "SKILL.md")
+		target, err := planTarget(root, relativeTarget, "skill", skill.content)
 		if err != nil {
 			return Plan{}, err
 		}
@@ -194,37 +198,25 @@ func Apply(plan Plan, options ApplyOptions) error {
 	return nil
 }
 
-func sourceSkills(root string) ([]string, error) {
-	skillsRoot := filepath.Join(root, "skills")
-	if err := rejectRepoPathSymlinks(root, "skills"); err != nil {
-		return nil, err
-	}
-	entries, err := os.ReadDir(skillsRoot)
+func sourceSkills() ([]skillFile, error) {
+	entries, err := fs.ReadDir(skillassets.FS, ".")
 	if err != nil {
-		return nil, fmt.Errorf("read skills: %w", err)
+		return nil, fmt.Errorf("read bundled skills: %w", err)
 	}
-	skills := make([]string, 0)
+	skills := make([]skillFile, 0)
 	for _, entry := range entries {
-		if entry.Type()&os.ModeSymlink != 0 {
-			return nil, fmt.Errorf("symlinked path is not allowed: %s", filepath.Join(skillsRoot, entry.Name()))
-		}
 		if !entry.IsDir() {
 			continue
 		}
-		skillRoot := filepath.Join(skillsRoot, entry.Name())
-		if err := rejectRepoPathSymlinks(root, filepath.Join("skills", entry.Name())); err != nil {
-			return nil, err
+		content, err := fs.ReadFile(skillassets.FS, path.Join(entry.Name(), "SKILL.md"))
+		if err != nil {
+			return nil, fmt.Errorf("read bundled skill %s: %w", entry.Name(), err)
 		}
-		skillFile := filepath.Join(skillRoot, "SKILL.md")
-		if err := rejectRepoPathSymlinks(root, filepath.Join("skills", entry.Name(), "SKILL.md")); err != nil {
-			return nil, err
-		}
-		if _, err := os.Stat(skillFile); err != nil {
-			return nil, fmt.Errorf("stat source skill %s: %w", entry.Name(), err)
-		}
-		skills = append(skills, entry.Name())
+		skills = append(skills, skillFile{name: entry.Name(), content: content})
 	}
-	sort.Strings(skills)
+	sort.Slice(skills, func(left int, right int) bool {
+		return skills[left].name < skills[right].name
+	})
 	return skills, nil
 }
 

@@ -75,7 +75,8 @@ outlook-agent setup opencode apply --config .local/outlook-agent.json --yes --ba
 The planner writes only public project OpenCode files:
 
 - `opencode.json` with the local `outlook-agent` MCP server entry.
-- `.opencode/skills/*/SKILL.md` copied from repository `skills/*/SKILL.md`.
+- `.opencode/skills/*/SKILL.md` written from the public skills bundled in the
+  `outlook-agent` binary.
 
 It does not read or write secrets, token files, or `.local` config values. The
 `--config` value is used only as a path in the generated MCP command.

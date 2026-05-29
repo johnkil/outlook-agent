@@ -36,6 +36,24 @@ func TestPlanCreatesProjectConfigAndSkills(t *testing.T) {
 	}
 }
 
+func TestPlanUsesBundledSkillsWithoutRepoLocalSkills(t *testing.T) {
+	root := t.TempDir()
+
+	plan, err := BuildPlan(Options{
+		RepoRoot:   root,
+		Binary:     "outlook-agent",
+		ConfigPath: ".local/outlook-agent.json",
+		Now:        fixedTime(),
+	})
+	if err != nil {
+		t.Fatalf("BuildPlan returned error: %v", err)
+	}
+
+	assertTarget(t, plan, "opencode.json", "config", StatusNew)
+	assertTarget(t, plan, filepath.Join(".opencode", "skills", "outlook-mail", "SKILL.md"), "skill", StatusNew)
+	assertTarget(t, plan, filepath.Join(".opencode", "skills", "outlook-calendar", "SKILL.md"), "skill", StatusNew)
+}
+
 func TestApplyRequiresYes(t *testing.T) {
 	root := t.TempDir()
 	writeSkill(t, root, "outlook-mail", "# Mail\n")
@@ -198,8 +216,13 @@ func TestDiffShowsCurrentContentForBlockedTarget(t *testing.T) {
 	if err != nil {
 		t.Fatalf("BuildPlan returned error: %v", err)
 	}
+	mailTarget := assertTarget(t, plan, filepath.Join(".opencode", "skills", "outlook-mail", "SKILL.md"), "skill", StatusBlocked)
 	diff := Diff(plan)
-	if !strings.Contains(diff, "--- current\n# edited\n+++ planned\n# Mail\n") {
+	plannedContent := string(mailTarget.content)
+	if !strings.HasSuffix(plannedContent, "\n") {
+		plannedContent += "\n"
+	}
+	if !strings.Contains(diff, "--- current\n# edited\n+++ planned\n"+plannedContent) {
 		t.Fatalf("expected blocked diff to show current and planned content, got:\n%s", diff)
 	}
 }
@@ -228,8 +251,9 @@ func TestBackupPathAvoidsCollisions(t *testing.T) {
 		t.Fatalf("expected BuildPlan to leave BackupPath empty for deterministic output, got %s", plannedTarget.BackupPath)
 	}
 
-	plan.Targets[0].BackupPath = filepath.Join(".opencode", "skills", "outlook-mail", "SKILL.md.bak.20260529123456")
-	staleBackup := filepath.Join(root, plan.Targets[0].BackupPath)
+	plannedBackupPath := filepath.Join(".opencode", "skills", "outlook-mail", "SKILL.md.bak.20260529123456")
+	setTargetBackupPath(t, &plan, filepath.Join(".opencode", "skills", "outlook-mail", "SKILL.md"), plannedBackupPath)
+	staleBackup := filepath.Join(root, plannedBackupPath)
 	if err := os.WriteFile(staleBackup, []byte("stale collision"), 0o644); err != nil {
 		t.Fatalf("write stale planned backup collision: %v", err)
 	}
@@ -316,51 +340,26 @@ func TestRejectsSymlinkedTargetPath(t *testing.T) {
 	}
 }
 
-func TestRejectsSymlinkedSourceSkillFile(t *testing.T) {
+func TestPlanIgnoresRepoLocalSourceSkills(t *testing.T) {
 	root := t.TempDir()
 	sourceDir := filepath.Join(root, "skills", "outlook-mail")
 	if err := os.MkdirAll(sourceDir, 0o755); err != nil {
 		t.Fatalf("create source dir: %v", err)
 	}
-	realFile := filepath.Join(root, "real-skill.md")
-	if err := os.WriteFile(realFile, []byte("# Mail\n"), 0o644); err != nil {
-		t.Fatalf("write real skill: %v", err)
-	}
-	if err := os.Symlink(realFile, filepath.Join(sourceDir, "SKILL.md")); err != nil {
-		t.Fatalf("create source symlink: %v", err)
+	if err := os.WriteFile(filepath.Join(sourceDir, "SKILL.md"), []byte("# Local Project Skill\n"), 0o644); err != nil {
+		t.Fatalf("write local skill: %v", err)
 	}
 
-	_, err := BuildPlan(Options{RepoRoot: root, Binary: "outlook-agent", Now: fixedTime()})
-	if err == nil {
-		t.Fatal("expected symlinked source file to be rejected")
+	plan, err := BuildPlan(Options{RepoRoot: root, Binary: "outlook-agent", Now: fixedTime()})
+	if err != nil {
+		t.Fatalf("BuildPlan returned error: %v", err)
 	}
-	if !strings.Contains(err.Error(), "symlink") {
-		t.Fatalf("expected symlink error, got %v", err)
+	target := assertTarget(t, plan, filepath.Join(".opencode", "skills", "outlook-mail", "SKILL.md"), "skill", StatusNew)
+	if strings.Contains(string(target.content), "# Local Project Skill") {
+		t.Fatalf("expected bundled skill content, got local project content:\n%s", string(target.content))
 	}
-}
-
-func TestRejectsSymlinkedSourceSkillRoot(t *testing.T) {
-	root := t.TempDir()
-	realDir := filepath.Join(root, "real-skill")
-	if err := os.MkdirAll(realDir, 0o755); err != nil {
-		t.Fatalf("create real skill dir: %v", err)
-	}
-	if err := os.WriteFile(filepath.Join(realDir, "SKILL.md"), []byte("# Mail\n"), 0o644); err != nil {
-		t.Fatalf("write real skill: %v", err)
-	}
-	if err := os.MkdirAll(filepath.Join(root, "skills"), 0o755); err != nil {
-		t.Fatalf("create skills dir: %v", err)
-	}
-	if err := os.Symlink(realDir, filepath.Join(root, "skills", "outlook-mail")); err != nil {
-		t.Fatalf("create source root symlink: %v", err)
-	}
-
-	_, err := BuildPlan(Options{RepoRoot: root, Binary: "outlook-agent", Now: fixedTime()})
-	if err == nil {
-		t.Fatal("expected symlinked source root to be rejected")
-	}
-	if !strings.Contains(err.Error(), "symlink") {
-		t.Fatalf("expected symlink error, got %v", err)
+	if !strings.Contains(string(target.content), "name: outlook-mail") {
+		t.Fatalf("expected bundled outlook-mail skill content, got:\n%s", string(target.content))
 	}
 }
 
@@ -391,4 +390,15 @@ func assertTarget(t *testing.T, plan Plan, path string, kind string, status stri
 	}
 	t.Fatalf("target %s not found in %#v", path, plan.Targets)
 	return Target{}
+}
+
+func setTargetBackupPath(t *testing.T, plan *Plan, path string, backupPath string) {
+	t.Helper()
+	for index := range plan.Targets {
+		if plan.Targets[index].Path == path {
+			plan.Targets[index].BackupPath = backupPath
+			return
+		}
+	}
+	t.Fatalf("target %s not found in %#v", path, plan.Targets)
 }
