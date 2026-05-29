@@ -167,7 +167,7 @@ validate_tar_members() {
     esac
 
     case "$member" in
-      "$expected_package_dir"|"$expected_package_dir/"|"$expected_binary_member"|"$expected_package_dir/README.md"|"$expected_package_dir/docs"|"$expected_package_dir/docs/"|"$expected_package_dir/docs/RELEASE.md")
+      "$expected_package_dir"|"$expected_package_dir/"|"$expected_binary_member"|"$expected_package_dir/README.md"|"$expected_package_dir/RELEASE.md")
         ;;
       *)
         die "unexpected archive member: $member"

@@ -109,6 +109,7 @@ func TestInstallScriptReadinessMarkers(t *testing.T) {
 		"expected binary archive member is not a regular file",
 		"unsafe archive member",
 		"unexpected archive member",
+		`"$expected_package_dir/RELEASE.md"`,
 		`tar -xzf "$archive_name" "$expected_binary_member"`,
 		`[ -f "$binary_path" ] && [ ! -L "$binary_path" ]`,
 		`install_tmp="$(mktemp "${install_dir}/.${BIN_NAME}.tmp.XXXXXX")"`,
