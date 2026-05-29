@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -88,6 +89,283 @@ func TestReleaseReadinessArtifactsExist(t *testing.T) {
 			}
 		}
 	}
+}
+
+func TestDependabotReadiness(t *testing.T) {
+	path := filepath.Join("..", "..", ".github", "dependabot.yml")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read Dependabot config %s: %v", path, err)
+	}
+	if err := validateDependabotConfig(data); err != nil {
+		t.Fatalf("invalid Dependabot config %s: %v", path, err)
+	}
+}
+
+func TestDependabotReadinessRejectsBrokenFixtures(t *testing.T) {
+	fixtures := map[string]string{
+		"commented out config": `
+# version: 2
+# updates:
+#   - package-ecosystem: gomod
+#     directory: "/"
+#     schedule:
+#       interval: weekly
+#     open-pull-requests-limit: 5
+#     labels:
+#       - dependencies
+#   - package-ecosystem: github-actions
+#     directory: "/"
+#     schedule:
+#       interval: weekly
+#     open-pull-requests-limit: 5
+#     labels:
+#       - dependencies
+`,
+		"missing github-actions entry with duplicate gomod markers": `
+version: 2
+updates:
+  - package-ecosystem: gomod
+    directory: "/"
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    labels:
+      - dependencies
+      - go
+    note: package-ecosystem: github-actions
+  - package-ecosystem: gomod
+    directory: "/"
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    labels:
+      - dependencies
+      - github-actions
+`,
+	}
+
+	for name, fixture := range fixtures {
+		t.Run(name, func(t *testing.T) {
+			if err := validateDependabotConfig([]byte(fixture)); err == nil {
+				t.Fatal("expected broken Dependabot fixture to be rejected")
+			}
+		})
+	}
+}
+
+type dependabotUpdate struct {
+	ecosystem string
+	directory string
+	interval  string
+	limit     int
+	labels    []string
+}
+
+type dependabotConfig struct {
+	version    int
+	hasVersion bool
+	hasUpdates bool
+	updates    []dependabotUpdate
+}
+
+func validateDependabotConfig(data []byte) error {
+	config, err := parseDependabotConfig(data)
+	if err != nil {
+		return err
+	}
+	if !config.hasVersion || config.version != 2 {
+		return fmt.Errorf("expected top-level version: 2")
+	}
+	if !config.hasUpdates {
+		return fmt.Errorf("expected top-level updates")
+	}
+	if len(config.updates) != 2 {
+		return fmt.Errorf("expected exactly two updates, got %d", len(config.updates))
+	}
+
+	requiredEcosystems := map[string]bool{
+		"gomod":          false,
+		"github-actions": false,
+	}
+	for index, update := range config.updates {
+		if _, ok := requiredEcosystems[update.ecosystem]; !ok {
+			return fmt.Errorf("update %d has unexpected package-ecosystem %q", index+1, update.ecosystem)
+		}
+		if requiredEcosystems[update.ecosystem] {
+			return fmt.Errorf("duplicate package-ecosystem %q", update.ecosystem)
+		}
+		requiredEcosystems[update.ecosystem] = true
+		if update.directory != "/" {
+			return fmt.Errorf("update %s must use directory /", update.ecosystem)
+		}
+		if update.interval != "weekly" {
+			return fmt.Errorf("update %s must use weekly interval", update.ecosystem)
+		}
+		if update.limit <= 0 {
+			return fmt.Errorf("update %s must have positive open-pull-requests-limit", update.ecosystem)
+		}
+		if len(update.labels) == 0 {
+			return fmt.Errorf("update %s must have non-empty labels", update.ecosystem)
+		}
+	}
+	for ecosystem, found := range requiredEcosystems {
+		if !found {
+			return fmt.Errorf("missing package-ecosystem %q", ecosystem)
+		}
+	}
+	return nil
+}
+
+func parseDependabotConfig(data []byte) (dependabotConfig, error) {
+	config := dependabotConfig{}
+	var current *dependabotUpdate
+	inSchedule := false
+	inLabels := false
+
+	for lineNumber, line := range strings.Split(string(data), "\n") {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" || strings.HasPrefix(trimmed, "#") {
+			continue
+		}
+		if strings.HasPrefix(trimmed, "registries:") {
+			return dependabotConfig{}, fmt.Errorf("line %d: registries are not allowed", lineNumber+1)
+		}
+
+		indent := len(line) - len(strings.TrimLeft(line, " "))
+		switch {
+		case indent == 0:
+			current = nil
+			inSchedule = false
+			inLabels = false
+			key, value, ok := yamlKeyValue(trimmed)
+			if !ok {
+				return dependabotConfig{}, fmt.Errorf("line %d: expected top-level key", lineNumber+1)
+			}
+			switch key {
+			case "version":
+				version, err := strconv.Atoi(value)
+				if err != nil {
+					return dependabotConfig{}, fmt.Errorf("line %d: invalid version %q", lineNumber+1, value)
+				}
+				config.version = version
+				config.hasVersion = true
+			case "updates":
+				if value != "" {
+					return dependabotConfig{}, fmt.Errorf("line %d: updates must be a list", lineNumber+1)
+				}
+				config.hasUpdates = true
+			default:
+				return dependabotConfig{}, fmt.Errorf("line %d: unexpected top-level key %q", lineNumber+1, key)
+			}
+		case indent == 2 && strings.HasPrefix(trimmed, "- "):
+			if !config.hasUpdates {
+				return dependabotConfig{}, fmt.Errorf("line %d: update entry before updates", lineNumber+1)
+			}
+			config.updates = append(config.updates, dependabotUpdate{limit: -1})
+			current = &config.updates[len(config.updates)-1]
+			inSchedule = false
+			inLabels = false
+			field := strings.TrimSpace(strings.TrimPrefix(trimmed, "- "))
+			if field != "" {
+				if err := applyDependabotUpdateField(current, field, false, false, lineNumber+1); err != nil {
+					return dependabotConfig{}, err
+				}
+			}
+		case current == nil:
+			return dependabotConfig{}, fmt.Errorf("line %d: nested key outside update entry", lineNumber+1)
+		case indent == 4:
+			inSchedule = false
+			inLabels = false
+			key, value, ok := yamlKeyValue(trimmed)
+			if !ok {
+				return dependabotConfig{}, fmt.Errorf("line %d: expected update key", lineNumber+1)
+			}
+			if key == "schedule" {
+				if value != "" {
+					return dependabotConfig{}, fmt.Errorf("line %d: schedule must be a mapping", lineNumber+1)
+				}
+				inSchedule = true
+				continue
+			}
+			if key == "labels" {
+				if value != "" {
+					return dependabotConfig{}, fmt.Errorf("line %d: labels must be a list", lineNumber+1)
+				}
+				inLabels = true
+				continue
+			}
+			if err := applyDependabotUpdateField(current, trimmed, false, false, lineNumber+1); err != nil {
+				return dependabotConfig{}, err
+			}
+		case indent == 6 && inSchedule:
+			if err := applyDependabotUpdateField(current, trimmed, true, false, lineNumber+1); err != nil {
+				return dependabotConfig{}, err
+			}
+		case indent == 6 && inLabels && strings.HasPrefix(trimmed, "- "):
+			label := strings.TrimSpace(strings.TrimPrefix(trimmed, "- "))
+			if label == "" {
+				return dependabotConfig{}, fmt.Errorf("line %d: empty label", lineNumber+1)
+			}
+			current.labels = append(current.labels, unquoteYAMLScalar(label))
+		default:
+			return dependabotConfig{}, fmt.Errorf("line %d: unexpected Dependabot YAML shape", lineNumber+1)
+		}
+	}
+
+	return config, nil
+}
+
+func applyDependabotUpdateField(update *dependabotUpdate, field string, inSchedule bool, inLabels bool, lineNumber int) error {
+	key, value, ok := yamlKeyValue(field)
+	if !ok {
+		return fmt.Errorf("line %d: expected key/value", lineNumber)
+	}
+	if inLabels {
+		return fmt.Errorf("line %d: labels must be list items", lineNumber)
+	}
+	value = unquoteYAMLScalar(value)
+	if inSchedule {
+		if key != "interval" {
+			return fmt.Errorf("line %d: unexpected schedule key %q", lineNumber, key)
+		}
+		update.interval = value
+		return nil
+	}
+
+	switch key {
+	case "package-ecosystem":
+		update.ecosystem = value
+	case "directory":
+		update.directory = value
+	case "open-pull-requests-limit":
+		limit, err := strconv.Atoi(value)
+		if err != nil {
+			return fmt.Errorf("line %d: invalid open-pull-requests-limit %q", lineNumber, value)
+		}
+		update.limit = limit
+	default:
+		return fmt.Errorf("line %d: unexpected update key %q", lineNumber, key)
+	}
+	return nil
+}
+
+func yamlKeyValue(line string) (string, string, bool) {
+	key, value, ok := strings.Cut(line, ":")
+	if !ok {
+		return "", "", false
+	}
+	return strings.TrimSpace(key), strings.TrimSpace(value), true
+}
+
+func unquoteYAMLScalar(value string) string {
+	value = strings.TrimSpace(value)
+	if len(value) >= 2 {
+		if (value[0] == '"' && value[len(value)-1] == '"') || (value[0] == '\'' && value[len(value)-1] == '\'') {
+			return value[1 : len(value)-1]
+		}
+	}
+	return value
 }
 
 func TestInstallScriptReadinessMarkers(t *testing.T) {
