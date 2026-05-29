@@ -220,6 +220,28 @@ func TestDocsTrackGraphDeviceCodeEnrollmentEvidence(t *testing.T) {
 	}
 }
 
+func TestReadmeDocumentsGraphWriteCapableScopes(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join("..", "..", "README.md"))
+	if err != nil {
+		t.Fatalf("read README.md: %v", err)
+	}
+	text := string(data)
+
+	for _, marker := range []string{
+		"read-only Graph enrollment",
+		"write-capable Graph profile",
+		"`Mail.ReadWrite`",
+		"`MailboxSettings.ReadWrite`",
+		"`mail.create_draft`",
+		"`mail.move_to_deleted_items`",
+		"`mail.rules.set_enabled`",
+	} {
+		if !strings.Contains(text, marker) {
+			t.Fatalf("expected README.md to contain %q", marker)
+		}
+	}
+}
+
 func TestDocsTrackGraphLiveSmokeHarness(t *testing.T) {
 	documents := map[string][]string{
 		filepath.Join("..", "..", "docs", "ENTERPRISE_ENABLEMENT.md"): {
