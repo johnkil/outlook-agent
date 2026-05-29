@@ -78,11 +78,11 @@ func BuildPlan(options Options) (Plan, error) {
 	}
 
 	targets := make([]Target, 0)
-	configContent, err := buildConfigContent(root, options.Binary, options.ConfigPath)
+	configPath, configContent, err := buildConfigContent(root, options.Binary, options.ConfigPath)
 	if err != nil {
 		return Plan{}, err
 	}
-	configTarget, err := planTarget(root, "opencode.json", "config", configContent)
+	configTarget, err := planTarget(root, configPath, "config", configContent)
 	if err != nil {
 		return Plan{}, err
 	}
@@ -220,20 +220,14 @@ func sourceSkills() ([]skillFile, error) {
 	return skills, nil
 }
 
-func buildConfigContent(root string, binary string, configPath string) ([]byte, error) {
+func buildConfigContent(root string, binary string, configPath string) (string, []byte, error) {
 	existing := map[string]any{}
-	configTarget := filepath.Join(root, "opencode.json")
-	if err := rejectRepoPathSymlinks(root, "opencode.json"); err != nil {
-		return nil, err
+	configTarget, existingContent, err := existingConfigTarget(root)
+	if err != nil {
+		return "", nil, err
 	}
-	if content, err := os.ReadFile(configTarget); err == nil {
-		if len(bytes.TrimSpace(content)) > 0 {
-			if err := json.Unmarshal(content, &existing); err != nil {
-				return nil, fmt.Errorf("parse opencode.json: %w", err)
-			}
-		}
-	} else if !os.IsNotExist(err) {
-		return nil, fmt.Errorf("read opencode.json: %w", err)
+	if err := decodeConfigContent(configTarget, existingContent, &existing); err != nil {
+		return "", nil, err
 	}
 
 	existing["$schema"] = "https://opencode.ai/config.json"
@@ -258,9 +252,150 @@ func buildConfigContent(root string, binary string, configPath string) ([]byte, 
 
 	content, err := json.MarshalIndent(existing, "", "  ")
 	if err != nil {
-		return nil, fmt.Errorf("marshal opencode.json: %w", err)
+		return "", nil, fmt.Errorf("marshal %s: %w", configTarget, err)
 	}
-	return append(content, '\n'), nil
+	return configTarget, append(content, '\n'), nil
+}
+
+func existingConfigTarget(root string) (string, []byte, error) {
+	candidates := []string{
+		"opencode.json",
+		"opencode.jsonc",
+		filepath.Join(".opencode", "opencode.json"),
+		filepath.Join(".opencode", "opencode.jsonc"),
+	}
+	for _, candidate := range candidates {
+		if err := rejectRepoPathSymlinks(root, candidate); err != nil {
+			return "", nil, err
+		}
+		content, err := os.ReadFile(filepath.Join(root, candidate))
+		if err == nil {
+			return candidate, content, nil
+		}
+		if !os.IsNotExist(err) {
+			return "", nil, fmt.Errorf("read %s: %w", candidate, err)
+		}
+	}
+	return "opencode.json", nil, nil
+}
+
+func decodeConfigContent(configPath string, content []byte, target *map[string]any) error {
+	trimmed := bytes.TrimSpace(content)
+	if len(trimmed) == 0 {
+		return nil
+	}
+	data := trimmed
+	if strings.HasSuffix(configPath, ".jsonc") {
+		data = stripJSONCTrailingCommas(stripJSONCComments(data))
+	}
+	if err := json.Unmarshal(data, target); err != nil {
+		return fmt.Errorf("parse %s: %w", configPath, err)
+	}
+	return nil
+}
+
+func stripJSONCComments(content []byte) []byte {
+	var builder bytes.Buffer
+	inString := false
+	escaped := false
+	inLineComment := false
+	inBlockComment := false
+	for index := 0; index < len(content); index++ {
+		character := content[index]
+		if inLineComment {
+			if character == '\n' {
+				inLineComment = false
+				builder.WriteByte(character)
+			}
+			continue
+		}
+		if inBlockComment {
+			if character == '\n' {
+				builder.WriteByte(character)
+				continue
+			}
+			if character == '*' && index+1 < len(content) && content[index+1] == '/' {
+				inBlockComment = false
+				index++
+			}
+			continue
+		}
+		if inString {
+			builder.WriteByte(character)
+			if escaped {
+				escaped = false
+				continue
+			}
+			if character == '\\' {
+				escaped = true
+			} else if character == '"' {
+				inString = false
+			}
+			continue
+		}
+		if character == '"' {
+			inString = true
+			builder.WriteByte(character)
+			continue
+		}
+		if character == '/' && index+1 < len(content) {
+			next := content[index+1]
+			if next == '/' {
+				inLineComment = true
+				index++
+				continue
+			}
+			if next == '*' {
+				inBlockComment = true
+				index++
+				continue
+			}
+		}
+		builder.WriteByte(character)
+	}
+	return builder.Bytes()
+}
+
+func stripJSONCTrailingCommas(content []byte) []byte {
+	var builder bytes.Buffer
+	inString := false
+	escaped := false
+	for index := 0; index < len(content); index++ {
+		character := content[index]
+		if inString {
+			builder.WriteByte(character)
+			if escaped {
+				escaped = false
+				continue
+			}
+			if character == '\\' {
+				escaped = true
+			} else if character == '"' {
+				inString = false
+			}
+			continue
+		}
+		if character == '"' {
+			inString = true
+			builder.WriteByte(character)
+			continue
+		}
+		if character == ',' {
+			lookahead := index + 1
+			for lookahead < len(content) && isJSONWhitespace(content[lookahead]) {
+				lookahead++
+			}
+			if lookahead < len(content) && (content[lookahead] == '}' || content[lookahead] == ']') {
+				continue
+			}
+		}
+		builder.WriteByte(character)
+	}
+	return builder.Bytes()
+}
+
+func isJSONWhitespace(character byte) bool {
+	return character == ' ' || character == '\n' || character == '\r' || character == '\t'
 }
 
 func planTarget(root string, relativePath string, kind string, content []byte) (Target, error) {

@@ -201,6 +201,57 @@ func TestPlanPreservesExistingOutlookAgentMCPOptions(t *testing.T) {
 	}
 }
 
+func TestPlanUsesExistingJSONCConfig(t *testing.T) {
+	root := t.TempDir()
+	existing := `{
+		// Existing project OpenCode config.
+		"$schema": "https://opencode.ai/config.json",
+		"custom": true,
+		"mcp": {
+			"outlook-agent": {
+				"type": "local",
+				"command": ["go", "run", "./cmd/outlook-agent", "mcp"],
+				"enabled": false,
+				"environment": {
+					"OUTLOOK_AGENT_CONFIG": ".local/custom.json",
+				},
+				"timeout": 30,
+			},
+		},
+	}`
+	if err := os.WriteFile(filepath.Join(root, "opencode.jsonc"), []byte(existing), 0o644); err != nil {
+		t.Fatalf("write existing opencode config: %v", err)
+	}
+
+	plan, err := BuildPlan(Options{RepoRoot: root, Binary: "outlook-agent", ConfigPath: ".local/outlook-agent.json", Now: fixedTime()})
+	if err != nil {
+		t.Fatalf("BuildPlan returned error: %v", err)
+	}
+	assertNoTarget(t, plan, "opencode.json")
+	target := assertTarget(t, plan, "opencode.jsonc", "config", StatusBlocked)
+	var payload map[string]any
+	if err := json.Unmarshal(target.content, &payload); err != nil {
+		t.Fatalf("planned config is not JSON: %v; content=%s", err, string(target.content))
+	}
+	if payload["custom"] != true {
+		t.Fatalf("expected custom field to be preserved, got %#v", payload)
+	}
+	server := payload["mcp"].(map[string]any)["outlook-agent"].(map[string]any)
+	if server["type"] != "local" || server["enabled"] != true {
+		t.Fatalf("expected managed server fields to be refreshed, got %#v", server)
+	}
+	environment, ok := server["environment"].(map[string]any)
+	if !ok || environment["OUTLOOK_AGENT_CONFIG"] != ".local/custom.json" {
+		t.Fatalf("expected existing environment to be preserved, got %#v", server)
+	}
+	if server["timeout"] != float64(30) {
+		t.Fatalf("expected existing timeout to be preserved, got %#v", server)
+	}
+	if !strings.Contains(Diff(plan), "target opencode.jsonc (config): blocked") {
+		t.Fatalf("expected diff to show opencode.jsonc target, got:\n%s", Diff(plan))
+	}
+}
+
 func TestDiffShowsCurrentContentForBlockedTarget(t *testing.T) {
 	root := t.TempDir()
 	writeSkill(t, root, "outlook-mail", "# Mail\n")
@@ -390,6 +441,15 @@ func assertTarget(t *testing.T, plan Plan, path string, kind string, status stri
 	}
 	t.Fatalf("target %s not found in %#v", path, plan.Targets)
 	return Target{}
+}
+
+func assertNoTarget(t *testing.T, plan Plan, path string) {
+	t.Helper()
+	for _, target := range plan.Targets {
+		if target.Path == path {
+			t.Fatalf("target %s unexpectedly found in %#v", path, plan.Targets)
+		}
+	}
 }
 
 func setTargetBackupPath(t *testing.T, plan *Plan, path string, backupPath string) {
