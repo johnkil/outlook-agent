@@ -29,10 +29,13 @@ type ActionResponse struct {
 }
 
 type DryRunSummary struct {
-	Action               string `json:"action"`
-	Count                int    `json:"count"`
-	Reversible           bool   `json:"reversible"`
-	RequiresConfirmation bool   `json:"requires_confirmation"`
+	Action               string        `json:"action"`
+	Count                int           `json:"count"`
+	Reversible           bool          `json:"reversible"`
+	RequiresConfirmation bool          `json:"requires_confirmation"`
+	SafetyClass          string        `json:"safety_class,omitempty"`
+	Review               *ReviewPacket `json:"review,omitempty"`
+	Warnings             []string      `json:"warnings,omitempty"`
 }
 
 type Transport interface {
