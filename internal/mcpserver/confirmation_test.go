@@ -353,6 +353,75 @@ func TestActionConfirmRejectsChangedPayload(t *testing.T) {
 	}
 }
 
+func TestActionConfirmRejectsChangedReviewFingerprint(t *testing.T) {
+	client := newReviewChangingTransport(action.Definition{Name: "mail.move_to_deleted_items", Transport: "test", Class: policy.ReversibleBulk, Level: action.LevelHighLevelMCPTool})
+	runtime := NewRuntime(client)
+	payload := map[string]any{"ids": []any{"msg-1"}}
+
+	client.reviewDestination = "Deleted Items"
+	_, dryRun, err := dryRunHandler(runtime)(context.Background(), nil, DryRunInput{
+		Action:  "mail.move_to_deleted_items",
+		Payload: payload,
+	})
+	if err != nil {
+		t.Fatalf("dry-run handler: %v", err)
+	}
+	if dryRun.ConfirmationToken == "" {
+		t.Fatalf("expected confirmation token: %#v", dryRun)
+	}
+
+	client.reviewDestination = "Archive"
+	_, output, err := actionConfirmHandler(runtime)(context.Background(), nil, ActionConfirmInput{
+		ConfirmToken: dryRun.ConfirmationToken,
+		Action:       "mail.move_to_deleted_items",
+		Payload:      payload,
+	})
+	if err != nil {
+		t.Fatalf("confirm handler: %v", err)
+	}
+	if output.OK || !strings.Contains(output.Error, "confirmation token is invalid") {
+		t.Fatalf("expected changed review to reject confirmation token, got %#v", output)
+	}
+	if client.executed {
+		t.Fatal("action must not execute when review fingerprint changes after dry-run")
+	}
+}
+
+func TestActionConfirmAcceptsPayloadBoundApprovalWithRichReview(t *testing.T) {
+	client := newReviewChangingTransport(action.Definition{Name: "mail.move_to_deleted_items", Transport: "test", Class: policy.ReversibleBulk, Level: action.LevelHighLevelMCPTool})
+	runtime := NewRuntime(client)
+	runtime.approvalPolicy = approval.Policy{Mode: approval.ModeRequired, Secret: "approval-secret"}
+	runtime.approval = approval.NewStore(time.Now)
+	payload := map[string]any{"ids": []any{"msg-1"}}
+	client.reviewDestination = "Deleted Items"
+
+	_, dryRun, err := dryRunHandler(runtime)(context.Background(), nil, DryRunInput{
+		Action:  "mail.move_to_deleted_items",
+		Payload: payload,
+	})
+	if err != nil {
+		t.Fatalf("dry-run handler: %v", err)
+	}
+	approvalToken, err := approval.SignChallenge("approval-secret", *dryRun.ApprovalChallenge)
+	if err != nil {
+		t.Fatalf("sign approval challenge: %v", err)
+	}
+
+	_, output, err := actionConfirmHandler(runtime)(context.Background(), nil, ActionConfirmInput{
+		ConfirmToken:        dryRun.ConfirmationToken,
+		ApprovalChallengeID: dryRun.ApprovalChallenge.ID,
+		ApprovalToken:       approvalToken,
+		Action:              "mail.move_to_deleted_items",
+		Payload:             payload,
+	})
+	if err != nil {
+		t.Fatalf("confirm handler: %v", err)
+	}
+	if !output.OK {
+		t.Fatalf("expected payload-bound approval with rich review to execute: %#v", output)
+	}
+}
+
 func TestDryRunDoesNotIssueTokenForDestructiveActionWithoutUnsafe(t *testing.T) {
 	client := newRecordingTransport(action.Definition{Name: "DeleteItem", Transport: "test", Class: policy.Destructive, Level: action.LevelRawGuardedExecution})
 	runtime := NewRuntime(client)
@@ -930,6 +999,53 @@ func (client *recordingTransport) Execute(context.Context, transport.ActionReque
 
 func (client *recordingTransport) DryRun(context.Context, transport.ActionRequest) transport.DryRunSummary {
 	return transport.DryRunSummary{Action: client.definition.Name, Count: 1, RequiresConfirmation: true}
+}
+
+type reviewChangingTransport struct {
+	definition        action.Definition
+	reviewDestination string
+	executed          bool
+}
+
+func newReviewChangingTransport(definition action.Definition) *reviewChangingTransport {
+	return &reviewChangingTransport{definition: definition}
+}
+
+func (client *reviewChangingTransport) Name() string {
+	return "test"
+}
+
+func (client *reviewChangingTransport) Authenticate(context.Context, string) transport.AuthResult {
+	return transport.AuthResult{OK: true}
+}
+
+func (client *reviewChangingTransport) Capabilities(context.Context) transport.CapabilitySet {
+	return transport.CapabilitySet{Actions: []action.Definition{client.definition}}
+}
+
+func (client *reviewChangingTransport) Execute(context.Context, transport.ActionRequest) transport.ActionResponse {
+	client.executed = true
+	return transport.ActionResponse{OK: true, Data: map[string]any{"executed": true}}
+}
+
+func (client *reviewChangingTransport) DryRun(_ context.Context, request transport.ActionRequest) transport.DryRunSummary {
+	review := transport.ReviewPacket{
+		Version:            transport.ReviewPacketVersion,
+		Transport:          client.Name(),
+		Action:             request.Name,
+		SafetyClass:        string(client.definition.Class),
+		Targets:            []transport.TargetRef{{Kind: "message", ID: "msg-1"}},
+		Mutation:           &transport.MutationReview{Operation: "move", To: client.reviewDestination},
+		PayloadFingerprint: transport.PayloadFingerprint(request.Payload),
+	}
+	return transport.DryRunSummary{
+		Action:               client.definition.Name,
+		Count:                1,
+		Reversible:           true,
+		RequiresConfirmation: true,
+		SafetyClass:          string(client.definition.Class),
+		Review:               &review,
+	}
 }
 
 type failingResponseTransport struct {

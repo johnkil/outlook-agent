@@ -514,11 +514,12 @@ func mailMoveToDeletedItemsHandler(runtime *Runtime) func(context.Context, *mcp.
 			return nil, ActionResultOutput{OK: false, Error: "confirm_token required"}, nil
 		}
 		payload := withMailbox(map[string]any{"ids": stringsToAny(input.IDs)}, input.Mailbox)
-		pendingApproval, err := runtime.validateExternalApproval(input.ApprovalChallengeID, input.ApprovalToken, "mail.move_to_deleted_items", payload, false, runtime.profile)
+		_, class, review := dryRunReviewFor(ctx, runtime.client, "mail.move_to_deleted_items", payload, false)
+		pendingApproval, err := runtime.validateExternalApproval(input.ApprovalChallengeID, input.ApprovalToken, "mail.move_to_deleted_items", payload, false, runtime.profile, review, class)
 		if err != nil {
 			return nil, ActionResultOutput{OK: false, Error: err.Error()}, nil
 		}
-		if !runtime.confirm.Consume(input.ConfirmToken, bindingFor(runtime.client, runtime.profile, "mail.move_to_deleted_items", payload, false)) {
+		if !runtime.confirm.Consume(input.ConfirmToken, confirmationBindingFor(runtime.client, runtime.profile, "mail.move_to_deleted_items", payload, false, review, class)) {
 			return nil, ActionResultOutput{OK: false, Error: "confirmation token is invalid"}, nil
 		}
 		if err := runtime.consumeExternalApproval(pendingApproval); err != nil {
@@ -554,11 +555,12 @@ func mailRuleSetEnabledHandler(runtime *Runtime) func(context.Context, *mcp.Call
 			"enabled":   input.Enabled,
 			"folder_id": input.FolderID,
 		}, input.Mailbox)
-		pendingApproval, err := runtime.validateExternalApproval(input.ApprovalChallengeID, input.ApprovalToken, "mail.rules.set_enabled", payload, false, runtime.profile)
+		_, class, review := dryRunReviewFor(ctx, runtime.client, "mail.rules.set_enabled", payload, false)
+		pendingApproval, err := runtime.validateExternalApproval(input.ApprovalChallengeID, input.ApprovalToken, "mail.rules.set_enabled", payload, false, runtime.profile, review, class)
 		if err != nil {
 			return nil, ActionResultOutput{OK: false, Error: err.Error()}, nil
 		}
-		if !runtime.confirm.Consume(input.ConfirmToken, bindingFor(runtime.client, runtime.profile, "mail.rules.set_enabled", payload, false)) {
+		if !runtime.confirm.Consume(input.ConfirmToken, confirmationBindingFor(runtime.client, runtime.profile, "mail.rules.set_enabled", payload, false, review, class)) {
 			return nil, ActionResultOutput{OK: false, Error: "confirmation token is invalid"}, nil
 		}
 		if err := runtime.consumeExternalApproval(pendingApproval); err != nil {
@@ -635,9 +637,7 @@ func actionResultFromResponse(response transport.ActionResponse) ActionResultOut
 
 func dryRunHandler(runtime *Runtime) func(context.Context, *mcp.CallToolRequest, DryRunInput) (*mcp.CallToolResult, DryRunOutput, error) {
 	return func(ctx context.Context, _ *mcp.CallToolRequest, input DryRunInput) (*mcp.CallToolResult, DryRunOutput, error) {
-		summary := runtime.client.DryRun(ctx, transport.ActionRequest{Name: input.Action, Payload: input.Payload, UnsafeMode: input.UnsafeMode})
-		class := safetyClassForPayload(runtime.client, input.Action, input.Payload)
-		review := reviewPacketFor(runtime.client, input.Action, input.Payload, summary, class)
+		summary, class, review := dryRunReviewFor(ctx, runtime.client, input.Action, input.Payload, input.UnsafeMode)
 		requiresApproval := runtime.requiresApproval(class)
 		decision := confirmedActionDecision(runtime.client, input.Action, input.Payload, input.UnsafeMode)
 		if !decision.Allowed {
@@ -654,7 +654,7 @@ func dryRunHandler(runtime *Runtime) func(context.Context, *mcp.CallToolRequest,
 				Error:                decision.Reason,
 			}, nil
 		}
-		token, err := runtime.confirm.Generate(bindingFor(runtime.client, runtime.profileOrDefault(input.Profile), input.Action, input.Payload, input.UnsafeMode), 10*time.Minute)
+		token, err := runtime.confirm.Generate(confirmationBindingFor(runtime.client, runtime.profileOrDefault(input.Profile), input.Action, input.Payload, input.UnsafeMode, review, class), 10*time.Minute)
 		if err != nil {
 			return nil, DryRunOutput{}, err
 		}
@@ -684,11 +684,12 @@ func dryRunHandler(runtime *Runtime) func(context.Context, *mcp.CallToolRequest,
 
 func actionConfirmHandler(runtime *Runtime) func(context.Context, *mcp.CallToolRequest, ActionConfirmInput) (*mcp.CallToolResult, ActionResultOutput, error) {
 	return func(ctx context.Context, _ *mcp.CallToolRequest, input ActionConfirmInput) (*mcp.CallToolResult, ActionResultOutput, error) {
-		pendingApproval, err := runtime.validateExternalApproval(input.ApprovalChallengeID, input.ApprovalToken, input.Action, input.Payload, input.UnsafeMode, runtime.profileOrDefault(input.Profile))
+		_, class, review := dryRunReviewFor(ctx, runtime.client, input.Action, input.Payload, input.UnsafeMode)
+		pendingApproval, err := runtime.validateExternalApproval(input.ApprovalChallengeID, input.ApprovalToken, input.Action, input.Payload, input.UnsafeMode, runtime.profileOrDefault(input.Profile), review, class)
 		if err != nil {
 			return nil, ActionResultOutput{OK: false, Error: err.Error()}, nil
 		}
-		if !runtime.confirm.Consume(input.ConfirmToken, bindingFor(runtime.client, runtime.profileOrDefault(input.Profile), input.Action, input.Payload, input.UnsafeMode)) {
+		if !runtime.confirm.Consume(input.ConfirmToken, confirmationBindingFor(runtime.client, runtime.profileOrDefault(input.Profile), input.Action, input.Payload, input.UnsafeMode, review, class)) {
 			return nil, ActionResultOutput{OK: false, Error: "confirmation token is invalid"}, nil
 		}
 		if err := runtime.consumeExternalApproval(pendingApproval); err != nil {
@@ -721,13 +722,27 @@ func rawActionHandler(runtime *Runtime) func(context.Context, *mcp.CallToolReque
 }
 
 func bindingFor(client transport.Transport, profile string, action string, payload map[string]any, unsafeMode bool) confirm.Binding {
+	_, class, review := dryRunReviewFor(context.Background(), client, action, payload, unsafeMode)
+	return confirmationBindingFor(client, profile, action, payload, unsafeMode, review, class)
+}
+
+func confirmationBindingFor(client transport.Transport, profile string, action string, payload map[string]any, unsafeMode bool, review transport.ReviewPacket, class policy.SafetyClass) confirm.Binding {
 	return confirm.Binding{
-		Action:     action,
-		Transport:  client.Name(),
-		Profile:    profile,
-		Payload:    payload,
-		UnsafeMode: unsafeMode,
+		Action:            action,
+		Transport:         client.Name(),
+		Profile:           profile,
+		Payload:           payload,
+		UnsafeMode:        unsafeMode,
+		SafetyClass:       string(class),
+		ReviewFingerprint: transport.ReviewFingerprint(review),
 	}
+}
+
+func dryRunReviewFor(ctx context.Context, client transport.Transport, actionName string, payload map[string]any, unsafeMode bool) (transport.DryRunSummary, policy.SafetyClass, transport.ReviewPacket) {
+	summary := client.DryRun(ctx, transport.ActionRequest{Name: actionName, Payload: payload, UnsafeMode: unsafeMode})
+	class := safetyClassForPayload(client, actionName, payload)
+	review := reviewPacketFor(client, actionName, payload, summary, class)
+	return summary, class, review
 }
 
 func approvalBindingFor(client transport.Transport, profile string, actionName string, payload map[string]any, unsafeMode bool, review transport.ReviewPacket, class policy.SafetyClass) approval.Binding {
@@ -772,8 +787,7 @@ func reviewPacketFor(client transport.Transport, actionName string, payload map[
 	}
 }
 
-func (runtime *Runtime) validateExternalApproval(challengeID string, token string, actionName string, payload map[string]any, unsafeMode bool, profile string) (pendingApproval, error) {
-	class := safetyClassForPayload(runtime.client, actionName, payload)
+func (runtime *Runtime) validateExternalApproval(challengeID string, token string, actionName string, payload map[string]any, unsafeMode bool, profile string, review transport.ReviewPacket, class policy.SafetyClass) (pendingApproval, error) {
 	highRisk := requiresApprovalForClass(class)
 	policy := runtime.approvalPolicy
 	if err := policy.RequireApproval(highRisk, challengeID, token); err != nil {
@@ -791,7 +805,6 @@ func (runtime *Runtime) validateExternalApproval(challengeID string, token strin
 	if runtime.approval == nil {
 		return pendingApproval{}, errors.New("approval store unavailable")
 	}
-	review := reviewPacketFor(runtime.client, actionName, payload, transport.DryRunSummary{}, class)
 	binding := approvalBindingFor(runtime.client, profile, actionName, payload, unsafeMode, review, class)
 	if err := runtime.approval.Validate(challengeID, token, policy.Secret, binding); err != nil {
 		return pendingApproval{}, err
