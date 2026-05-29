@@ -32,7 +32,14 @@ func TestTransportAuthenticatesAndExecutesServiceAction(t *testing.T) {
 			}
 			sawCanaryHeader = request.Header.Get("X-OWA-CANARY") == "canary-secret"
 			response.Header().Set("Content-Type", "application/json")
-			_ = json.NewEncoder(response).Encode(map[string]any{"ok": true, "value": "pong"})
+			response.Header().Set("request-id", "owa-request-id")
+			response.Header().Set("Set-Cookie", "session=secret")
+			_ = json.NewEncoder(response).Encode(map[string]any{
+				"ok":           true,
+				"value":        "pong",
+				"access_token": "secret-token",
+				"contentBytes": "attachment-bytes",
+			})
 		default:
 			t.Fatalf("unexpected path: %s", request.URL.Path)
 		}
@@ -60,8 +67,24 @@ func TestTransportAuthenticatesAndExecutesServiceAction(t *testing.T) {
 	if !response.OK {
 		t.Fatalf("expected execute ok: %#v", response)
 	}
-	if response.Data["value"] != "pong" {
-		t.Fatalf("unexpected response data: %#v", response.Data)
+	if response.Data["value"] != nil || response.Data["access_token"] != nil || response.Data["contentBytes"] != nil {
+		t.Fatalf("expected raw OWA response body to be summarized, got %#v", response.Data)
+	}
+	preview, _ := response.Data["body_preview"].(string)
+	if !strings.Contains(preview, "pong") {
+		t.Fatalf("expected OWA body preview to preserve safe fields, got %q", preview)
+	}
+	for _, leaked := range []string{"secret-token", "attachment-bytes", "access_token", "contentBytes"} {
+		if strings.Contains(preview, leaked) {
+			t.Fatalf("expected OWA body preview to redact %q, got %q", leaked, preview)
+		}
+	}
+	if response.Data["body_sha256"] == "" {
+		t.Fatalf("expected OWA body hash, got %#v", response.Data)
+	}
+	headers := response.Data["headers"].(map[string]any)
+	if headers["request-id"] != "owa-request-id" || headers["set-cookie"] != nil {
+		t.Fatalf("unexpected OWA selected headers: %#v", headers)
 	}
 	if !sawCanaryHeader {
 		t.Fatal("expected service request to include canary header")

@@ -128,4 +128,5 @@ Compatibility guarantees:
   destructive;
 - confirmation tokens are exact-action, exact-payload, transport, profile,
   unsafe-mode, and expiry bound;
-- raw responses must pass redaction before returning through MCP.
+- raw responses must be bounded preview/hash envelopes with allowlisted
+  headers before returning through MCP.

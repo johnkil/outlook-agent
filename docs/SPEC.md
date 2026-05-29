@@ -173,13 +173,14 @@ Key tool inputs:
   with `method`, `path`, optional `query`, optional safe custom `headers`, and
   optional JSON `body`. It is intentionally classified as `destructive`, so MCP
   callers must use unsafe dry-run plus exact confirmation before execution.
-  JSON responses are returned under `json`; non-JSON text is returned under
-  `body_text` and redacted on generic/raw MCP paths.
+  Responses use a bounded raw envelope: `status`, allowlisted `headers`,
+  `body_preview`, `body_sha256`, and `body_truncated`. Full raw body fields are
+  not returned by default.
 - Raw `EWSRequest`: transport action for a caller-provided SOAP XML envelope
   with `body_xml` and optional `soap_action`. It is intentionally classified as
   `destructive`, so MCP callers must use unsafe dry-run plus exact confirmation
-  before execution. XML responses are returned under `xml_text` and redacted on
-  generic/raw MCP paths.
+  before execution. Responses use the same bounded raw envelope as Graph raw
+  requests.
 
 ## Safety Classes
 
@@ -285,7 +286,7 @@ Default output redacts:
 - raw message bodies, previews, and snippets;
 - attachment contents except through explicit attachment tools;
 - generic raw response fields such as `body_text`, `xml_text`, `contentBytes`,
-  and `content_base64`;
+  and `content_base64`; raw transports expose only preview/hash envelopes;
 - opaque transport ids unless needed for follow-up operations.
 
 The runtime may return stable handles that map to transport ids in memory or in

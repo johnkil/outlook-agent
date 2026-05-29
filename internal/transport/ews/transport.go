@@ -259,23 +259,11 @@ func (client *Transport) executeRawEWSRequest(ctx context.Context, payload map[s
 	}
 	defer response.Body.Close()
 
-	data := map[string]any{
-		"status":  response.StatusCode,
-		"headers": selectedEWSResponseHeaders(response.Header),
-	}
 	rawBody, err := transport.ReadLimited(response.Body, transport.MaxResponseBytes)
 	if err != nil {
 		return nil, err
 	}
-	if len(rawBody) > 0 {
-		contentType := response.Header.Get("Content-Type")
-		data["content_type"] = contentType
-		if strings.Contains(strings.ToLower(contentType), "xml") || strings.TrimSpace(contentType) == "" {
-			data["xml_text"] = string(rawBody)
-		} else {
-			data["body_text"] = string(rawBody)
-		}
-	}
+	data := transport.RawResponseEnvelope(response.StatusCode, response.Header, rawBody)
 	return data, nil
 }
 

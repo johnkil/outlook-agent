@@ -744,7 +744,7 @@ func TestTransportRejectsCalendarAvailabilityWithoutEmailOrRange(t *testing.T) {
 
 func TestTransportExecutesRawEWSRequest(t *testing.T) {
 	const requestXML = `<soap:Envelope xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/"><soap:Body><m:GetServerTimeZones xmlns:m="http://schemas.microsoft.com/exchange/services/2006/messages"/></soap:Body></soap:Envelope>`
-	const responseXML = `<soap:Envelope><soap:Body><m:GetServerTimeZonesResponse><m:ResponseMessages/></m:GetServerTimeZonesResponse></soap:Body></soap:Envelope>`
+	const responseXML = `<soap:Envelope><soap:Body><m:GetServerTimeZonesResponse><m:ResponseMessages/><t:Token>secret-token</t:Token></m:GetServerTimeZonesResponse></soap:Body></soap:Envelope>`
 	var sawBody bool
 	var sawAuth bool
 	var sawSOAPAction bool
@@ -798,8 +798,18 @@ func TestTransportExecutesRawEWSRequest(t *testing.T) {
 	if !sawBody || !sawAuth || !sawSOAPAction {
 		t.Fatalf("expected body/auth/SOAPAction to be sent, got body=%v auth=%v soapAction=%v", sawBody, sawAuth, sawSOAPAction)
 	}
-	if result.Data["status"] != http.StatusOK || result.Data["content_type"] != "text/xml" || result.Data["xml_text"] != responseXML {
+	if result.Data["status"] != http.StatusOK || result.Data["xml_text"] != nil || result.Data["body_text"] != nil {
 		t.Fatalf("unexpected raw EWS data: %#v", result.Data)
+	}
+	preview, _ := result.Data["body_preview"].(string)
+	if !strings.Contains(preview, "GetServerTimeZonesResponse") {
+		t.Fatalf("expected EWS response preview, got %q", preview)
+	}
+	if strings.Contains(preview, "secret-token") {
+		t.Fatalf("expected EWS response preview to redact token, got %q", preview)
+	}
+	if result.Data["body_sha256"] == "" {
+		t.Fatalf("expected EWS response body hash, got %#v", result.Data)
 	}
 	headers := result.Data["headers"].(map[string]any)
 	if headers["request-id"] != "ews-request-id" || headers["content-type"] != "text/xml" {

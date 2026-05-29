@@ -140,7 +140,7 @@ func (client *Transport) Execute(ctx context.Context, request transport.ActionRe
 	if response, ok := client.executeHighLevel(ctx, request); ok {
 		return response
 	}
-	return client.executeService(ctx, request.Name, request.Payload, false)
+	return client.executeRawService(ctx, request.Name, request.Payload, false)
 }
 
 func (client *Transport) executeService(ctx context.Context, actionName string, requestPayload any, urlPostData bool) transport.ActionResponse {
@@ -190,6 +190,49 @@ func (client *Transport) executeServiceOnce(ctx context.Context, actionName stri
 		return transport.ActionResponse{OK: false, Data: payload, Error: fmt.Sprintf("owa service returned HTTP %d", response.StatusCode)}, authFailure
 	}
 	return transport.ActionResponse{OK: true, Data: payload}, false
+}
+
+func (client *Transport) executeRawService(ctx context.Context, actionName string, requestPayload any, urlPostData bool) transport.ActionResponse {
+	response, authFailure := client.executeRawServiceOnce(ctx, actionName, requestPayload, urlPostData)
+	if !authFailure {
+		return response
+	}
+	client.invalidateSession()
+	response, _ = client.executeRawServiceOnce(ctx, actionName, requestPayload, urlPostData)
+	return response
+}
+
+func (client *Transport) executeRawServiceOnce(ctx context.Context, actionName string, requestPayload any, urlPostData bool) (transport.ActionResponse, bool) {
+	session, err := client.login(ctx)
+	if err != nil {
+		return transport.ActionResponse{OK: false, Error: err.Error()}, false
+	}
+	var httpRequest *http.Request
+	if urlPostData {
+		httpRequest, err = BuildURLPostDataRequest(client.config, actionName, session.Canary, requestPayload)
+	} else {
+		httpRequest, err = BuildServiceRequest(client.config, actionName, session.Canary, requestPayload)
+	}
+	if err != nil {
+		return transport.ActionResponse{OK: false, Error: err.Error()}, false
+	}
+	httpRequest = httpRequest.WithContext(ctx)
+	response, err := session.Client.Do(httpRequest)
+	if err != nil {
+		return transport.ActionResponse{OK: false, Error: err.Error()}, false
+	}
+	defer response.Body.Close()
+
+	rawBody, err := transport.ReadLimited(response.Body, transport.MaxResponseBytes)
+	if err != nil {
+		return transport.ActionResponse{OK: false, Error: err.Error()}, false
+	}
+	authFailure := isOWAAuthFailureResponse(response, rawBody)
+	data := transport.RawResponseEnvelope(response.StatusCode, response.Header, rawBody)
+	if response.StatusCode < 200 || response.StatusCode >= 300 {
+		return transport.ActionResponse{OK: false, Data: data, Error: fmt.Sprintf("owa service returned HTTP %d", response.StatusCode)}, authFailure
+	}
+	return transport.ActionResponse{OK: true, Data: data}, false
 }
 
 func (client *Transport) DryRun(_ context.Context, request transport.ActionRequest) transport.DryRunSummary {

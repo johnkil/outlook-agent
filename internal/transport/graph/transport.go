@@ -904,28 +904,11 @@ func (client *Transport) doRawJSONWithHeaders(ctx context.Context, method string
 	}
 	defer response.Body.Close()
 
-	data := map[string]any{
-		"status":  response.StatusCode,
-		"headers": selectedResponseHeaders(response.Header),
-	}
 	rawBody, err := transport.ReadLimited(response.Body, transport.MaxResponseBytes)
 	if err != nil {
 		return err
 	}
-	if len(rawBody) > 0 {
-		contentType := response.Header.Get("Content-Type")
-		if strings.Contains(strings.ToLower(contentType), "json") {
-			var decoded any
-			if err := json.Unmarshal(rawBody, &decoded); err != nil {
-				return err
-			}
-			data["json"] = decoded
-		} else {
-			data["content_type"] = contentType
-			data["body_text"] = string(rawBody)
-		}
-	}
-	*output = data
+	*output = transport.RawResponseEnvelope(response.StatusCode, response.Header, rawBody)
 	return nil
 }
 

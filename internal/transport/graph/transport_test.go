@@ -160,8 +160,13 @@ func TestTransportExecutesRawGraphRequest(t *testing.T) {
 		sawBody = message["subject"] == "Hello"
 		response.Header().Set("Content-Type", "application/json")
 		response.Header().Set("request-id", "request-1")
+		response.Header().Set("Set-Cookie", "session=secret")
 		response.WriteHeader(http.StatusAccepted)
-		_ = json.NewEncoder(response).Encode(map[string]any{"accepted": true})
+		_ = json.NewEncoder(response).Encode(map[string]any{
+			"accepted":     true,
+			"access_token": "secret-token",
+			"contentBytes": "attachment-bytes",
+		})
 	}))
 	defer server.Close()
 
@@ -192,13 +197,27 @@ func TestTransportExecutesRawGraphRequest(t *testing.T) {
 	if result.Data["status"] != 202 {
 		t.Fatalf("expected response status 202, got %#v", result.Data)
 	}
-	jsonBody := result.Data["json"].(map[string]any)
-	if jsonBody["accepted"] != true {
-		t.Fatalf("expected JSON response body, got %#v", jsonBody)
+	if result.Data["json"] != nil || result.Data["body_text"] != nil {
+		t.Fatalf("expected raw body to be summarized, got %#v", result.Data)
+	}
+	preview, _ := result.Data["body_preview"].(string)
+	if !strings.Contains(preview, "accepted") {
+		t.Fatalf("expected redacted preview to preserve safe fields, got %q", preview)
+	}
+	for _, leaked := range []string{"secret-token", "attachment-bytes", "access_token", "contentBytes"} {
+		if strings.Contains(preview, leaked) {
+			t.Fatalf("expected raw Graph preview to redact %q, got %q", leaked, preview)
+		}
+	}
+	if result.Data["body_sha256"] == "" {
+		t.Fatalf("expected raw Graph body hash, got %#v", result.Data)
 	}
 	headers := result.Data["headers"].(map[string]any)
 	if headers["request-id"] != "request-1" {
 		t.Fatalf("expected selected response headers, got %#v", headers)
+	}
+	if headers["set-cookie"] != nil {
+		t.Fatalf("expected Set-Cookie to be excluded, got %#v", headers)
 	}
 }
 
