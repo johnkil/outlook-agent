@@ -102,6 +102,11 @@ outlook.mail_create_reply_draft
 outlook.mail_create_reply_all_draft
 outlook.mail_create_forward_draft
 outlook.mail_send_draft
+outlook.mail_move_to_folder
+outlook.mail_archive
+outlook.mail_flag
+outlook.mail_categorize
+outlook.mail_mark_read
 outlook.mail_move_to_deleted_items
 outlook.mail_rules_list
 outlook.mail_rule_set_enabled
@@ -165,6 +170,27 @@ Key tool inputs:
   requires a matching `outlook.action_dry_run` review before execution. In
   required approval mode, the host must approve the exact review packet before
   the send can proceed.
+- `outlook.mail_move_to_folder`: `ids`, `folder_id`, optional
+  `confirm_token`, optional `approval_challenge_id`, optional
+  `approval_token`, and optional `mailbox`. The action maps to
+  `mail.move_to_folder`. A single explicit id is a reversible single-item
+  mutation; multiple ids require a matching dry-run confirmation.
+- `outlook.mail_archive`: `ids`, optional `confirm_token`, optional
+  `approval_challenge_id`, optional `approval_token`, and optional `mailbox`.
+  The action maps to `mail.archive`. A single explicit id may execute directly;
+  multiple ids require dry-run confirmation.
+- `outlook.mail_flag`: `ids`, `flag_status`, optional `confirm_token`,
+  optional `approval_challenge_id`, optional `approval_token`, and optional
+  `mailbox`. The action maps to `mail.flag` and uses the same single vs bulk
+  reversible mutation rules.
+- `outlook.mail_categorize`: `ids`, non-empty `categories`, optional
+  `confirm_token`, optional `approval_challenge_id`, optional
+  `approval_token`, and optional `mailbox`. The action maps to
+  `mail.categorize` and replaces the message category list.
+- `outlook.mail_mark_read`: `ids`, `is_read`, optional `confirm_token`,
+  optional `approval_challenge_id`, optional `approval_token`, and optional
+  `mailbox`. The action maps to `mail.mark_read` and uses the same single vs
+  bulk reversible mutation rules.
 - `outlook.mail_rules_list`: optional `folder_id` and optional `mailbox`.
   Returns read-only mailbox rule metadata when the selected transport supports
   `mail.rules.list`.
@@ -284,8 +310,10 @@ Configured transports:
   explicit `mail.fetch_body`, explicit `mail.list_attachments`, explicit
   `mail.fetch_attachment`, `mail.create_draft`, `mail.create_reply_draft`,
   `mail.create_reply_all_draft`, `mail.create_forward_draft`,
-  `mail.move_to_deleted_items`, confirmed `mail.rules.set_enabled`, and raw
-  guarded `GraphRequest`; `auth check` probes `/me/mailFolders/inbox`.
+  `mail.send_draft`, `mail.move_to_folder`, `mail.archive`, `mail.flag`,
+  `mail.categorize`, `mail.mark_read`, `mail.move_to_deleted_items`,
+  confirmed `mail.rules.set_enabled`, and raw guarded `GraphRequest`; `auth
+  check` probes `/me/mailFolders/inbox`.
   `mail.rules.list` uses
   `/me/mailFolders/{folder}/messageRules`, defaulting to Inbox.
   `mail.rules.set_enabled` uses `PATCH

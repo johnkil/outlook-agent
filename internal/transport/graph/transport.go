@@ -61,6 +61,11 @@ func (client *Transport) Capabilities(context.Context) transport.CapabilitySet {
 		{Name: "mail.create_reply_all_draft", Transport: "graph", Class: policy.DraftOnly, Level: action.LevelHighLevelMCPTool},
 		{Name: "mail.create_forward_draft", Transport: "graph", Class: policy.DraftOnly, Level: action.LevelHighLevelMCPTool},
 		{Name: "mail.move_to_deleted_items", Transport: "graph", Class: policy.ReversibleBulk, Level: action.LevelHighLevelMCPTool},
+		{Name: "mail.move_to_folder", Transport: "graph", Class: policy.ReversibleBulk, Level: action.LevelHighLevelMCPTool},
+		{Name: "mail.archive", Transport: "graph", Class: policy.ReversibleBulk, Level: action.LevelHighLevelMCPTool},
+		{Name: "mail.flag", Transport: "graph", Class: policy.ReversibleBulk, Level: action.LevelHighLevelMCPTool},
+		{Name: "mail.categorize", Transport: "graph", Class: policy.ReversibleBulk, Level: action.LevelHighLevelMCPTool},
+		{Name: "mail.mark_read", Transport: "graph", Class: policy.ReversibleBulk, Level: action.LevelHighLevelMCPTool},
 		{Name: "mail.rules.list", Transport: "graph", Class: policy.ReadMetadata, Level: action.LevelHighLevelMCPTool},
 		{Name: "mail.rules.set_enabled", Transport: "graph", Class: policy.SettingsOrRules, Level: action.LevelHighLevelMCPTool},
 		{Name: "mailbox.settings.get", Transport: "graph", Class: policy.ReadMetadata, Level: action.LevelHighLevelMCPTool},
@@ -225,6 +230,51 @@ func (client *Transport) Execute(ctx context.Context, request transport.ActionRe
 			return transport.ActionResponse{OK: false, Data: data, Error: "some messages failed to move to Deleted Items"}
 		}
 		return transport.ActionResponse{OK: true, Data: data}
+	case "mail.move_to_folder":
+		ids := messageIDs(request.Payload)
+		if len(ids) == 0 {
+			return transport.ActionResponse{OK: false, Error: "mail.move_to_folder requires ids"}
+		}
+		folderID := strings.TrimSpace(stringValue(request.Payload, "folder_id", ""))
+		if folderID == "" {
+			return transport.ActionResponse{OK: false, Error: "mail.move_to_folder requires folder_id"}
+		}
+		return reversibleMutationResponse(client.moveMessages(ctx, mailbox, ids, folderID))
+	case "mail.archive":
+		ids := messageIDs(request.Payload)
+		if len(ids) == 0 {
+			return transport.ActionResponse{OK: false, Error: "mail.archive requires ids"}
+		}
+		return reversibleMutationResponse(client.moveMessages(ctx, mailbox, ids, "archive"))
+	case "mail.flag":
+		ids := messageIDs(request.Payload)
+		if len(ids) == 0 {
+			return transport.ActionResponse{OK: false, Error: "mail.flag requires ids"}
+		}
+		status, err := normalizeGraphFlagStatus(stringValue(request.Payload, "flag_status", ""))
+		if err != nil {
+			return transport.ActionResponse{OK: false, Error: err.Error()}
+		}
+		return reversibleMutationResponse(client.patchMessages(ctx, mailbox, ids, map[string]any{"flag": map[string]any{"flagStatus": status}}))
+	case "mail.categorize":
+		ids := messageIDs(request.Payload)
+		if len(ids) == 0 {
+			return transport.ActionResponse{OK: false, Error: "mail.categorize requires ids"}
+		}
+		if _, ok := request.Payload["categories"]; !ok {
+			return transport.ActionResponse{OK: false, Error: "mail.categorize requires categories"}
+		}
+		return reversibleMutationResponse(client.patchMessages(ctx, mailbox, ids, map[string]any{"categories": stringsToAny(stringSlice(request.Payload["categories"]))}))
+	case "mail.mark_read":
+		ids := messageIDs(request.Payload)
+		if len(ids) == 0 {
+			return transport.ActionResponse{OK: false, Error: "mail.mark_read requires ids"}
+		}
+		isRead, ok := boolValue(request.Payload, "is_read")
+		if !ok {
+			return transport.ActionResponse{OK: false, Error: "mail.mark_read requires is_read"}
+		}
+		return reversibleMutationResponse(client.patchMessages(ctx, mailbox, ids, map[string]any{"isRead": isRead}))
 	case "mail.rules.list":
 		rules, err := client.listMessageRules(ctx, mailbox, stringValue(request.Payload, "folder_id", "inbox"))
 		if err != nil {
@@ -269,6 +319,12 @@ func (client *Transport) DryRun(ctx context.Context, request transport.ActionReq
 	if request.Name == "mail.send_draft" {
 		review := client.graphSendDraftReview(ctx, mailboxTarget(request.Payload), request.Name, request.Payload)
 		return transport.DryRunSummary{Action: request.Name, Count: 1, Reversible: false, RequiresConfirmation: true, SafetyClass: string(policy.SendLike), Review: &review, Warnings: review.Limitations}
+	}
+	if isReversibleMessageMutation(request.Name) {
+		ids := messageIDs(request.Payload)
+		class := reversibleClassForCount(len(ids))
+		review := graphReversibleMutationReview(request.Name, request.Payload, ids, class)
+		return transport.DryRunSummary{Action: request.Name, Count: len(ids), Reversible: true, RequiresConfirmation: len(ids) > 1, SafetyClass: string(class), Review: &review, Warnings: review.Limitations}
 	}
 	if request.Name == "GraphRequest" {
 		review := graphRawRequestReview(request.Name, request.Payload)
@@ -350,6 +406,44 @@ func (client *Transport) graphSendDraftReview(ctx context.Context, mailbox strin
 		review.Limitations = append(review.Limitations, "draft has attachments; attachment names were not fetched during dry-run")
 	}
 	return review
+}
+
+func graphReversibleMutationReview(actionName string, payload map[string]any, ids []string, class policy.SafetyClass) transport.ReviewPacket {
+	targets := make([]transport.TargetRef, 0, len(ids))
+	for _, id := range ids {
+		targets = append(targets, transport.TargetRef{Kind: "message", ID: id})
+	}
+	mutation := &transport.MutationReview{Operation: actionName}
+	switch actionName {
+	case "mail.move_to_folder":
+		mutation.Operation = "move"
+		mutation.To = strings.TrimSpace(stringValue(payload, "folder_id", ""))
+	case "mail.archive":
+		mutation.Operation = "move"
+		mutation.To = "Archive"
+	case "mail.flag":
+		mutation.Operation = "set_flag"
+		if status, err := normalizeGraphFlagStatus(stringValue(payload, "flag_status", "")); err == nil {
+			mutation.NewState = map[string]any{"flag_status": status}
+		}
+	case "mail.categorize":
+		mutation.Operation = "set_categories"
+		mutation.NewState = map[string]any{"categories": stringSlice(payload["categories"])}
+	case "mail.mark_read":
+		mutation.Operation = "set_read_state"
+		if isRead, ok := boolValue(payload, "is_read"); ok {
+			mutation.NewState = map[string]any{"is_read": isRead}
+		}
+	}
+	return transport.ReviewPacket{
+		Version:            transport.ReviewPacketVersion,
+		Transport:          "graph",
+		Action:             actionName,
+		SafetyClass:        string(class),
+		Targets:            targets,
+		Mutation:           mutation,
+		PayloadFingerprint: transport.PayloadFingerprint(payload),
+	}
 }
 
 func graphQueryKeys(rawQuery any) []string {
@@ -839,7 +933,17 @@ func (client *Transport) sendDraft(ctx context.Context, mailbox string, draftID 
 }
 
 func (client *Transport) moveMessagesToDeletedItems(ctx context.Context, mailbox string, ids []string) bulkMoveResult {
+	return client.moveMessages(ctx, mailbox, ids, "deleteditems")
+}
+
+func (client *Transport) moveMessages(ctx context.Context, mailbox string, ids []string, destinationID string) bulkMoveResult {
 	result := bulkMoveResult{Succeeded: []string{}, Failed: []map[string]any{}}
+	if strings.TrimSpace(destinationID) == "" {
+		for _, id := range ids {
+			result.Failed = append(result.Failed, map[string]any{"id": id, "error": "destination folder id is required"})
+		}
+		return result
+	}
 	for _, id := range ids {
 		requestURL, err := client.messageMoveURL(mailbox, id)
 		if err != nil {
@@ -847,13 +951,44 @@ func (client *Transport) moveMessagesToDeletedItems(ctx context.Context, mailbox
 			continue
 		}
 		var moved message
-		if err := client.doJSON(ctx, http.MethodPost, requestURL, map[string]any{"destinationId": "deleteditems"}, &moved); err != nil {
+		if err := client.doJSON(ctx, http.MethodPost, requestURL, map[string]any{"destinationId": destinationID}, &moved); err != nil {
 			result.Failed = append(result.Failed, map[string]any{"id": id, "error": err.Error()})
 			continue
 		}
 		result.Succeeded = append(result.Succeeded, id)
 	}
 	return result
+}
+
+func (client *Transport) patchMessages(ctx context.Context, mailbox string, ids []string, body map[string]any) bulkMoveResult {
+	result := bulkMoveResult{Succeeded: []string{}, Failed: []map[string]any{}}
+	for _, id := range ids {
+		requestURL, err := client.messagePatchURL(mailbox, id)
+		if err != nil {
+			result.Failed = append(result.Failed, map[string]any{"id": id, "error": err.Error()})
+			continue
+		}
+		var updated message
+		if err := client.doJSON(ctx, http.MethodPatch, requestURL, body, &updated); err != nil {
+			result.Failed = append(result.Failed, map[string]any{"id": id, "error": err.Error()})
+			continue
+		}
+		result.Succeeded = append(result.Succeeded, id)
+	}
+	return result
+}
+
+func reversibleMutationResponse(result bulkMoveResult) transport.ActionResponse {
+	data := map[string]any{
+		"updated_count": len(result.Succeeded),
+		"reversible":    true,
+		"succeeded":     result.Succeeded,
+		"failed":        result.Failed,
+	}
+	if len(result.Failed) > 0 {
+		return transport.ActionResponse{OK: false, Data: data, Error: "some messages failed to update"}
+	}
+	return transport.ActionResponse{OK: true, Data: data}
 }
 
 func (client *Transport) listMessageRules(ctx context.Context, mailbox string, folderID string) ([]any, error) {
@@ -1379,6 +1514,14 @@ func (client *Transport) messageMoveURL(mailbox string, id string) (string, erro
 	return base + graphOwnerPath(mailbox) + "/messages/" + url.PathEscape(id) + "/move", nil
 }
 
+func (client *Transport) messagePatchURL(mailbox string, id string) (string, error) {
+	base, err := client.config.normalizedBaseURL()
+	if err != nil {
+		return "", err
+	}
+	return base + graphOwnerPath(mailbox) + "/messages/" + url.PathEscape(id), nil
+}
+
 func (client *Transport) messageSendURL(mailbox string, id string) (string, error) {
 	base, err := client.config.normalizedBaseURL()
 	if err != nil {
@@ -1648,6 +1791,59 @@ func stringSlice(value any) []string {
 	default:
 		return nil
 	}
+}
+
+func messageIDs(payload map[string]any) []string {
+	ids := stringSlice(payload["ids"])
+	if len(ids) > 0 {
+		return ids
+	}
+	id := strings.TrimSpace(stringValue(payload, "id", ""))
+	if id == "" {
+		id = strings.TrimSpace(stringValue(payload, "message_id", ""))
+	}
+	if id == "" {
+		return nil
+	}
+	return []string{id}
+}
+
+func stringsToAny(values []string) []any {
+	output := make([]any, 0, len(values))
+	for _, value := range values {
+		output = append(output, value)
+	}
+	return output
+}
+
+func normalizeGraphFlagStatus(value string) (string, error) {
+	normalized := strings.ToLower(strings.TrimSpace(strings.ReplaceAll(strings.ReplaceAll(value, "_", ""), "-", "")))
+	switch normalized {
+	case "flagged":
+		return "flagged", nil
+	case "complete", "completed":
+		return "complete", nil
+	case "notflagged", "clear", "none":
+		return "notFlagged", nil
+	default:
+		return "", fmt.Errorf("unsupported flag_status %q", value)
+	}
+}
+
+func isReversibleMessageMutation(actionName string) bool {
+	switch actionName {
+	case "mail.move_to_folder", "mail.archive", "mail.flag", "mail.categorize", "mail.mark_read":
+		return true
+	default:
+		return false
+	}
+}
+
+func reversibleClassForCount(count int) policy.SafetyClass {
+	if count == 1 {
+		return policy.ReversibleSingleItem
+	}
+	return policy.ReversibleBulk
 }
 
 func allowedRawGraphMethod(method string) bool {

@@ -168,6 +168,11 @@ The MCP server registers the initial public tool surface from `docs/SPEC.md`:
 - `outlook.mail_create_reply_all_draft`
 - `outlook.mail_create_forward_draft`
 - `outlook.mail_send_draft`
+- `outlook.mail_move_to_folder`
+- `outlook.mail_archive`
+- `outlook.mail_flag`
+- `outlook.mail_categorize`
+- `outlook.mail_mark_read`
 - `outlook.mail_move_to_deleted_items`
 - `outlook.mail_rules_list`
 - `outlook.mail_rule_set_enabled`

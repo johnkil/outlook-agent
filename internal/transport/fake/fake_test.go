@@ -2,6 +2,7 @@ package fake_test
 
 import (
 	"context"
+	"reflect"
 	"testing"
 
 	"github.com/johnkil/outlook-agent/internal/transport"
@@ -67,6 +68,11 @@ func TestFakeTransportExecutesInitialHighLevelActions(t *testing.T) {
 		{name: "mail.create_reply_draft", key: "draft"},
 		{name: "mail.create_reply_all_draft", key: "draft"},
 		{name: "mail.create_forward_draft", key: "draft"},
+		{name: "mail.move_to_folder", key: "updated_count"},
+		{name: "mail.archive", key: "updated_count"},
+		{name: "mail.flag", key: "updated_count"},
+		{name: "mail.categorize", key: "updated_count"},
+		{name: "mail.mark_read", key: "updated_count"},
 		{name: "mail.move_to_deleted_items", key: "moved_count"},
 		{name: "calendar.list", key: "events"},
 		{name: "calendar.availability", key: "windows"},
@@ -122,6 +128,87 @@ func TestFakeTransportDryRunSendDraftReview(t *testing.T) {
 	}
 	if summary.Review.SafetyClass != "send_like" || summary.Review.Mail.Subject == "" || summary.Review.Mail.BodySHA256 == "" {
 		t.Fatalf("unexpected send draft review: %#v", summary.Review)
+	}
+}
+
+func TestFakeTransportDryRunReversibleMessageMutationReview(t *testing.T) {
+	client := fake.New()
+
+	tests := []struct {
+		name      string
+		payload   map[string]any
+		operation string
+		to        string
+		newState  map[string]any
+	}{
+		{
+			name:      "mail.move_to_folder",
+			payload:   map[string]any{"ids": []any{"msg-1", "msg-2"}, "folder_id": "folder-1"},
+			operation: "move",
+			to:        "folder-1",
+		},
+		{
+			name:      "mail.archive",
+			payload:   map[string]any{"ids": []any{"msg-1", "msg-2"}},
+			operation: "move",
+			to:        "Archive",
+		},
+		{
+			name:      "mail.flag",
+			payload:   map[string]any{"ids": []any{"msg-1", "msg-2"}, "flag_status": "flagged"},
+			operation: "set_flag",
+			newState:  map[string]any{"flag_status": "flagged"},
+		},
+		{
+			name:      "mail.categorize",
+			payload:   map[string]any{"ids": []any{"msg-1", "msg-2"}, "categories": []any{"Red"}},
+			operation: "set_categories",
+			newState:  map[string]any{"categories": []string{"Red"}},
+		},
+		{
+			name:      "mail.mark_read",
+			payload:   map[string]any{"ids": []any{"msg-1", "msg-2"}, "is_read": true},
+			operation: "set_read_state",
+			newState:  map[string]any{"is_read": true},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			summary := client.DryRun(context.Background(), transport.ActionRequest{
+				Name:    tt.name,
+				Payload: tt.payload,
+			})
+
+			if summary.Action != tt.name || summary.Count != 2 || !summary.Reversible || !summary.RequiresConfirmation {
+				t.Fatalf("unexpected dry-run summary: %#v", summary)
+			}
+			if summary.SafetyClass != "reversible_bulk" {
+				t.Fatalf("expected reversible_bulk safety class, got %q", summary.SafetyClass)
+			}
+			if summary.Review == nil || summary.Review.Mutation == nil {
+				t.Fatalf("expected mutation review packet: %#v", summary)
+			}
+			if summary.Review.Mutation.Operation != tt.operation {
+				t.Fatalf("expected operation %q, got %#v", tt.operation, summary.Review.Mutation)
+			}
+			if summary.Review.Mutation.To != tt.to {
+				t.Fatalf("expected destination %q, got %#v", tt.to, summary.Review.Mutation)
+			}
+			if tt.newState == nil {
+				if summary.Review.Mutation.NewState != nil {
+					t.Fatalf("expected no new state, got %#v", summary.Review.Mutation.NewState)
+				}
+			} else if !reflect.DeepEqual(summary.Review.Mutation.NewState, tt.newState) {
+				t.Fatalf("expected new state %#v, got %#v", tt.newState, summary.Review.Mutation.NewState)
+			}
+			if len(summary.Review.Targets) != 2 {
+				t.Fatalf("expected exact targets in review, got %#v", summary.Review.Targets)
+			}
+			if summary.Review.PayloadFingerprint == "" {
+				t.Fatalf("expected payload fingerprint in review: %#v", summary.Review)
+			}
+		})
 	}
 }
 

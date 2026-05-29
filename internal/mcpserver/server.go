@@ -136,6 +136,50 @@ type MailSendDraftInput struct {
 	Mailbox             string `json:"mailbox,omitempty" jsonschema:"optional mailbox user id or user principal name"`
 }
 
+type MailMoveToFolderInput struct {
+	IDs                 []string `json:"ids" jsonschema:"message ids to move"`
+	FolderID            string   `json:"folder_id" jsonschema:"destination mail folder id"`
+	ConfirmToken        string   `json:"confirm_token,omitempty" jsonschema:"confirmation token from outlook.action_dry_run for bulk moves"`
+	ApprovalChallengeID string   `json:"approval_challenge_id,omitempty" jsonschema:"payload-bound external approval challenge id"`
+	ApprovalToken       string   `json:"approval_token,omitempty" jsonschema:"external approval token supplied by the host after user approval"`
+	Mailbox             string   `json:"mailbox,omitempty" jsonschema:"optional mailbox user id or user principal name"`
+}
+
+type MailArchiveInput struct {
+	IDs                 []string `json:"ids" jsonschema:"message ids to archive"`
+	ConfirmToken        string   `json:"confirm_token,omitempty" jsonschema:"confirmation token from outlook.action_dry_run for bulk archive"`
+	ApprovalChallengeID string   `json:"approval_challenge_id,omitempty" jsonschema:"payload-bound external approval challenge id"`
+	ApprovalToken       string   `json:"approval_token,omitempty" jsonschema:"external approval token supplied by the host after user approval"`
+	Mailbox             string   `json:"mailbox,omitempty" jsonschema:"optional mailbox user id or user principal name"`
+}
+
+type MailFlagInput struct {
+	IDs                 []string `json:"ids" jsonschema:"message ids to flag"`
+	FlagStatus          string   `json:"flag_status" jsonschema:"flagged, complete, or notFlagged"`
+	ConfirmToken        string   `json:"confirm_token,omitempty" jsonschema:"confirmation token from outlook.action_dry_run for bulk flag changes"`
+	ApprovalChallengeID string   `json:"approval_challenge_id,omitempty" jsonschema:"payload-bound external approval challenge id"`
+	ApprovalToken       string   `json:"approval_token,omitempty" jsonschema:"external approval token supplied by the host after user approval"`
+	Mailbox             string   `json:"mailbox,omitempty" jsonschema:"optional mailbox user id or user principal name"`
+}
+
+type MailCategorizeInput struct {
+	IDs                 []string `json:"ids" jsonschema:"message ids to categorize"`
+	Categories          []string `json:"categories" jsonschema:"complete replacement category list"`
+	ConfirmToken        string   `json:"confirm_token,omitempty" jsonschema:"confirmation token from outlook.action_dry_run for bulk category changes"`
+	ApprovalChallengeID string   `json:"approval_challenge_id,omitempty" jsonschema:"payload-bound external approval challenge id"`
+	ApprovalToken       string   `json:"approval_token,omitempty" jsonschema:"external approval token supplied by the host after user approval"`
+	Mailbox             string   `json:"mailbox,omitempty" jsonschema:"optional mailbox user id or user principal name"`
+}
+
+type MailMarkReadInput struct {
+	IDs                 []string `json:"ids" jsonschema:"message ids to update"`
+	IsRead              bool     `json:"is_read" jsonschema:"target read state"`
+	ConfirmToken        string   `json:"confirm_token,omitempty" jsonschema:"confirmation token from outlook.action_dry_run for bulk read-state changes"`
+	ApprovalChallengeID string   `json:"approval_challenge_id,omitempty" jsonschema:"payload-bound external approval challenge id"`
+	ApprovalToken       string   `json:"approval_token,omitempty" jsonschema:"external approval token supplied by the host after user approval"`
+	Mailbox             string   `json:"mailbox,omitempty" jsonschema:"optional mailbox user id or user principal name"`
+}
+
 type MailMoveToDeletedItemsInput struct {
 	IDs                 []string `json:"ids" jsonschema:"message ids to move"`
 	ConfirmToken        string   `json:"confirm_token" jsonschema:"confirmation token from outlook.action_dry_run"`
@@ -298,6 +342,21 @@ var toolRegistrations = []toolRegistration{
 	{name: "outlook.mail_send_draft", add: func(server *mcp.Server, runtime *Runtime, name string) {
 		mcp.AddTool(server, mcpTool(name), mailSendDraftHandler(runtime))
 	}},
+	{name: "outlook.mail_move_to_folder", add: func(server *mcp.Server, runtime *Runtime, name string) {
+		mcp.AddTool(server, mcpTool(name), mailMoveToFolderHandler(runtime))
+	}},
+	{name: "outlook.mail_archive", add: func(server *mcp.Server, runtime *Runtime, name string) {
+		mcp.AddTool(server, mcpTool(name), mailArchiveHandler(runtime))
+	}},
+	{name: "outlook.mail_flag", add: func(server *mcp.Server, runtime *Runtime, name string) {
+		mcp.AddTool(server, mcpTool(name), mailFlagHandler(runtime))
+	}},
+	{name: "outlook.mail_categorize", add: func(server *mcp.Server, runtime *Runtime, name string) {
+		mcp.AddTool(server, mcpTool(name), mailCategorizeHandler(runtime))
+	}},
+	{name: "outlook.mail_mark_read", add: func(server *mcp.Server, runtime *Runtime, name string) {
+		mcp.AddTool(server, mcpTool(name), mailMarkReadHandler(runtime))
+	}},
 	{name: "outlook.mail_move_to_deleted_items", add: func(server *mcp.Server, runtime *Runtime, name string) {
 		mcp.AddTool(server, mcpTool(name), mailMoveToDeletedItemsHandler(runtime))
 	}},
@@ -341,6 +400,11 @@ var toolDescriptionByName = map[string]string{
 	"outlook.mail_create_reply_all_draft": "Create a save-only reply-all draft for one explicit source message; does not send mail.",
 	"outlook.mail_create_forward_draft":   "Create a save-only forward draft for one explicit source message and recipients; does not send mail.",
 	"outlook.mail_send_draft":             "Send one exact draft only after dry-run review, confirmation, and required approval.",
+	"outlook.mail_move_to_folder":         "Move exact message ids to a folder; bulk moves require dry-run confirmation.",
+	"outlook.mail_archive":                "Archive exact message ids; bulk archive requires dry-run confirmation.",
+	"outlook.mail_flag":                   "Set flag state on exact message ids; bulk flag changes require dry-run confirmation.",
+	"outlook.mail_categorize":             "Replace categories on exact message ids; bulk category changes require dry-run confirmation.",
+	"outlook.mail_mark_read":              "Set read state on exact message ids; bulk read-state changes require dry-run confirmation.",
 	"outlook.mail_move_to_deleted_items":  "Move exact message ids to Deleted Items after the required dry-run confirmation token.",
 	"outlook.mail_rules_list":             "List read-only mailbox rule metadata before any rule change.",
 	"outlook.mail_rule_set_enabled":       "Enable or disable one settings/rules item only with a dry-run confirmation token.",
@@ -705,6 +769,91 @@ func mailSendDraftHandler(runtime *Runtime) func(context.Context, *mcp.CallToolR
 	}
 }
 
+func mailMoveToFolderHandler(runtime *Runtime) func(context.Context, *mcp.CallToolRequest, MailMoveToFolderInput) (*mcp.CallToolResult, ActionResultOutput, error) {
+	return func(ctx context.Context, _ *mcp.CallToolRequest, input MailMoveToFolderInput) (*mcp.CallToolResult, ActionResultOutput, error) {
+		folderID := strings.TrimSpace(input.FolderID)
+		if folderID == "" {
+			return nil, ActionResultOutput{OK: false, Error: "folder_id required"}, nil
+		}
+		payload := withMailbox(map[string]any{"ids": stringsToAny(input.IDs), "folder_id": folderID}, input.Mailbox)
+		return executeReversibleMessageMutation(ctx, runtime, "mail.move_to_folder", payload, input.ConfirmToken, input.ApprovalChallengeID, input.ApprovalToken)
+	}
+}
+
+func mailArchiveHandler(runtime *Runtime) func(context.Context, *mcp.CallToolRequest, MailArchiveInput) (*mcp.CallToolResult, ActionResultOutput, error) {
+	return func(ctx context.Context, _ *mcp.CallToolRequest, input MailArchiveInput) (*mcp.CallToolResult, ActionResultOutput, error) {
+		payload := withMailbox(map[string]any{"ids": stringsToAny(input.IDs)}, input.Mailbox)
+		return executeReversibleMessageMutation(ctx, runtime, "mail.archive", payload, input.ConfirmToken, input.ApprovalChallengeID, input.ApprovalToken)
+	}
+}
+
+func mailFlagHandler(runtime *Runtime) func(context.Context, *mcp.CallToolRequest, MailFlagInput) (*mcp.CallToolResult, ActionResultOutput, error) {
+	return func(ctx context.Context, _ *mcp.CallToolRequest, input MailFlagInput) (*mcp.CallToolResult, ActionResultOutput, error) {
+		flagStatus := strings.TrimSpace(input.FlagStatus)
+		if flagStatus == "" {
+			return nil, ActionResultOutput{OK: false, Error: "flag_status required"}, nil
+		}
+		payload := withMailbox(map[string]any{"ids": stringsToAny(input.IDs), "flag_status": flagStatus}, input.Mailbox)
+		return executeReversibleMessageMutation(ctx, runtime, "mail.flag", payload, input.ConfirmToken, input.ApprovalChallengeID, input.ApprovalToken)
+	}
+}
+
+func mailCategorizeHandler(runtime *Runtime) func(context.Context, *mcp.CallToolRequest, MailCategorizeInput) (*mcp.CallToolResult, ActionResultOutput, error) {
+	return func(ctx context.Context, _ *mcp.CallToolRequest, input MailCategorizeInput) (*mcp.CallToolResult, ActionResultOutput, error) {
+		categories := nonEmptyStrings(input.Categories)
+		if len(categories) == 0 {
+			return nil, ActionResultOutput{OK: false, Error: "categories required"}, nil
+		}
+		payload := withMailbox(map[string]any{"ids": stringsToAny(input.IDs), "categories": stringsToAny(categories)}, input.Mailbox)
+		return executeReversibleMessageMutation(ctx, runtime, "mail.categorize", payload, input.ConfirmToken, input.ApprovalChallengeID, input.ApprovalToken)
+	}
+}
+
+func mailMarkReadHandler(runtime *Runtime) func(context.Context, *mcp.CallToolRequest, MailMarkReadInput) (*mcp.CallToolResult, ActionResultOutput, error) {
+	return func(ctx context.Context, _ *mcp.CallToolRequest, input MailMarkReadInput) (*mcp.CallToolResult, ActionResultOutput, error) {
+		payload := withMailbox(map[string]any{"ids": stringsToAny(input.IDs), "is_read": input.IsRead}, input.Mailbox)
+		return executeReversibleMessageMutation(ctx, runtime, "mail.mark_read", payload, input.ConfirmToken, input.ApprovalChallengeID, input.ApprovalToken)
+	}
+}
+
+func executeReversibleMessageMutation(ctx context.Context, runtime *Runtime, actionName string, payload map[string]any, confirmToken string, approvalChallengeID string, approvalToken string) (*mcp.CallToolResult, ActionResultOutput, error) {
+	if countExplicitTargetValue(payload["ids"]) == 0 {
+		return nil, ActionResultOutput{OK: false, Error: "ids required"}, nil
+	}
+	class := safetyClassForPayload(runtime.client, actionName, payload)
+	if class == policy.ReversibleBulk {
+		if confirmToken == "" {
+			return nil, ActionResultOutput{OK: false, Error: "confirm_token required"}, nil
+		}
+		_, class, review := dryRunReviewFor(ctx, runtime.client, actionName, payload, false)
+		pendingApproval, err := runtime.validateExternalApproval(approvalChallengeID, approvalToken, actionName, payload, false, runtime.profile, review, class)
+		if err != nil {
+			return nil, ActionResultOutput{OK: false, Error: err.Error()}, nil
+		}
+		if !runtime.confirm.Consume(confirmToken, confirmationBindingFor(runtime.client, runtime.profile, actionName, payload, false, review, class)) {
+			return nil, ActionResultOutput{OK: false, Error: "confirmation token is invalid"}, nil
+		}
+		if err := runtime.consumeExternalApproval(pendingApproval); err != nil {
+			return nil, ActionResultOutput{OK: false, Error: err.Error()}, nil
+		}
+		decision := confirmedActionDecision(runtime.client, actionName, payload, false)
+		if !decision.Allowed {
+			return nil, ActionResultOutput{OK: false, Error: decision.Reason}, nil
+		}
+	} else {
+		decision := policy.Evaluate(policy.Request{
+			Class:          class,
+			ExplicitTarget: hasExplicitTargetForAction(actionName, payload),
+			ExplicitIntent: true,
+		})
+		if !decision.Allowed {
+			return nil, ActionResultOutput{OK: false, Error: decision.Reason}, nil
+		}
+	}
+	response := runtime.client.Execute(ctx, transport.ActionRequest{Name: actionName, Payload: payload})
+	return nil, actionResultFromResponse(response), nil
+}
+
 func mailMoveToDeletedItemsHandler(runtime *Runtime) func(context.Context, *mcp.CallToolRequest, MailMoveToDeletedItemsInput) (*mcp.CallToolResult, ActionResultOutput, error) {
 	return func(ctx context.Context, _ *mcp.CallToolRequest, input MailMoveToDeletedItemsInput) (*mcp.CallToolResult, ActionResultOutput, error) {
 		if input.ConfirmToken == "" {
@@ -1058,7 +1207,22 @@ func safetyClassForPayload(client transport.Transport, actionName string, payloa
 	if class == policy.Destructive && isMoveToDeletedItems(actionName, payload) {
 		return policy.ReversibleBulk
 	}
+	if isReversibleMessageMutationAction(actionName) {
+		if countExplicitTargetValue(payload["ids"]) == 1 {
+			return policy.ReversibleSingleItem
+		}
+		return policy.ReversibleBulk
+	}
 	return class
+}
+
+func isReversibleMessageMutationAction(actionName string) bool {
+	switch actionName {
+	case "mail.move_to_folder", "mail.archive", "mail.flag", "mail.categorize", "mail.mark_read":
+		return true
+	default:
+		return false
+	}
 }
 
 func isMoveToDeletedItems(actionName string, payload map[string]any) bool {
@@ -1201,6 +1365,17 @@ func stringsToAny(values []string) []any {
 	output := make([]any, len(values))
 	for index, value := range values {
 		output[index] = value
+	}
+	return output
+}
+
+func nonEmptyStrings(values []string) []string {
+	output := make([]string, 0, len(values))
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value != "" {
+			output = append(output, value)
+		}
 	}
 	return output
 }

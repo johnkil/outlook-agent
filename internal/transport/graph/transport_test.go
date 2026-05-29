@@ -1014,6 +1014,150 @@ func TestTransportExecutesMailMoveToDeletedItems(t *testing.T) {
 	}
 }
 
+func TestTransportExecutesMailReversibleMutationActions(t *testing.T) {
+	tests := []struct {
+		name        string
+		actionName  string
+		path        string
+		method      string
+		payload     map[string]any
+		assertBody  func(*testing.T, map[string]any)
+		wantSuccess string
+	}{
+		{
+			name:       "move to folder",
+			actionName: "mail.move_to_folder",
+			path:       "/v1.0/me/messages/message-1/move",
+			method:     http.MethodPost,
+			payload:    map[string]any{"ids": []string{"message-1"}, "folder_id": "folder-1"},
+			assertBody: func(t *testing.T, body map[string]any) {
+				if body["destinationId"] != "folder-1" {
+					t.Fatalf("unexpected move body: %#v", body)
+				}
+			},
+			wantSuccess: "message-1",
+		},
+		{
+			name:       "archive",
+			actionName: "mail.archive",
+			path:       "/v1.0/me/messages/message-1/move",
+			method:     http.MethodPost,
+			payload:    map[string]any{"ids": []string{"message-1"}},
+			assertBody: func(t *testing.T, body map[string]any) {
+				if body["destinationId"] != "archive" {
+					t.Fatalf("unexpected archive body: %#v", body)
+				}
+			},
+			wantSuccess: "message-1",
+		},
+		{
+			name:       "flag",
+			actionName: "mail.flag",
+			path:       "/v1.0/me/messages/message-1",
+			method:     http.MethodPatch,
+			payload:    map[string]any{"ids": []string{"message-1"}, "flag_status": "flagged"},
+			assertBody: func(t *testing.T, body map[string]any) {
+				flag := body["flag"].(map[string]any)
+				if flag["flagStatus"] != "flagged" {
+					t.Fatalf("unexpected flag body: %#v", body)
+				}
+			},
+			wantSuccess: "message-1",
+		},
+		{
+			name:       "categorize",
+			actionName: "mail.categorize",
+			path:       "/v1.0/me/messages/message-1",
+			method:     http.MethodPatch,
+			payload:    map[string]any{"ids": []string{"message-1"}, "categories": []string{"Red"}},
+			assertBody: func(t *testing.T, body map[string]any) {
+				categories := body["categories"].([]any)
+				if len(categories) != 1 || categories[0] != "Red" {
+					t.Fatalf("unexpected categories body: %#v", body)
+				}
+			},
+			wantSuccess: "message-1",
+		},
+		{
+			name:       "mark read",
+			actionName: "mail.mark_read",
+			path:       "/v1.0/me/messages/message-1",
+			method:     http.MethodPatch,
+			payload:    map[string]any{"ids": []string{"message-1"}, "is_read": true},
+			assertBody: func(t *testing.T, body map[string]any) {
+				if body["isRead"] != true {
+					t.Fatalf("unexpected mark read body: %#v", body)
+				}
+			},
+			wantSuccess: "message-1",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+				if request.Method != tt.method || request.URL.Path != tt.path {
+					t.Fatalf("unexpected request: %s %s", request.Method, request.URL.String())
+				}
+				var body map[string]any
+				if err := json.NewDecoder(request.Body).Decode(&body); err != nil {
+					t.Fatalf("decode request body: %v", err)
+				}
+				tt.assertBody(t, body)
+				response.Header().Set("Content-Type", "application/json")
+				_ = json.NewEncoder(response).Encode(graphMessageResponse("message-1", "Updated", "Alice", "alice@example.com"))
+			}))
+			defer server.Close()
+
+			client := graph.NewTransport(graph.Config{
+				BaseURL:   server.URL + "/v1.0",
+				SecretRef: secret.Ref("memory:graph"),
+			}, secret.NewMemoryStore(map[string]string{"memory:graph": "token-secret"}), server.Client())
+
+			result := client.Execute(context.Background(), transport.ActionRequest{
+				Name:    tt.actionName,
+				Payload: tt.payload,
+			})
+
+			if !result.OK {
+				t.Fatalf("expected %s ok, got %#v", tt.actionName, result)
+			}
+			if result.Data["updated_count"] != 1 {
+				t.Fatalf("expected count metadata, got %#v", result.Data)
+			}
+			succeeded := result.Data["succeeded"].([]string)
+			if len(succeeded) != 1 || succeeded[0] != tt.wantSuccess {
+				t.Fatalf("unexpected succeeded ids: %#v", result.Data)
+			}
+		})
+	}
+}
+
+func TestTransportDryRunMailReversibleBulkReview(t *testing.T) {
+	client := graph.NewTransport(graph.Config{
+		BaseURL:   "https://graph.example.test/v1.0",
+		SecretRef: secret.Ref("memory:graph"),
+	}, secret.NewMemoryStore(map[string]string{"memory:graph": "token-secret"}), nil)
+
+	summary := client.DryRun(context.Background(), transport.ActionRequest{
+		Name: "mail.mark_read",
+		Payload: map[string]any{
+			"ids":     []string{"message-1", "message-2"},
+			"is_read": true,
+		},
+	})
+
+	if summary.Action != "mail.mark_read" || summary.Count != 2 || !summary.Reversible || !summary.RequiresConfirmation {
+		t.Fatalf("unexpected mark read dry-run summary: %#v", summary)
+	}
+	if summary.Review == nil || summary.Review.Mutation == nil || len(summary.Review.Targets) != 2 {
+		t.Fatalf("expected reversible bulk review: %#v", summary.Review)
+	}
+	if summary.Review.SafetyClass != string(policy.ReversibleBulk) || summary.Review.Mutation.NewState == nil {
+		t.Fatalf("unexpected reversible bulk review: %#v", summary.Review)
+	}
+}
+
 func TestTransportMailMoveToDeletedItemsReportsPartialResults(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
 		response.Header().Set("Content-Type", "application/json")

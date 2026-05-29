@@ -24,6 +24,11 @@ Compatibility version `0.1` includes these tool names:
 - `outlook.mail_create_reply_all_draft`
 - `outlook.mail_create_forward_draft`
 - `outlook.mail_send_draft`
+- `outlook.mail_move_to_folder`
+- `outlook.mail_archive`
+- `outlook.mail_flag`
+- `outlook.mail_categorize`
+- `outlook.mail_mark_read`
 - `outlook.mail_move_to_deleted_items`
 - `outlook.mail_rules_list`
 - `outlook.mail_rule_set_enabled`
@@ -78,6 +83,15 @@ Compatibility version `0.1` also includes save-only related draft helpers:
 `outlook.mail_create_forward_draft`. These create drafts only and never send;
 use `outlook.mail_send_draft` as a separate reviewed operation if the draft
 must later be sent.
+
+Compatibility version `0.1` also includes reversible message organization
+helpers: `outlook.mail_move_to_folder`, `outlook.mail_archive`,
+`outlook.mail_flag`, `outlook.mail_categorize`, and
+`outlook.mail_mark_read`. Single explicit message changes may execute directly
+when the request contains the exact id and new state. Bulk changes require
+`outlook.action_dry_run` for the matching action, user/host review of the
+returned packet, and exact confirmation fields when calling the high-level
+tool.
 
 Clients must ignore unknown output fields and unknown capability detail fields.
 Servers must keep existing fields present with compatible meanings.

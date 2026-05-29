@@ -350,6 +350,94 @@ func TestMailSendDraftRequiresDraftID(t *testing.T) {
 	}
 }
 
+func TestReversibleMessageMutationHandlersValidateRequiredState(t *testing.T) {
+	runtime := NewRuntime(fake.New())
+
+	_, moveOutput, err := mailMoveToFolderHandler(runtime)(context.Background(), nil, MailMoveToFolderInput{
+		IDs: []string{"msg-1"},
+	})
+	if err != nil {
+		t.Fatalf("move handler: %v", err)
+	}
+	if moveOutput.OK || !strings.Contains(moveOutput.Error, "folder_id required") {
+		t.Fatalf("expected missing folder_id to be rejected, got %#v", moveOutput)
+	}
+
+	_, flagOutput, err := mailFlagHandler(runtime)(context.Background(), nil, MailFlagInput{
+		IDs: []string{"msg-1"},
+	})
+	if err != nil {
+		t.Fatalf("flag handler: %v", err)
+	}
+	if flagOutput.OK || !strings.Contains(flagOutput.Error, "flag_status required") {
+		t.Fatalf("expected missing flag_status to be rejected, got %#v", flagOutput)
+	}
+
+	_, categorizeOutput, err := mailCategorizeHandler(runtime)(context.Background(), nil, MailCategorizeInput{
+		IDs: []string{"msg-1"},
+	})
+	if err != nil {
+		t.Fatalf("categorize handler: %v", err)
+	}
+	if categorizeOutput.OK || !strings.Contains(categorizeOutput.Error, "categories required") {
+		t.Fatalf("expected missing categories to be rejected, got %#v", categorizeOutput)
+	}
+}
+
+func TestReversibleMessageMutationSingleExecutesAndBulkRequiresConfirmation(t *testing.T) {
+	client := newRecordingTransport(action.Definition{Name: "mail.mark_read", Transport: "test", Class: policy.ReversibleBulk, Level: action.LevelHighLevelMCPTool})
+	runtime := NewRuntime(client)
+
+	_, singleOutput, err := mailMarkReadHandler(runtime)(context.Background(), nil, MailMarkReadInput{
+		IDs:    []string{"msg-1"},
+		IsRead: true,
+	})
+	if err != nil {
+		t.Fatalf("mark read handler: %v", err)
+	}
+	if !singleOutput.OK || !client.executed {
+		t.Fatalf("expected single explicit message mutation to execute directly: %#v executed=%v", singleOutput, client.executed)
+	}
+
+	client.executed = false
+	_, missingConfirm, err := mailMarkReadHandler(runtime)(context.Background(), nil, MailMarkReadInput{
+		IDs:    []string{"msg-1", "msg-2"},
+		IsRead: true,
+	})
+	if err != nil {
+		t.Fatalf("mark read handler: %v", err)
+	}
+	if missingConfirm.OK || !strings.Contains(missingConfirm.Error, "confirm_token required") {
+		t.Fatalf("expected bulk mutation to require confirmation, got %#v", missingConfirm)
+	}
+	if client.executed {
+		t.Fatal("bulk mutation must not execute without confirmation")
+	}
+
+	_, dryRun, err := dryRunHandler(runtime)(context.Background(), nil, DryRunInput{
+		Action: "mail.mark_read",
+		Payload: map[string]any{
+			"ids":     []any{"msg-1", "msg-2"},
+			"is_read": true,
+		},
+	})
+	if err != nil {
+		t.Fatalf("dry-run handler: %v", err)
+	}
+
+	_, confirmed, err := mailMarkReadHandler(runtime)(context.Background(), nil, MailMarkReadInput{
+		IDs:          []string{"msg-1", "msg-2"},
+		IsRead:       true,
+		ConfirmToken: dryRun.ConfirmationToken,
+	})
+	if err != nil {
+		t.Fatalf("mark read handler: %v", err)
+	}
+	if !confirmed.OK || !client.executed {
+		t.Fatalf("expected confirmed bulk mutation to execute: %#v executed=%v", confirmed, client.executed)
+	}
+}
+
 func TestMailRuleSetEnabledRejectsApprovalForDifferentRule(t *testing.T) {
 	client := newRecordingTransport(action.Definition{Name: "mail.rules.set_enabled", Transport: "test", Class: policy.SettingsOrRules, Level: action.LevelHighLevelMCPTool})
 	runtime := NewRuntime(client)

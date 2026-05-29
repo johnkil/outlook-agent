@@ -27,12 +27,16 @@ specific message or thread.
 7. Send an existing draft only through `outlook.action_dry_run` for
    `mail.send_draft`, exact confirmation, required host approval, and
    `outlook.mail_send_draft`.
-8. Inspect rule and mailbox-setting metadata with `outlook.mail_rules_list`
+8. Organize exact messages with `outlook.mail_move_to_folder`,
+   `outlook.mail_archive`, `outlook.mail_flag`, `outlook.mail_categorize`, or
+   `outlook.mail_mark_read`. Single-message changes need the exact id and new
+   state; bulk changes need dry-run review and confirmation.
+9. Inspect rule and mailbox-setting metadata with `outlook.mail_rules_list`
    and `outlook.mailbox_settings_get` before considering any raw rule or
    settings action.
-9. Treat send, delete, move, folder, category, rule, settings, and broad
+10. Treat send, delete, move, folder, category, rule, settings, and broad
    cleanup actions as separate explicit operations.
-10. Use `outlook.raw_action` only for a capability-discovered transport action
+11. Use `outlook.raw_action` only for a capability-discovered transport action
    that does not have a high-level tool.
 
 ## Write Safety
@@ -42,6 +46,8 @@ specific message or thread.
   target.
 - Do not delete or move broad sets without `outlook.action_dry_run` and
   `outlook.action_confirm` on the exact payload.
+- Do not call organization tools without exact ids and exact new state:
+  destination folder, flag status, category list, or read/unread state.
 - Do not use raw guarded actions unless the capability metadata and user intent
   make the route clear.
 - For destructive or unknown actions, require unsafe dry-run plus exact

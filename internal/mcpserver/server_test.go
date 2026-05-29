@@ -35,6 +35,11 @@ func TestCatalogContainsInitialTools(t *testing.T) {
 		"outlook.mail_create_reply_draft",
 		"outlook.mail_create_reply_all_draft",
 		"outlook.mail_create_forward_draft",
+		"outlook.mail_move_to_folder",
+		"outlook.mail_archive",
+		"outlook.mail_flag",
+		"outlook.mail_categorize",
+		"outlook.mail_mark_read",
 		"outlook.mail_move_to_deleted_items",
 		"outlook.mail_rules_list",
 		"outlook.mail_rule_set_enabled",
@@ -92,6 +97,26 @@ func TestToolDescriptionsGuideAgentWorkflow(t *testing.T) {
 		"outlook.mail_create_forward_draft": {
 			"forward draft",
 			"does not send",
+		},
+		"outlook.mail_move_to_folder": {
+			"move",
+			"exact",
+		},
+		"outlook.mail_archive": {
+			"archive",
+			"exact",
+		},
+		"outlook.mail_flag": {
+			"flag",
+			"exact",
+		},
+		"outlook.mail_categorize": {
+			"categor",
+			"exact",
+		},
+		"outlook.mail_mark_read": {
+			"read",
+			"exact",
 		},
 		"outlook.mail_rule_set_enabled": {
 			"dry-run",
@@ -228,6 +253,11 @@ func TestMCPClientCanListAndCallInitialTools(t *testing.T) {
 		{name: "outlook.mail_create_reply_draft", arguments: map[string]any{"message_id": "msg-1", "body": "Reply"}},
 		{name: "outlook.mail_create_reply_all_draft", arguments: map[string]any{"message_id": "msg-1", "body": "Reply all"}},
 		{name: "outlook.mail_create_forward_draft", arguments: map[string]any{"message_id": "msg-1", "body": "Forward", "to": []string{"alex@example.com"}}},
+		{name: "outlook.mail_move_to_folder", arguments: map[string]any{"ids": []string{"msg-1"}, "folder_id": "folder-1"}},
+		{name: "outlook.mail_archive", arguments: map[string]any{"ids": []string{"msg-1"}}},
+		{name: "outlook.mail_flag", arguments: map[string]any{"ids": []string{"msg-1"}, "flag_status": "flagged"}},
+		{name: "outlook.mail_categorize", arguments: map[string]any{"ids": []string{"msg-1"}, "categories": []string{"Red"}}},
+		{name: "outlook.mail_mark_read", arguments: map[string]any{"ids": []string{"msg-1"}, "is_read": true}},
 		{name: "outlook.mail_rules_list", arguments: map[string]any{"folder_id": "inbox"}},
 		{name: "outlook.mailbox_settings_get", arguments: map[string]any{"setting": "timeZone"}},
 		{name: "outlook.calendar_list", arguments: map[string]any{"start": "2026-05-27T00:00:00+02:00", "end": "2026-05-28T00:00:00+02:00"}},
