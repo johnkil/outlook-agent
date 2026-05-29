@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/johnkil/outlook-agent/internal/policy"
 	"github.com/johnkil/outlook-agent/internal/secret"
@@ -14,11 +15,22 @@ import (
 )
 
 type Transport struct {
-	config  Config
-	secrets secret.Store
-	client  *http.Client
-	mu      sync.Mutex
-	session *Session
+	config     Config
+	secrets    secret.Store
+	client     *http.Client
+	mu         sync.Mutex
+	session    *cachedSession
+	now        func() time.Time
+	sessionTTL time.Duration
+}
+
+const DefaultSessionTTL = 20 * time.Minute
+
+type cachedSession struct {
+	session    Session
+	createdAt  time.Time
+	lastUsedAt time.Time
+	expiresAt  time.Time
 }
 
 func NewTransport(config Config, secrets secret.Store, client *http.Client) *Transport {
@@ -26,7 +38,7 @@ func NewTransport(config Config, secrets secret.Store, client *http.Client) *Tra
 		client = defaultHTTPClient()
 	}
 	client = withOWARedirectPolicy(client)
-	return &Transport{config: config, secrets: secrets, client: client}
+	return &Transport{config: config, secrets: secrets, client: client, now: time.Now, sessionTTL: DefaultSessionTTL}
 }
 
 func defaultHTTPClient() *http.Client {
@@ -78,6 +90,35 @@ func requestHasOWASessionMaterial(request *http.Request) bool {
 	return false
 }
 
+func isOWAAuthFailureResponse(response *http.Response, body []byte) bool {
+	if response == nil {
+		return false
+	}
+	if response.StatusCode == http.StatusUnauthorized || response.StatusCode == http.StatusForbidden {
+		return true
+	}
+	if response.Request != nil && response.Request.URL != nil {
+		path := strings.ToLower(response.Request.URL.Path)
+		if strings.Contains(path, "/owa/auth/") || strings.Contains(path, "/owa/auth.owa") {
+			return true
+		}
+	}
+	lower := strings.ToLower(string(body))
+	return strings.Contains(lower, "auth/logon.aspx") || strings.Contains(lower, "/owa/auth.owa")
+}
+
+func looksLikeJSON(response *http.Response, body []byte) bool {
+	contentType := ""
+	if response != nil {
+		contentType = strings.ToLower(response.Header.Get("Content-Type"))
+	}
+	if strings.Contains(contentType, "json") {
+		return true
+	}
+	trimmed := strings.TrimSpace(string(body))
+	return strings.HasPrefix(trimmed, "{") || strings.HasPrefix(trimmed, "[")
+}
+
 func (client *Transport) Name() string {
 	return "owa"
 }
@@ -103,9 +144,19 @@ func (client *Transport) Execute(ctx context.Context, request transport.ActionRe
 }
 
 func (client *Transport) executeService(ctx context.Context, actionName string, requestPayload any, urlPostData bool) transport.ActionResponse {
+	response, authFailure := client.executeServiceOnce(ctx, actionName, requestPayload, urlPostData)
+	if !authFailure {
+		return response
+	}
+	client.invalidateSession()
+	response, _ = client.executeServiceOnce(ctx, actionName, requestPayload, urlPostData)
+	return response
+}
+
+func (client *Transport) executeServiceOnce(ctx context.Context, actionName string, requestPayload any, urlPostData bool) (transport.ActionResponse, bool) {
 	session, err := client.login(ctx)
 	if err != nil {
-		return transport.ActionResponse{OK: false, Error: err.Error()}
+		return transport.ActionResponse{OK: false, Error: err.Error()}, false
 	}
 	var httpRequest *http.Request
 	if urlPostData {
@@ -114,27 +165,31 @@ func (client *Transport) executeService(ctx context.Context, actionName string, 
 		httpRequest, err = BuildServiceRequest(client.config, actionName, session.Canary, requestPayload)
 	}
 	if err != nil {
-		return transport.ActionResponse{OK: false, Error: err.Error()}
+		return transport.ActionResponse{OK: false, Error: err.Error()}, false
 	}
 	httpRequest = httpRequest.WithContext(ctx)
 	response, err := session.Client.Do(httpRequest)
 	if err != nil {
-		return transport.ActionResponse{OK: false, Error: err.Error()}
+		return transport.ActionResponse{OK: false, Error: err.Error()}, false
 	}
 	defer response.Body.Close()
 
 	rawBody, err := transport.ReadLimited(response.Body, transport.MaxResponseBytes)
 	if err != nil {
-		return transport.ActionResponse{OK: false, Error: err.Error()}
+		return transport.ActionResponse{OK: false, Error: err.Error()}, false
+	}
+	authFailure := isOWAAuthFailureResponse(response, rawBody)
+	if authFailure && !looksLikeJSON(response, rawBody) {
+		return transport.ActionResponse{OK: false, Error: fmt.Sprintf("owa service returned HTTP %d", response.StatusCode)}, true
 	}
 	var payload map[string]any
 	if err := json.Unmarshal(rawBody, &payload); err != nil {
-		return transport.ActionResponse{OK: false, Error: err.Error()}
+		return transport.ActionResponse{OK: false, Error: err.Error()}, authFailure
 	}
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
-		return transport.ActionResponse{OK: false, Data: payload, Error: fmt.Sprintf("owa service returned HTTP %d", response.StatusCode)}
+		return transport.ActionResponse{OK: false, Data: payload, Error: fmt.Sprintf("owa service returned HTTP %d", response.StatusCode)}, authFailure
 	}
-	return transport.ActionResponse{OK: true, Data: payload}
+	return transport.ActionResponse{OK: true, Data: payload}, false
 }
 
 func (client *Transport) DryRun(_ context.Context, request transport.ActionRequest) transport.DryRunSummary {
@@ -332,8 +387,10 @@ func firstString(values map[string]any, keys ...string) string {
 func (client *Transport) login(ctx context.Context) (Session, error) {
 	client.mu.Lock()
 	defer client.mu.Unlock()
-	if client.session != nil {
-		return *client.session, nil
+	now := client.currentTime()
+	if client.session != nil && now.Before(client.session.expiresAt) {
+		client.session.lastUsedAt = now
+		return client.session.session, nil
 	}
 	value, err := client.secrets.Get(ctx, client.config.SecretRef)
 	if err != nil {
@@ -343,8 +400,30 @@ func (client *Transport) login(ctx context.Context) (Session, error) {
 	if err != nil {
 		return Session{}, err
 	}
-	client.session = &session
+	ttl := client.sessionTTL
+	if ttl <= 0 {
+		ttl = DefaultSessionTTL
+	}
+	client.session = &cachedSession{
+		session:    session,
+		createdAt:  now,
+		lastUsedAt: now,
+		expiresAt:  now.Add(ttl),
+	}
 	return session, nil
+}
+
+func (client *Transport) invalidateSession() {
+	client.mu.Lock()
+	defer client.mu.Unlock()
+	client.session = nil
+}
+
+func (client *Transport) currentTime() time.Time {
+	if client.now == nil {
+		return time.Now()
+	}
+	return client.now()
 }
 
 func countRequestItems(payload map[string]any) int {
