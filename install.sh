@@ -103,7 +103,7 @@ resolve_latest_version() {
   if command -v curl >/dev/null 2>&1; then
     effective_url="$(curl -fsSL -o /dev/null -w '%{url_effective}' "$latest_url")"
   elif command -v wget >/dev/null 2>&1; then
-    effective_url="$(wget -qS --spider "$latest_url" 2>&1 | sed -n 's/^[[:space:]]*Location: //p' | tail -n 1 | tr -d '\r')"
+    effective_url="$(wget -S --spider "$latest_url" 2>&1 | sed -n 's/^[[:space:]]*Location: //p' | tail -n 1 | tr -d '\r')"
   else
     die "curl or wget is required"
   fi

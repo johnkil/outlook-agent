@@ -257,6 +257,156 @@ esac
 	}
 }
 
+func TestInstallScriptResolvesLatestWithWgetOnly(t *testing.T) {
+	if runtime.GOOS != "darwin" && runtime.GOOS != "linux" {
+		t.Skip("install.sh archives are only supported on darwin/linux")
+	}
+	if runtime.GOARCH != "amd64" && runtime.GOARCH != "arm64" {
+		t.Skip("install.sh archives are only supported on amd64/arm64")
+	}
+
+	root := filepath.Join("..", "..")
+	home := t.TempDir()
+	fakeBin := filepath.Join(t.TempDir(), "bin")
+	installDir := filepath.Join(t.TempDir(), "install")
+	releaseDir := t.TempDir()
+	if err := os.MkdirAll(fakeBin, 0o755); err != nil {
+		t.Fatalf("create fake bin: %v", err)
+	}
+	if err := os.MkdirAll(installDir, 0o755); err != nil {
+		t.Fatalf("create install dir: %v", err)
+	}
+	for name, path := range map[string]string{
+		"tar":    "/usr/bin/tar",
+		"grep":   "/usr/bin/grep",
+		"mktemp": "/usr/bin/mktemp",
+		"shasum": "/usr/bin/shasum",
+		"uname":  "/usr/bin/uname",
+		"cut":    "/usr/bin/cut",
+		"sed":    "/usr/bin/sed",
+		"tail":   "/usr/bin/tail",
+		"tr":     "/usr/bin/tr",
+		"rm":     "/bin/rm",
+		"mkdir":  "/bin/mkdir",
+		"cp":     "/bin/cp",
+		"chmod":  "/bin/chmod",
+		"mv":     "/bin/mv",
+		"cat":    "/bin/cat",
+	} {
+		if _, err := os.Stat(path); err != nil {
+			t.Skipf("%s is required for installer integration test: %v", path, err)
+		}
+		if err := os.Symlink(path, filepath.Join(fakeBin, name)); err != nil {
+			t.Fatalf("link fake command %s: %v", name, err)
+		}
+	}
+
+	version := "vwgettest"
+	archiveName := fmt.Sprintf("outlook-agent_%s_%s_%s.tar.gz", version, runtime.GOOS, runtime.GOARCH)
+	packageName := strings.TrimSuffix(archiveName, ".tar.gz")
+	packageDir := filepath.Join(releaseDir, packageName)
+	if err := os.MkdirAll(packageDir, 0o755); err != nil {
+		t.Fatalf("create package dir: %v", err)
+	}
+	for name, content := range map[string]string{
+		"outlook-agent": "#!/bin/sh\nexit 0\n",
+		"README.md":     "# README\n",
+		"RELEASE.md":    "# Release\n",
+	} {
+		if err := os.WriteFile(filepath.Join(packageDir, name), []byte(content), 0o755); err != nil {
+			t.Fatalf("write package file %s: %v", name, err)
+		}
+	}
+	archivePath := filepath.Join(releaseDir, archiveName)
+	tarCmd := exec.Command("/usr/bin/tar", "-czf", archivePath, "-C", releaseDir, packageName)
+	if output, err := tarCmd.CombinedOutput(); err != nil {
+		t.Fatalf("create archive: %v\n%s", err, string(output))
+	}
+	archiveData, err := os.ReadFile(archivePath)
+	if err != nil {
+		t.Fatalf("read archive: %v", err)
+	}
+	sum := sha256.Sum256(archiveData)
+	checksums := fmt.Sprintf("%x  %s\n", sum, archiveName)
+	if err := os.WriteFile(filepath.Join(releaseDir, "SHA256SUMS.txt"), []byte(checksums), 0o644); err != nil {
+		t.Fatalf("write checksums: %v", err)
+	}
+
+	fakeWget := fmt.Sprintf(`#!/bin/sh
+set -eu
+out=""
+url=""
+spider=0
+quiet=0
+server_response=0
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    -O)
+      shift
+      out="$1"
+      ;;
+    --spider)
+      spider=1
+      ;;
+    --server-response)
+      server_response=1
+      ;;
+    -*)
+      case "$1" in
+        *q*) quiet=1 ;;
+      esac
+      case "$1" in
+        *S*) server_response=1 ;;
+      esac
+      ;;
+    *)
+      url="$1"
+      ;;
+  esac
+  shift
+done
+if [ "$spider" = "1" ]; then
+  if [ "$quiet" = "0" ] && [ "$server_response" = "1" ]; then
+    echo "  Location: https://github.com/johnkil/outlook-agent/releases/tag/%s" >&2
+  fi
+  exit 0
+fi
+case "$url" in
+  */SHA256SUMS.txt)
+    /bin/cp "$FAKE_RELEASE_DIR/SHA256SUMS.txt" "$out"
+    ;;
+  */%s)
+    /bin/cp "$FAKE_RELEASE_DIR/%s" "$out"
+    ;;
+  *)
+    echo "unexpected url: $url" >&2
+    exit 22
+    ;;
+esac
+`, version, archiveName, archiveName)
+	if err := os.WriteFile(filepath.Join(fakeBin, "wget"), []byte(fakeWget), 0o755); err != nil {
+		t.Fatalf("write fake wget: %v", err)
+	}
+
+	cmd := exec.Command("/bin/sh", filepath.Join(root, "install.sh"), "--dir", installDir)
+	cmd.Env = []string{
+		"HOME=" + home,
+		"PATH=" + fakeBin,
+		"FAKE_RELEASE_DIR=" + releaseDir,
+	}
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("install script failed: %v\n%s", err, string(output))
+	}
+	targetPath := filepath.Join(installDir, "outlook-agent")
+	if _, err := os.Stat(targetPath); err != nil {
+		t.Fatalf("expected install target: %v", err)
+	}
+	if !strings.Contains(string(output), "Installed outlook-agent "+version) {
+		t.Fatalf("expected install output to include resolved version %s, got:\n%s", version, string(output))
+	}
+}
+
 func TestGitHubWorkflowActionsArePinnedByCommitSHA(t *testing.T) {
 	workflowFiles, err := githubWorkflowFiles(filepath.Join("..", ".."))
 	if err != nil {
