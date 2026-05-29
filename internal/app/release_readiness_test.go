@@ -1,10 +1,13 @@
 package app_test
 
 import (
+	"crypto/sha256"
 	"encoding/json"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -84,6 +87,328 @@ func TestReleaseReadinessArtifactsExist(t *testing.T) {
 				t.Fatalf("expected %s to contain %q", path, marker)
 			}
 		}
+	}
+}
+
+func TestInstallScriptReadinessMarkers(t *testing.T) {
+	path := filepath.Join("..", "..", "install.sh")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read install script %s: %v", path, err)
+	}
+	text := string(data)
+	for _, marker := range []string{
+		`REPO="johnkil/outlook-agent"`,
+		`BIN_NAME="outlook-agent"`,
+		"OUTLOOK_AGENT_VERSION",
+		"OUTLOOK_AGENT_INSTALL_DIR",
+		"SHA256SUMS.txt",
+		"refusing to overwrite symlink",
+		"shasum -a 256",
+		"validate_tar_members",
+		"validate_tar_binary_type",
+		"tar -tzf",
+		"tar -tvzf",
+		"expected binary archive member is not a regular file",
+		"unsafe archive member",
+		"unexpected archive member",
+		`"$expected_package_dir/RELEASE.md"`,
+		`tar -xzf "$archive_name" "$expected_binary_member"`,
+		`[ -f "$binary_path" ] && [ ! -L "$binary_path" ]`,
+		`install_tmp="$(mktemp "${install_dir}/.${BIN_NAME}.tmp.XXXXXX")"`,
+		`mv "$install_tmp" "$target_path"`,
+		"outlook-agent help",
+	} {
+		if !strings.Contains(text, marker) {
+			t.Fatalf("expected %s to contain %q", path, marker)
+		}
+	}
+}
+
+func TestInstallScriptFallbackDirExplainsPathWhenOutsidePATH(t *testing.T) {
+	if runtime.GOOS != "darwin" && runtime.GOOS != "linux" {
+		t.Skip("install.sh archives are only supported on darwin/linux")
+	}
+	if runtime.GOARCH != "amd64" && runtime.GOARCH != "arm64" {
+		t.Skip("install.sh archives are only supported on amd64/arm64")
+	}
+	if os.Geteuid() == 0 {
+		t.Skip("root can still write to chmod 0555 directories; fallback simulation requires a non-root user")
+	}
+
+	root := filepath.Join("..", "..")
+	home := t.TempDir()
+	fakeBin := filepath.Join(t.TempDir(), "bin")
+	releaseDir := t.TempDir()
+	if err := os.MkdirAll(fakeBin, 0o755); err != nil {
+		t.Fatalf("create fake bin: %v", err)
+	}
+	for name, path := range map[string]string{
+		"tar":    "/usr/bin/tar",
+		"grep":   "/usr/bin/grep",
+		"mktemp": "/usr/bin/mktemp",
+		"shasum": "/usr/bin/shasum",
+		"uname":  "/usr/bin/uname",
+		"gzip":   "/usr/bin/gzip",
+		"cut":    "/usr/bin/cut",
+		"rm":     "/bin/rm",
+		"mkdir":  "/bin/mkdir",
+		"cp":     "/bin/cp",
+		"chmod":  "/bin/chmod",
+		"mv":     "/bin/mv",
+		"cat":    "/bin/cat",
+	} {
+		if _, err := os.Stat(path); err != nil {
+			t.Skipf("%s is required for installer integration test: %v", path, err)
+		}
+		if err := os.Symlink(path, filepath.Join(fakeBin, name)); err != nil {
+			t.Fatalf("link fake command %s: %v", name, err)
+		}
+	}
+
+	version := "vfallbacktest"
+	archiveName := fmt.Sprintf("outlook-agent_%s_%s_%s.tar.gz", version, runtime.GOOS, runtime.GOARCH)
+	packageName := strings.TrimSuffix(archiveName, ".tar.gz")
+	packageDir := filepath.Join(releaseDir, packageName)
+	if err := os.MkdirAll(packageDir, 0o755); err != nil {
+		t.Fatalf("create package dir: %v", err)
+	}
+	for name, content := range map[string]string{
+		"outlook-agent": "#!/bin/sh\nexit 0\n",
+		"README.md":     "# README\n",
+		"RELEASE.md":    "# Release\n",
+	} {
+		if err := os.WriteFile(filepath.Join(packageDir, name), []byte(content), 0o755); err != nil {
+			t.Fatalf("write package file %s: %v", name, err)
+		}
+	}
+	archivePath := filepath.Join(releaseDir, archiveName)
+	tarCmd := exec.Command("/usr/bin/tar", "-czf", archivePath, "-C", releaseDir, packageName)
+	if output, err := tarCmd.CombinedOutput(); err != nil {
+		t.Fatalf("create archive: %v\n%s", err, string(output))
+	}
+	archiveData, err := os.ReadFile(archivePath)
+	if err != nil {
+		t.Fatalf("read archive: %v", err)
+	}
+	sum := sha256.Sum256(archiveData)
+	checksums := fmt.Sprintf("%x  %s\n", sum, archiveName)
+	if err := os.WriteFile(filepath.Join(releaseDir, "SHA256SUMS.txt"), []byte(checksums), 0o644); err != nil {
+		t.Fatalf("write checksums: %v", err)
+	}
+
+	fakeCurl := fmt.Sprintf(`#!/bin/sh
+set -eu
+out=""
+url=""
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    -o)
+      shift
+      out="$1"
+      ;;
+    -*)
+      ;;
+    *)
+      url="$1"
+      ;;
+  esac
+  shift
+done
+case "$url" in
+  */SHA256SUMS.txt)
+    /bin/cp "$FAKE_RELEASE_DIR/SHA256SUMS.txt" "$out"
+    ;;
+  */%s)
+    /bin/cp "$FAKE_RELEASE_DIR/%s" "$out"
+    ;;
+  *)
+    echo "unexpected url: $url" >&2
+    exit 22
+    ;;
+esac
+`, archiveName, archiveName)
+	if err := os.WriteFile(filepath.Join(fakeBin, "curl"), []byte(fakeCurl), 0o755); err != nil {
+		t.Fatalf("write fake curl: %v", err)
+	}
+	if err := os.Chmod(fakeBin, 0o555); err != nil {
+		t.Fatalf("make fake bin non-writable: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = os.Chmod(fakeBin, 0o755)
+	})
+
+	cmd := exec.Command("/bin/sh", filepath.Join(root, "install.sh"), "--version", version)
+	cmd.Env = []string{
+		"HOME=" + home,
+		"PATH=" + fakeBin,
+		"FAKE_RELEASE_DIR=" + releaseDir,
+	}
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("install script failed: %v\n%s", err, string(output))
+	}
+	targetPath := filepath.Join(home, ".local", "bin", "outlook-agent")
+	if _, err := os.Stat(targetPath); err != nil {
+		t.Fatalf("expected fallback install target: %v", err)
+	}
+	text := string(output)
+	if !strings.Contains(text, "not on PATH") {
+		t.Fatalf("expected fallback install output to explain PATH issue, got:\n%s", text)
+	}
+	if !strings.Contains(text, targetPath+" help") {
+		t.Fatalf("expected fallback install output to show full binary path, got:\n%s", text)
+	}
+}
+
+func TestInstallScriptResolvesLatestWithWgetOnly(t *testing.T) {
+	if runtime.GOOS != "darwin" && runtime.GOOS != "linux" {
+		t.Skip("install.sh archives are only supported on darwin/linux")
+	}
+	if runtime.GOARCH != "amd64" && runtime.GOARCH != "arm64" {
+		t.Skip("install.sh archives are only supported on amd64/arm64")
+	}
+
+	root := filepath.Join("..", "..")
+	home := t.TempDir()
+	fakeBin := filepath.Join(t.TempDir(), "bin")
+	installDir := filepath.Join(t.TempDir(), "install")
+	releaseDir := t.TempDir()
+	if err := os.MkdirAll(fakeBin, 0o755); err != nil {
+		t.Fatalf("create fake bin: %v", err)
+	}
+	if err := os.MkdirAll(installDir, 0o755); err != nil {
+		t.Fatalf("create install dir: %v", err)
+	}
+	for name, path := range map[string]string{
+		"tar":    "/usr/bin/tar",
+		"grep":   "/usr/bin/grep",
+		"mktemp": "/usr/bin/mktemp",
+		"shasum": "/usr/bin/shasum",
+		"uname":  "/usr/bin/uname",
+		"gzip":   "/usr/bin/gzip",
+		"cut":    "/usr/bin/cut",
+		"sed":    "/usr/bin/sed",
+		"tail":   "/usr/bin/tail",
+		"tr":     "/usr/bin/tr",
+		"rm":     "/bin/rm",
+		"mkdir":  "/bin/mkdir",
+		"cp":     "/bin/cp",
+		"chmod":  "/bin/chmod",
+		"mv":     "/bin/mv",
+		"cat":    "/bin/cat",
+	} {
+		if _, err := os.Stat(path); err != nil {
+			t.Skipf("%s is required for installer integration test: %v", path, err)
+		}
+		if err := os.Symlink(path, filepath.Join(fakeBin, name)); err != nil {
+			t.Fatalf("link fake command %s: %v", name, err)
+		}
+	}
+
+	version := "vwgettest"
+	archiveName := fmt.Sprintf("outlook-agent_%s_%s_%s.tar.gz", version, runtime.GOOS, runtime.GOARCH)
+	packageName := strings.TrimSuffix(archiveName, ".tar.gz")
+	packageDir := filepath.Join(releaseDir, packageName)
+	if err := os.MkdirAll(packageDir, 0o755); err != nil {
+		t.Fatalf("create package dir: %v", err)
+	}
+	for name, content := range map[string]string{
+		"outlook-agent": "#!/bin/sh\nexit 0\n",
+		"README.md":     "# README\n",
+		"RELEASE.md":    "# Release\n",
+	} {
+		if err := os.WriteFile(filepath.Join(packageDir, name), []byte(content), 0o755); err != nil {
+			t.Fatalf("write package file %s: %v", name, err)
+		}
+	}
+	archivePath := filepath.Join(releaseDir, archiveName)
+	tarCmd := exec.Command("/usr/bin/tar", "-czf", archivePath, "-C", releaseDir, packageName)
+	if output, err := tarCmd.CombinedOutput(); err != nil {
+		t.Fatalf("create archive: %v\n%s", err, string(output))
+	}
+	archiveData, err := os.ReadFile(archivePath)
+	if err != nil {
+		t.Fatalf("read archive: %v", err)
+	}
+	sum := sha256.Sum256(archiveData)
+	checksums := fmt.Sprintf("%x  %s\n", sum, archiveName)
+	if err := os.WriteFile(filepath.Join(releaseDir, "SHA256SUMS.txt"), []byte(checksums), 0o644); err != nil {
+		t.Fatalf("write checksums: %v", err)
+	}
+
+	fakeWget := fmt.Sprintf(`#!/bin/sh
+set -eu
+out=""
+url=""
+spider=0
+quiet=0
+server_response=0
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    -O)
+      shift
+      out="$1"
+      ;;
+    --spider)
+      spider=1
+      ;;
+    --server-response)
+      server_response=1
+      ;;
+    -*)
+      case "$1" in
+        *q*) quiet=1 ;;
+      esac
+      case "$1" in
+        *S*) server_response=1 ;;
+      esac
+      ;;
+    *)
+      url="$1"
+      ;;
+  esac
+  shift
+done
+if [ "$spider" = "1" ]; then
+  if [ "$quiet" = "0" ] && [ "$server_response" = "1" ]; then
+    echo "  Location: https://github.com/johnkil/outlook-agent/releases/tag/%s" >&2
+  fi
+  exit 0
+fi
+case "$url" in
+  */SHA256SUMS.txt)
+    /bin/cp "$FAKE_RELEASE_DIR/SHA256SUMS.txt" "$out"
+    ;;
+  */%s)
+    /bin/cp "$FAKE_RELEASE_DIR/%s" "$out"
+    ;;
+  *)
+    echo "unexpected url: $url" >&2
+    exit 22
+    ;;
+esac
+`, version, archiveName, archiveName)
+	if err := os.WriteFile(filepath.Join(fakeBin, "wget"), []byte(fakeWget), 0o755); err != nil {
+		t.Fatalf("write fake wget: %v", err)
+	}
+
+	cmd := exec.Command("/bin/sh", filepath.Join(root, "install.sh"), "--dir", installDir)
+	cmd.Env = []string{
+		"HOME=" + home,
+		"PATH=" + fakeBin,
+		"FAKE_RELEASE_DIR=" + releaseDir,
+	}
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("install script failed: %v\n%s", err, string(output))
+	}
+	targetPath := filepath.Join(installDir, "outlook-agent")
+	if _, err := os.Stat(targetPath); err != nil {
+		t.Fatalf("expected install target: %v", err)
+	}
+	if !strings.Contains(string(output), "Installed outlook-agent "+version) {
+		t.Fatalf("expected install output to include resolved version %s, got:\n%s", version, string(output))
 	}
 }
 
