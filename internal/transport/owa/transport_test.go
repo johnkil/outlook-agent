@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"slices"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -64,6 +65,47 @@ func TestTransportAuthenticatesAndExecutesServiceAction(t *testing.T) {
 	}
 	if !sawCanaryHeader {
 		t.Fatal("expected service request to include canary header")
+	}
+}
+
+func TestTransportBlocksCrossOriginRedirectWithCanaryHeader(t *testing.T) {
+	var redirectTargetHit bool
+	var leakedCanary bool
+	redirectTarget := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		redirectTargetHit = true
+		leakedCanary = request.Header.Get("X-OWA-CANARY") == "canary-secret"
+		response.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(response).Encode(map[string]any{"ok": true})
+	}))
+	defer redirectTarget.Close()
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		switch request.URL.Path {
+		case "/owa/auth.owa":
+			http.SetCookie(response, &http.Cookie{Name: "X-OWA-CANARY", Value: "canary-secret"})
+			response.WriteHeader(http.StatusOK)
+		case "/owa/service.svc":
+			http.Redirect(response, request, redirectTarget.URL+"/owa/service.svc?action=FindPeople", http.StatusFound)
+		default:
+			t.Fatalf("unexpected path: %s", request.URL.Path)
+		}
+	}))
+	defer server.Close()
+	client := owa.NewTransport(owa.Config{
+		BaseURL:   server.URL,
+		Username:  "DOMAIN\\user",
+		SecretRef: secret.Ref("memory:owa"),
+	}, secret.NewMemoryStore(map[string]string{"memory:owa": "password"}), server.Client())
+
+	result := client.Execute(context.Background(), transport.ActionRequest{
+		Name:    "FindPeople",
+		Payload: map[string]any{"Body": map[string]any{"Query": "Alex"}},
+	})
+
+	if result.OK || !strings.Contains(strings.ToLower(result.Error), "redirect") {
+		t.Fatalf("expected unsafe redirect to be blocked, got %#v", result)
+	}
+	if redirectTargetHit || leakedCanary {
+		t.Fatalf("redirect target must not receive canary-bearing request, hit=%v leaked=%v", redirectTargetHit, leakedCanary)
 	}
 }
 

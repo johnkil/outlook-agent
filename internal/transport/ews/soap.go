@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/johnkil/outlook-agent/internal/secret"
+	coretransport "github.com/johnkil/outlook-agent/internal/transport"
 )
 
 func BuildGetFolderRequest(config Config, password secret.Value, folderID string) (*http.Request, error) {
@@ -468,7 +469,7 @@ type findItemPage struct {
 }
 
 func parseFindItemPageResponse(reader io.Reader) (findItemPage, error) {
-	data, err := io.ReadAll(reader)
+	data, err := coretransport.ReadLimited(reader, coretransport.MaxResponseBytes)
 	if err != nil {
 		return findItemPage{}, err
 	}
@@ -514,7 +515,7 @@ func parseEWSBool(value string) (bool, bool) {
 }
 
 func parseFindCalendarItemsResponse(reader io.Reader) ([]calendarEvent, error) {
-	data, err := io.ReadAll(reader)
+	data, err := coretransport.ReadLimited(reader, coretransport.MaxResponseBytes)
 	if err != nil {
 		return nil, err
 	}
@@ -550,7 +551,7 @@ func parseFindCalendarItemsResponse(reader io.Reader) ([]calendarEvent, error) {
 }
 
 func parseGetUserAvailabilityResponse(reader io.Reader, scheduleID string) ([]availabilityWindow, error) {
-	data, err := io.ReadAll(reader)
+	data, err := coretransport.ReadLimited(reader, coretransport.MaxResponseBytes)
 	if err != nil {
 		return nil, err
 	}
@@ -586,7 +587,7 @@ func parseGetUserAvailabilityResponse(reader io.Reader, scheduleID string) ([]av
 }
 
 func parseGetItemResponse(reader io.Reader) (findItemMessage, error) {
-	data, err := io.ReadAll(reader)
+	data, err := coretransport.ReadLimited(reader, coretransport.MaxResponseBytes)
 	if err != nil {
 		return findItemMessage{}, err
 	}
@@ -625,7 +626,7 @@ func messageFromXML(item findItemMessageXML) findItemMessage {
 }
 
 func parseGetFolderResponse(reader io.Reader) (folderMetadata, error) {
-	data, err := io.ReadAll(reader)
+	data, err := coretransport.ReadLimited(reader, coretransport.MaxResponseBytes)
 	if err != nil {
 		return folderMetadata{}, err
 	}

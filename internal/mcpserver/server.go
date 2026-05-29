@@ -189,7 +189,7 @@ type RawActionInput struct {
 	Action         string         `json:"action" jsonschema:"action name"`
 	Payload        map[string]any `json:"payload,omitempty" jsonschema:"action payload"`
 	UnsafeMode     bool           `json:"unsafe_mode,omitempty" jsonschema:"whether unsafe mode is active"`
-	ExplicitTarget bool           `json:"explicit_target,omitempty" jsonschema:"whether the request targets a specific item"`
+	ExplicitTarget bool           `json:"explicit_target,omitempty" jsonschema:"deprecated; ignored because explicit target is derived from payload"`
 	ExplicitIntent bool           `json:"explicit_intent,omitempty" jsonschema:"whether the user explicitly requested the mutation"`
 	Profile        string         `json:"profile,omitempty" jsonschema:"profile name"`
 }
@@ -569,7 +569,7 @@ func transportResponseError(response transport.ActionResponse) error {
 	if response.OK {
 		return nil
 	}
-	message := strings.TrimSpace(response.Error)
+	message := strings.TrimSpace(redact.String(response.Error))
 	if message == "" {
 		message = "transport action failed"
 	}
@@ -577,7 +577,7 @@ func transportResponseError(response transport.ActionResponse) error {
 }
 
 func actionResultFromResponse(response transport.ActionResponse) ActionResultOutput {
-	output := ActionResultOutput{OK: response.OK, Error: response.Error}
+	output := ActionResultOutput{OK: response.OK, Error: redact.String(response.Error)}
 	if response.Data == nil {
 		return output
 	}
@@ -653,7 +653,7 @@ func rawActionHandler(runtime *Runtime) func(context.Context, *mcp.CallToolReque
 		class := safetyClassForPayload(runtime.client, input.Action, input.Payload)
 		decision := policy.Evaluate(policy.Request{
 			Class:          class,
-			ExplicitTarget: input.ExplicitTarget || hasExplicitTarget(input.Payload),
+			ExplicitTarget: hasExplicitTarget(input.Payload),
 			ExplicitIntent: input.ExplicitIntent,
 			UnsafeMode:     input.UnsafeMode,
 		})
@@ -726,8 +726,47 @@ func hasExplicitTarget(payload map[string]any) bool {
 	if id, ok := payload["attachment_id"].(string); ok && id != "" {
 		return true
 	}
-	ids, ok := payload["ids"].([]any)
-	return ok && len(ids) == 1
+	if countExplicitTargetValue(payload["ids"]) == 1 {
+		return true
+	}
+	body, _ := payload["Body"].(map[string]any)
+	for _, key := range []string{"ItemIds", "ItemId", "AttachmentIds", "AttachmentId"} {
+		if countExplicitTargetValue(body[key]) == 1 {
+			return true
+		}
+	}
+	return false
+}
+
+func countExplicitTargetValue(value any) int {
+	switch typed := value.(type) {
+	case string:
+		if strings.TrimSpace(typed) == "" {
+			return 0
+		}
+		return 1
+	case []any:
+		count := 0
+		for _, child := range typed {
+			count += countExplicitTargetValue(child)
+		}
+		return count
+	case []string:
+		count := 0
+		for _, child := range typed {
+			count += countExplicitTargetValue(child)
+		}
+		return count
+	case map[string]any:
+		for _, key := range []string{"id", "Id"} {
+			if countExplicitTargetValue(typed[key]) == 1 {
+				return 1
+			}
+		}
+		return 0
+	default:
+		return 0
+	}
 }
 
 func withMailbox(payload map[string]any, mailbox string) map[string]any {
