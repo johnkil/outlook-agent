@@ -28,5 +28,7 @@ mkdir -p "$staticcheck_home"
 HOME="$staticcheck_home" go run honnef.co/go/tools/cmd/staticcheck@v0.7.0 ./...
 go build -o "$build_check" ./cmd/outlook-agent
 git diff --check
+sh -n install.sh
+sh install.sh --help >/dev/null
 scripts/public-safety-check.sh
 go run golang.org/x/vuln/cmd/govulncheck@v1.3.0 ./...
