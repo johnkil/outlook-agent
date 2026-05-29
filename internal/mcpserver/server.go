@@ -353,7 +353,7 @@ func NewWithTransportProfile(client transport.Transport, profile string) *mcp.Se
 }
 
 func NewWithRuntime(runtime *Runtime) *mcp.Server {
-	server := mcp.NewServer(&mcp.Implementation{Name: "outlook-agent", Version: buildinfo.Version}, nil)
+	server := mcp.NewServer(&mcp.Implementation{Name: "outlook-agent", Version: buildinfo.Current().Version}, nil)
 
 	for _, registration := range toolRegistrations {
 		registration.add(server, runtime, registration.name)

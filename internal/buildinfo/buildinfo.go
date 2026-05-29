@@ -10,6 +10,8 @@ var (
 	BuiltBy = "source"
 )
 
+var readBuildInfo = debug.ReadBuildInfo
+
 type Info struct {
 	Version string `json:"version"`
 	Commit  string `json:"commit"`
@@ -19,15 +21,16 @@ type Info struct {
 }
 
 func Current() Info {
+	build, ok := readBuildInfo()
 	info := Info{
-		Version: valueOrDefault(Version, "dev"),
+		Version: versionOrDefault(Version, build),
 		Commit:  valueOrDefault(Commit, "unknown"),
 		Date:    valueOrDefault(Date, "unknown"),
 		Dirty:   valueOrDefault(Dirty, "unknown"),
 		BuiltBy: valueOrDefault(BuiltBy, "source"),
 	}
 
-	if build, ok := debug.ReadBuildInfo(); ok {
+	if ok && build != nil {
 		for _, setting := range build.Settings {
 			switch setting.Key {
 			case "vcs.revision":
@@ -47,6 +50,16 @@ func Current() Info {
 	}
 
 	return info
+}
+
+func versionOrDefault(value string, build *debug.BuildInfo) string {
+	if value != "" && value != "dev" {
+		return value
+	}
+	if build != nil && build.Main.Version != "" && build.Main.Version != "(devel)" {
+		return build.Main.Version
+	}
+	return "dev"
 }
 
 func valueOrDefault(value string, fallback string) string {
