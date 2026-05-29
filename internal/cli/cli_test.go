@@ -200,6 +200,9 @@ func TestHelpPrintsHumanReadableUsage(t *testing.T) {
 		"outlook-agent doctor",
 		"outlook-agent auth check",
 		"outlook-agent setup opencode --print",
+		"outlook-agent setup opencode plan",
+		"outlook-agent setup opencode diff",
+		"outlook-agent setup opencode apply",
 		"outlook-agent mcp",
 		"metadata-first",
 		"dry-run",
@@ -222,9 +225,124 @@ func TestHelpFlagPrintsHumanReadableUsage(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("expected exit code 0, got %d, stderr=%s", code, stderr.String())
 	}
-	if !strings.Contains(stdout.String(), "outlook-agent setup opencode --print") {
-		t.Fatalf("expected setup command in --help output, got %s", stdout.String())
+	for _, required := range []string{
+		"outlook-agent setup opencode --print",
+		"outlook-agent setup opencode plan",
+		"outlook-agent setup opencode diff",
+		"outlook-agent setup opencode apply",
+	} {
+		if !strings.Contains(stdout.String(), required) {
+			t.Fatalf("expected setup command %q in --help output, got %s", required, stdout.String())
+		}
 	}
+}
+
+func TestSetupOpencodePlanReportsTargets(t *testing.T) {
+	root := t.TempDir()
+	writeCLISkill(t, root, "outlook-mail", "# Mail\n")
+	withWorkingDir(t, root)
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+
+	code := Run([]string{"setup", "opencode", "plan", "--binary", "outlook-agent", "--config", ".local/outlook-agent.json"}, &stdout, &stderr)
+
+	if code != 0 {
+		t.Fatalf("expected exit code 0, got %d, stderr=%s", code, stderr.String())
+	}
+	var payload struct {
+		Targets []struct {
+			Path   string `json:"path"`
+			Kind   string `json:"kind"`
+			Status string `json:"status"`
+		} `json:"targets"`
+	}
+	if err := json.Unmarshal(stdout.Bytes(), &payload); err != nil {
+		t.Fatalf("plan output is not JSON: %v; output=%s", err, stdout.String())
+	}
+	if len(payload.Targets) == 0 {
+		t.Fatalf("expected plan targets, got %#v", payload)
+	}
+	if !strings.Contains(stdout.String(), "opencode.json") || !strings.Contains(stdout.String(), ".opencode/skills/outlook-mail/SKILL.md") {
+		t.Fatalf("expected plan output to mention config and skill targets, got %s", stdout.String())
+	}
+}
+
+func TestSetupOpencodeApplyRequiresYes(t *testing.T) {
+	root := t.TempDir()
+	writeCLISkill(t, root, "outlook-mail", "# Mail\n")
+	withWorkingDir(t, root)
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+
+	code := Run([]string{"setup", "opencode", "apply"}, &stdout, &stderr)
+
+	if code == 0 {
+		t.Fatalf("expected non-zero exit without --yes, stdout=%s", stdout.String())
+	}
+	if !strings.Contains(strings.ToLower(stderr.String()), "yes") {
+		t.Fatalf("expected --yes error, got stderr=%s", stderr.String())
+	}
+	if _, err := os.Stat(filepath.Join(root, "opencode.json")); !os.IsNotExist(err) {
+		t.Fatalf("expected no opencode.json write without --yes, stat err=%v", err)
+	}
+}
+
+func TestSetupOpencodeApplyRejectsForceAndBackup(t *testing.T) {
+	root := t.TempDir()
+	writeCLISkill(t, root, "outlook-mail", "# Mail\n")
+	withWorkingDir(t, root)
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+
+	code := Run([]string{"setup", "opencode", "apply", "--yes", "--force", "--backup"}, &stdout, &stderr)
+
+	if code == 0 {
+		t.Fatalf("expected non-zero exit for mutually exclusive flags, stdout=%s", stdout.String())
+	}
+	if !strings.Contains(strings.ToLower(stderr.String()), "mutually exclusive") {
+		t.Fatalf("expected mutually exclusive error, got stderr=%s", stderr.String())
+	}
+}
+
+func TestSetupOpencodePrintSubcommandPreservesMCPConfig(t *testing.T) {
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+
+	code := Run([]string{"setup", "opencode", "print", "--binary", "/usr/local/bin/outlook-agent", "--config", ".local/outlook-agent.json"}, &stdout, &stderr)
+
+	if code != 0 {
+		t.Fatalf("expected exit code 0, got %d, stderr=%s", code, stderr.String())
+	}
+	if !strings.Contains(stdout.String(), `"outlook-agent"`) || !strings.Contains(stdout.String(), `"mcp"`) {
+		t.Fatalf("expected MCP JSON config, got %s", stdout.String())
+	}
+}
+
+func writeCLISkill(t *testing.T, root string, name string, content string) {
+	t.Helper()
+	path := filepath.Join(root, "skills", name, "SKILL.md")
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatalf("create skill dir: %v", err)
+	}
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatalf("write skill: %v", err)
+	}
+}
+
+func withWorkingDir(t *testing.T, path string) {
+	t.Helper()
+	previous, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("get working dir: %v", err)
+	}
+	if err := os.Chdir(path); err != nil {
+		t.Fatalf("change working dir: %v", err)
+	}
+	t.Cleanup(func() {
+		if err := os.Chdir(previous); err != nil {
+			t.Fatalf("restore working dir: %v", err)
+		}
+	})
 }
 
 func TestDoctorIncludesNextStepsWithoutConfig(t *testing.T) {

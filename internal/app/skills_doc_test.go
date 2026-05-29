@@ -69,69 +69,28 @@ func TestOutlookCalendarSkillsDocumentCurrentToolSurface(t *testing.T) {
 }
 
 func TestOpenCodeSkillsDocumentAgentUXPackage(t *testing.T) {
-	requiredFiles := map[string][]string{
-		filepath.Join("..", "..", ".opencode", "skills", "outlook-mail", "SKILL.md"): {
-			"name: outlook-mail",
-			"not a security boundary",
-			"outlook.mail_search",
-			"outlook.mail_fetch_metadata",
-			"outlook.mail_fetch_body",
-			"outlook.mail_create_draft",
-			"outlook.action_dry_run",
-			"outlook.action_confirm",
-			"metadata-first",
-			"explicit message or thread",
-			"fetch only the attachment the user selected",
-			"exact confirmation",
-			"Do not send, delete, move, or run bulk cleanup unless the user explicitly requested that exact action",
-			"fallback",
-		},
-		filepath.Join("..", "..", ".opencode", "skills", "outlook-mail-inbox-triage", "SKILL.md"): {
-			"name: outlook-mail-inbox-triage",
-			"not a security boundary",
-			"outlook.mail_search",
-			"outlook.mail_fetch_metadata",
-			"outlook.mail_fetch_body",
-			"Urgent",
-			"Needs reply",
-			"Waiting",
-			"FYI",
-			"do not mutate",
-			"user selected one attachment",
-		},
-		filepath.Join("..", "..", ".opencode", "skills", "outlook-calendar", "SKILL.md"): {
-			"name: outlook-calendar",
-			"not a security boundary",
-			"outlook.calendar_list",
-			"outlook.calendar_availability",
-			"outlook.action_dry_run",
-			"outlook.action_confirm",
-			"exact confirmation",
-			"exact date",
-			"fallback",
-		},
-		filepath.Join("..", "..", ".opencode", "skills", "outlook-calendar-daily-brief", "SKILL.md"): {
-			"name: outlook-calendar-daily-brief",
-			"not a security boundary",
-			"outlook.calendar_list",
-			"outlook.calendar_availability",
-			"Date and timezone",
-			"Conflicts",
-			"Free windows",
-			"bounded",
-		},
+	sourceRoot := filepath.Join("..", "..", "skills")
+	targetRoot := filepath.Join("..", "..", ".opencode", "skills")
+	entries, err := os.ReadDir(sourceRoot)
+	if err != nil {
+		t.Fatalf("read source skills: %v", err)
 	}
-
-	for path, markers := range requiredFiles {
-		data, err := os.ReadFile(path)
-		if err != nil {
-			t.Fatalf("read OpenCode skill %s: %v", path, err)
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
 		}
-		text := string(data)
-		for _, marker := range markers {
-			if !strings.Contains(text, marker) {
-				t.Fatalf("expected %s to contain %q", path, marker)
-			}
+		sourcePath := filepath.Join(sourceRoot, entry.Name(), "SKILL.md")
+		targetPath := filepath.Join(targetRoot, entry.Name(), "SKILL.md")
+		sourceData, err := os.ReadFile(sourcePath)
+		if err != nil {
+			t.Fatalf("read source skill %s: %v", sourcePath, err)
+		}
+		targetData, err := os.ReadFile(targetPath)
+		if err != nil {
+			t.Fatalf("read OpenCode skill %s: %v", targetPath, err)
+		}
+		if string(targetData) != string(sourceData) {
+			t.Fatalf("expected OpenCode skill %s to match source skill %s", targetPath, sourcePath)
 		}
 	}
 }

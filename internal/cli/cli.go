@@ -17,6 +17,7 @@ import (
 	"github.com/johnkil/outlook-agent/internal/config"
 	"github.com/johnkil/outlook-agent/internal/policy"
 	"github.com/johnkil/outlook-agent/internal/secret"
+	"github.com/johnkil/outlook-agent/internal/setupopencode"
 	"github.com/johnkil/outlook-agent/internal/transport"
 	"github.com/johnkil/outlook-agent/internal/transport/ews"
 	"github.com/johnkil/outlook-agent/internal/transport/fake"
@@ -688,6 +689,10 @@ Usage:
   outlook-agent auth graph-device-code --config <path> [--profile <name>]
   outlook-agent policy explain [--action <name>]
   outlook-agent setup opencode --print [--binary <path>] [--config <path>]
+  outlook-agent setup opencode print [--binary <path>] [--config <path>]
+  outlook-agent setup opencode plan [--binary <path>] [--config <path>]
+  outlook-agent setup opencode diff [--binary <path>] [--config <path>]
+  outlook-agent setup opencode apply [--binary <path>] [--config <path>] --yes [--force|--backup]
   outlook-agent mcp --config <path>
 
 Agent workflow:
@@ -749,8 +754,12 @@ func doctorNextSteps(output doctorOutput) []string {
 }
 
 type setupOpencodeArgs struct {
+	Command    string
 	Binary     string
 	ConfigPath string
+	Yes        bool
+	Force      bool
+	Backup     bool
 }
 
 func runSetupOpencode(args []string, options Options, stdout io.Writer, stderr io.Writer) int {
@@ -762,6 +771,48 @@ func runSetupOpencode(args []string, options Options, stdout io.Writer, stderr i
 	if settings.ConfigPath == "" {
 		settings.ConfigPath = options.ConfigPath
 	}
+	if settings.Command == "print" {
+		return writeSetupOpencodePrint(stdout, settings)
+	}
+	plan, err := setupopencode.BuildPlan(setupopencode.Options{
+		RepoRoot:    ".",
+		Binary:      settings.Binary,
+		ConfigPath:  settings.ConfigPath,
+		TargetScope: setupopencode.ScopeProject,
+	})
+	if err != nil {
+		fmt.Fprintln(stderr, err)
+		return 1
+	}
+	switch settings.Command {
+	case "plan":
+		return writeJSON(stdout, plan)
+	case "diff":
+		if _, err := fmt.Fprint(stdout, setupopencode.Diff(plan)); err != nil {
+			return 1
+		}
+		return 0
+	case "apply":
+		if err := setupopencode.Apply(plan, setupopencode.ApplyOptions{
+			Yes:    settings.Yes,
+			Force:  settings.Force,
+			Backup: settings.Backup,
+		}); err != nil {
+			fmt.Fprintln(stderr, err)
+			return 1
+		}
+		return writeJSON(stdout, map[string]any{
+			"ok":      true,
+			"command": "setup opencode apply",
+			"targets": plan.Targets,
+		})
+	default:
+		fmt.Fprintf(stderr, "unknown setup opencode command: %s\n", settings.Command)
+		return 1
+	}
+}
+
+func writeSetupOpencodePrint(stdout io.Writer, settings setupOpencodeArgs) int {
 	command := []string{settings.Binary}
 	if settings.ConfigPath != "" {
 		command = append(command, "--config", settings.ConfigPath)
@@ -780,12 +831,21 @@ func runSetupOpencode(args []string, options Options, stdout io.Writer, stderr i
 }
 
 func parseSetupOpencodeArgs(args []string) (setupOpencodeArgs, error) {
-	settings := setupOpencodeArgs{Binary: "outlook-agent"}
-	seenPrint := false
+	settings := setupOpencodeArgs{Command: "print", Binary: "outlook-agent"}
+	if len(args) > 0 {
+		switch args[0] {
+		case "print", "plan", "diff", "apply":
+			settings.Command = args[0]
+			args = args[1:]
+		case "--print":
+			settings.Command = "print"
+			args = args[1:]
+		}
+	}
 	for index := 0; index < len(args); index++ {
 		switch args[index] {
 		case "--print":
-			seenPrint = true
+			settings.Command = "print"
 		case "--binary":
 			index++
 			if index >= len(args) {
@@ -798,12 +858,21 @@ func parseSetupOpencodeArgs(args []string) (setupOpencodeArgs, error) {
 				return setupOpencodeArgs{}, fmt.Errorf("--config requires a value")
 			}
 			settings.ConfigPath = args[index]
+		case "--yes":
+			settings.Yes = true
+		case "--force":
+			settings.Force = true
+		case "--backup":
+			settings.Backup = true
 		default:
 			return setupOpencodeArgs{}, fmt.Errorf("unknown setup opencode argument: %s", args[index])
 		}
 	}
-	if !seenPrint {
-		return setupOpencodeArgs{}, fmt.Errorf("setup opencode requires --print")
+	if settings.Command != "apply" && (settings.Yes || settings.Force || settings.Backup) {
+		return setupOpencodeArgs{}, fmt.Errorf("--yes, --force, and --backup are only valid for setup opencode apply")
+	}
+	if settings.Force && settings.Backup {
+		return setupOpencodeArgs{}, fmt.Errorf("--force and --backup are mutually exclusive")
 	}
 	return settings, nil
 }
