@@ -152,9 +152,70 @@ func (client *Transport) Execute(ctx context.Context, request transport.ActionRe
 
 func (client *Transport) DryRun(_ context.Context, request transport.ActionRequest) transport.DryRunSummary {
 	if request.Name == "EWSRequest" {
-		return transport.DryRunSummary{Action: request.Name, Count: 1, Reversible: false, RequiresConfirmation: true}
+		review := ewsRawRequestReview(request.Name, request.Payload)
+		return transport.DryRunSummary{Action: request.Name, Count: 1, Reversible: false, RequiresConfirmation: true, SafetyClass: string(policy.Destructive), Review: &review, Warnings: review.Limitations}
 	}
 	return transport.DryRunSummary{Action: request.Name, Count: 1, Reversible: true, RequiresConfirmation: false}
+}
+
+func ewsRawRequestReview(actionName string, payload map[string]any) transport.ReviewPacket {
+	bodyXML := stringValue(payload, "body_xml", "")
+	soapAction := strings.TrimSpace(stringValue(payload, "soap_action", ""))
+	raw := &transport.RawRequestReview{
+		SOAPAction:  soapAction,
+		Operation:   ewsOperationName(soapAction, bodyXML),
+		BodySHA256:  transport.BodySHA256(bodyXML),
+		BodyPreview: transport.RedactedPreview(bodyXML, 500),
+	}
+	limitations := []string{"raw EWS SOAP request is advanced and high-risk; prefer high-level tools when available"}
+	if strings.TrimSpace(bodyXML) == "" {
+		limitations = append(limitations, "body_xml was empty during dry-run")
+	}
+	if raw.Operation == "" {
+		limitations = append(limitations, "SOAP operation could not be detected during dry-run")
+	}
+	return transport.ReviewPacket{
+		Version:            transport.ReviewPacketVersion,
+		Transport:          "ews",
+		Action:             actionName,
+		SafetyClass:        string(policy.Destructive),
+		Raw:                raw,
+		PayloadFingerprint: transport.PayloadFingerprint(payload),
+		Limitations:        limitations,
+	}
+}
+
+func ewsOperationName(soapAction string, bodyXML string) string {
+	if trimmed := strings.TrimSpace(soapAction); trimmed != "" {
+		trimmed = strings.TrimRight(trimmed, "/")
+		if index := strings.LastIndex(trimmed, "/"); index >= 0 && index+1 < len(trimmed) {
+			return trimmed[index+1:]
+		}
+		return trimmed
+	}
+	bodyIndex := strings.Index(strings.ToLower(bodyXML), "body")
+	if bodyIndex < 0 {
+		return ""
+	}
+	afterBody := bodyXML[bodyIndex:]
+	closeIndex := strings.Index(afterBody, ">")
+	if closeIndex < 0 {
+		return ""
+	}
+	rest := strings.TrimSpace(afterBody[closeIndex+1:])
+	if !strings.HasPrefix(rest, "<") || strings.HasPrefix(rest, "</") {
+		return ""
+	}
+	rest = strings.TrimPrefix(rest, "<")
+	end := strings.IndexAny(rest, " />")
+	if end < 0 {
+		end = len(rest)
+	}
+	name := rest[:end]
+	if colon := strings.LastIndex(name, ":"); colon >= 0 && colon+1 < len(name) {
+		name = name[colon+1:]
+	}
+	return name
 }
 
 func (client *Transport) executeRawEWSRequest(ctx context.Context, payload map[string]any) (map[string]any, error) {

@@ -104,6 +104,7 @@ func RedactedPreview(text string, maxRunes int) string {
 		}
 	} else {
 		preview = redactSensitiveAssignments(preview)
+		preview = redactSensitiveXMLTags(preview)
 	}
 	return TruncatedPreview(preview, maxRunes)
 }
@@ -166,7 +167,12 @@ func isSensitiveReviewKey(key string) bool {
 }
 
 var sensitiveAssignmentPattern = regexp.MustCompile(`(?i)(password|access_token|refresh_token|token|cookie|canary|secret)\s*[:=]\s*([^\s,;&]+)`)
+var sensitiveXMLTagPattern = regexp.MustCompile(`(?is)<[A-Za-z0-9_:-]*(?:password|token|cookie|canary|secret|contentbytes)[A-Za-z0-9_:-]*\b[^>]*>.*?</[A-Za-z0-9_:-]*(?:password|token|cookie|canary|secret|contentbytes)[A-Za-z0-9_:-]*>`)
 
 func redactSensitiveAssignments(text string) string {
 	return sensitiveAssignmentPattern.ReplaceAllString(text, "$1=[REDACTED]")
+}
+
+func redactSensitiveXMLTags(text string) string {
+	return sensitiveXMLTagPattern.ReplaceAllString(text, "<redacted>[REDACTED]</redacted>")
 }

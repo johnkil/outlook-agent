@@ -786,13 +786,37 @@ func TestTransportDryRunEWSRequestRequiresConfirmation(t *testing.T) {
 		SecretRef:   secret.Ref("memory:ews"),
 	}, secret.NewMemoryStore(map[string]string{"memory:ews": "password-secret"}), nil)
 
+	bodyXML := `<soap:Envelope xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/" xmlns:m="http://schemas.microsoft.com/exchange/services/2006/messages"><soap:Body><m:DeleteItem><m:Password>secret</m:Password></m:DeleteItem></soap:Body></soap:Envelope>`
 	summary := client.DryRun(context.Background(), transport.ActionRequest{
-		Name:    "EWSRequest",
-		Payload: map[string]any{"body_xml": "<soap:Envelope/>"},
+		Name: "EWSRequest",
+		Payload: map[string]any{
+			"soap_action": "http://schemas.microsoft.com/exchange/services/2006/messages/DeleteItem",
+			"body_xml":    bodyXML,
+		},
 	})
 
 	if summary.Action != "EWSRequest" || summary.Count != 1 || summary.Reversible || !summary.RequiresConfirmation {
 		t.Fatalf("unexpected EWSRequest dry-run summary: %#v", summary)
+	}
+	if summary.Review == nil || summary.Review.Raw == nil {
+		t.Fatalf("expected EWSRequest review packet: %#v", summary)
+	}
+	if summary.Review.Transport != "ews" || summary.Review.SafetyClass != string(policy.Destructive) {
+		t.Fatalf("unexpected EWS review metadata: %#v", summary.Review)
+	}
+	if summary.Review.Raw.SOAPAction != "http://schemas.microsoft.com/exchange/services/2006/messages/DeleteItem" || summary.Review.Raw.Operation != "DeleteItem" {
+		t.Fatalf("unexpected EWS raw review: %#v", summary.Review.Raw)
+	}
+	if summary.Review.Raw.BodySHA256 == "" || !strings.Contains(summary.Review.Raw.BodyPreview, "DeleteItem") {
+		t.Fatalf("expected EWS body hash and preview, got %#v", summary.Review.Raw)
+	}
+	for _, leaked := range []string{"Password", "secret"} {
+		if strings.Contains(summary.Review.Raw.BodyPreview, leaked) {
+			t.Fatalf("expected EWS preview to redact %q, got %q", leaked, summary.Review.Raw.BodyPreview)
+		}
+	}
+	if len(summary.Review.Limitations) == 0 {
+		t.Fatalf("expected EWS raw review limitations, got %#v", summary.Review)
 	}
 }
 
