@@ -66,27 +66,36 @@ redirects. The agent does the busywork; **you keep the keys.** 🔑
 
 ## 🚀 Quick start
 
-```bash
-git clone https://github.com/johnkil/outlook-agent.git
-cd outlook-agent
-go build -o outlook-agent ./cmd/outlook-agent
+Install the latest release archive:
 
-./outlook-agent help
-./outlook-agent doctor          # checks config, secrets, transport, MCP readiness
-./outlook-agent policy explain  # shows what's safe, guarded, or blocked
+```bash
+curl -fsSL https://raw.githubusercontent.com/johnkil/outlook-agent/main/install.sh | sh
+
+outlook-agent help
+outlook-agent doctor          # checks config, secrets, transport, MCP readiness
+outlook-agent policy explain  # shows what's safe, guarded, or blocked
 ```
 
 With **no config**, Outlook Agent runs on a built-in **fake mailbox** — so you
 can try the tools and watch the gates before connecting anything real. 🧪
 
+To build from source instead:
+
+```bash
+git clone https://github.com/johnkil/outlook-agent.git
+cd outlook-agent
+mkdir -p bin
+go build -o ./bin/outlook-agent ./cmd/outlook-agent
+```
+
 When you're ready, point at a config and start the MCP server:
 
 ```bash
-./outlook-agent --config .local/outlook-agent.json auth check
-./outlook-agent setup opencode plan --binary ./outlook-agent --config .local/outlook-agent.json
-./outlook-agent setup opencode diff --binary ./outlook-agent --config .local/outlook-agent.json
-./outlook-agent setup opencode apply --binary ./outlook-agent --config .local/outlook-agent.json --yes --backup
-./outlook-agent --config .local/outlook-agent.json mcp
+outlook-agent --config .local/outlook-agent.json auth check
+outlook-agent setup opencode plan --binary outlook-agent --config .local/outlook-agent.json
+outlook-agent setup opencode diff --binary outlook-agent --config .local/outlook-agent.json
+outlook-agent setup opencode apply --binary outlook-agent --config .local/outlook-agent.json --yes --backup
+outlook-agent --config .local/outlook-agent.json mcp
 ```
 
 This writes public OpenCode project config and skills without reading secrets.

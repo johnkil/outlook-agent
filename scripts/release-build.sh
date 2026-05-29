@@ -6,9 +6,37 @@ repo_root="$(cd -- "${script_dir}/.." && pwd)"
 cd "$repo_root"
 
 version="${1:-snapshot}"
+if [[ -z "$version" || "$version" =~ [[:space:]] ]]; then
+  echo "invalid release version: must be non-empty and contain no ASCII whitespace" >&2
+  exit 2
+fi
 dist_dir="${OUTLOOK_AGENT_DIST_DIR:-${repo_root}/dist}"
 binary_name="outlook-agent"
 checksum_file="${dist_dir}/SHA256SUMS.txt"
+commit="unknown"
+if git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+  commit="$(git rev-parse HEAD)"
+fi
+date="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+dirty="unknown"
+if git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+  if [[ -n "$(git status --porcelain)" ]]; then
+    dirty="true"
+  else
+    dirty="false"
+  fi
+fi
+built_by="release-build"
+buildinfo_pkg="github.com/johnkil/outlook-agent/internal/buildinfo"
+ldflags=(
+  "-s"
+  "-w"
+  "-X" "${buildinfo_pkg}.Version=${version}"
+  "-X" "${buildinfo_pkg}.Commit=${commit}"
+  "-X" "${buildinfo_pkg}.Date=${date}"
+  "-X" "${buildinfo_pkg}.Dirty=${dirty}"
+  "-X" "${buildinfo_pkg}.BuiltBy=${built_by}"
+)
 
 targets=(
   "darwin amd64"
@@ -52,7 +80,7 @@ for target in "${targets[@]}"; do
 
   mkdir -p "$package_dir"
   CGO_ENABLED=0 GOOS="$GOOS" GOARCH="$GOARCH" \
-    go build -trimpath -ldflags "-s -w -X github.com/johnkil/outlook-agent/internal/buildinfo.Version=${version}" -o "${package_dir}/${output_name}" ./cmd/outlook-agent
+    go build -trimpath -ldflags "${ldflags[*]}" -o "${package_dir}/${output_name}" ./cmd/outlook-agent
   cp README.md "${package_dir}/"
   cp docs/RELEASE.md "${package_dir}/"
 
