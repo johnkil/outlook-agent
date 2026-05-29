@@ -86,9 +86,9 @@ func TestReleaseReadinessArtifactsExist(t *testing.T) {
 }
 
 func TestGitHubWorkflowActionsArePinnedByCommitSHA(t *testing.T) {
-	workflowFiles, err := filepath.Glob(filepath.Join("..", "..", ".github", "workflows", "*.yml"))
+	workflowFiles, err := githubWorkflowFiles(filepath.Join("..", ".."))
 	if err != nil {
-		t.Fatalf("glob GitHub workflows: %v", err)
+		t.Fatalf("discover GitHub workflows: %v", err)
 	}
 	if len(workflowFiles) == 0 {
 		t.Fatal("expected GitHub workflow files")
@@ -114,6 +114,46 @@ func TestGitHubWorkflowActionsArePinnedByCommitSHA(t *testing.T) {
 				t.Fatalf("workflow %s:%d pins %s to a SHA without a specific semver release comment; use %s@<sha> # vX.Y.Z", path, lineNumber+1, name, name)
 			}
 		}
+	}
+}
+
+func githubWorkflowFiles(repoRoot string) ([]string, error) {
+	var workflowFiles []string
+	for _, extension := range []string{"*.yml", "*.yaml"} {
+		matches, err := filepath.Glob(filepath.Join(repoRoot, ".github", "workflows", extension))
+		if err != nil {
+			return nil, err
+		}
+		workflowFiles = append(workflowFiles, matches...)
+	}
+	return workflowFiles, nil
+}
+
+func TestGitHubWorkflowFileDiscoveryIncludesYAMLExtension(t *testing.T) {
+	repoRoot := t.TempDir()
+	workflowDir := filepath.Join(repoRoot, ".github", "workflows")
+	if err := os.MkdirAll(workflowDir, 0o755); err != nil {
+		t.Fatalf("create workflow fixture dir: %v", err)
+	}
+	for _, name := range []string{"ci.yml", "release.yaml", "README.md"} {
+		path := filepath.Join(workflowDir, name)
+		if err := os.WriteFile(path, []byte("name: fixture\n"), 0o644); err != nil {
+			t.Fatalf("write workflow fixture %s: %v", name, err)
+		}
+	}
+
+	workflowFiles, err := githubWorkflowFiles(repoRoot)
+	if err != nil {
+		t.Fatalf("discover workflow files: %v", err)
+	}
+
+	var basenames []string
+	for _, path := range workflowFiles {
+		basenames = append(basenames, filepath.Base(path))
+	}
+	want := []string{"ci.yml", "release.yaml"}
+	if strings.Join(basenames, ",") != strings.Join(want, ",") {
+		t.Fatalf("expected workflow files %v, got %v", want, basenames)
 	}
 }
 
