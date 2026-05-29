@@ -132,6 +132,9 @@ func TestInstallScriptFallbackDirExplainsPathWhenOutsidePATH(t *testing.T) {
 	if runtime.GOARCH != "amd64" && runtime.GOARCH != "arm64" {
 		t.Skip("install.sh archives are only supported on amd64/arm64")
 	}
+	if os.Geteuid() == 0 {
+		t.Skip("root can still write to chmod 0555 directories; fallback simulation requires a non-root user")
+	}
 
 	root := filepath.Join("..", "..")
 	home := t.TempDir()
