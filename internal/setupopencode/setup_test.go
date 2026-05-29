@@ -123,6 +123,87 @@ func TestPlanPreservesExistingConfigFieldsAndMergesMCP(t *testing.T) {
 	}
 }
 
+func TestPlanPreservesExistingOutlookAgentMCPOptions(t *testing.T) {
+	root := t.TempDir()
+	writeSkill(t, root, "outlook-mail", "# Mail\n")
+	existing := `{
+		"mcp": {
+			"outlook-agent": {
+				"type": "local",
+				"command": ["old-outlook-agent", "mcp"],
+				"enabled": false,
+				"environment": {
+					"OUTLOOK_AGENT_CONFIG": ".local/custom.json"
+				},
+				"timeout": 30
+			}
+		}
+	}`
+	if err := os.WriteFile(filepath.Join(root, "opencode.json"), []byte(existing), 0o644); err != nil {
+		t.Fatalf("write existing opencode config: %v", err)
+	}
+
+	plan, err := BuildPlan(Options{RepoRoot: root, Binary: "outlook-agent", ConfigPath: ".local/outlook-agent.json", Now: fixedTime()})
+	if err != nil {
+		t.Fatalf("BuildPlan returned error: %v", err)
+	}
+	target := assertTarget(t, plan, "opencode.json", "config", StatusBlocked)
+	var payload map[string]any
+	if err := json.Unmarshal(target.content, &payload); err != nil {
+		t.Fatalf("planned config is not JSON: %v; content=%s", err, string(target.content))
+	}
+	server := payload["mcp"].(map[string]any)["outlook-agent"].(map[string]any)
+	if server["type"] != "local" || server["enabled"] != true {
+		t.Fatalf("expected managed server fields to be refreshed, got %#v", server)
+	}
+	command, ok := server["command"].([]any)
+	if !ok || len(command) != 4 {
+		t.Fatalf("expected managed command to be refreshed, got %#v", server)
+	}
+	commandParts := make([]string, 0, len(command))
+	for _, part := range command {
+		value, ok := part.(string)
+		if !ok {
+			t.Fatalf("expected command entries to be strings, got %#v", command)
+		}
+		commandParts = append(commandParts, value)
+	}
+	if got := strings.Join(commandParts, " "); got != "outlook-agent --config .local/outlook-agent.json mcp" {
+		t.Fatalf("expected managed command to be refreshed, got %#v", command)
+	}
+	environment, ok := server["environment"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected existing environment to be preserved, got %#v", server)
+	}
+	if environment["OUTLOOK_AGENT_CONFIG"] != ".local/custom.json" {
+		t.Fatalf("expected existing environment to be preserved, got %#v", server)
+	}
+	if server["timeout"] != float64(30) {
+		t.Fatalf("expected existing timeout to be preserved, got %#v", server)
+	}
+}
+
+func TestDiffShowsCurrentContentForBlockedTarget(t *testing.T) {
+	root := t.TempDir()
+	writeSkill(t, root, "outlook-mail", "# Mail\n")
+	target := filepath.Join(root, ".opencode", "skills", "outlook-mail", "SKILL.md")
+	if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
+		t.Fatalf("create target dir: %v", err)
+	}
+	if err := os.WriteFile(target, []byte("# edited\n"), 0o644); err != nil {
+		t.Fatalf("write target: %v", err)
+	}
+
+	plan, err := BuildPlan(Options{RepoRoot: root, Binary: "outlook-agent", Now: fixedTime()})
+	if err != nil {
+		t.Fatalf("BuildPlan returned error: %v", err)
+	}
+	diff := Diff(plan)
+	if !strings.Contains(diff, "--- current\n# edited\n+++ planned\n# Mail\n") {
+		t.Fatalf("expected blocked diff to show current and planned content, got:\n%s", diff)
+	}
+}
+
 func TestBackupPathAvoidsCollisions(t *testing.T) {
 	root := t.TempDir()
 	writeSkill(t, root, "outlook-mail", "# Mail\n")

@@ -45,14 +45,9 @@ type Target struct {
 	Status     string `json:"status"`
 	BackupPath string `json:"backup_path,omitempty"`
 
-	repoRoot string
-	content  []byte
-}
-
-type mcpServer struct {
-	Type    string   `json:"type"`
-	Command []string `json:"command"`
-	Enabled bool     `json:"enabled"`
+	repoRoot       string
+	currentContent []byte
+	content        []byte
 }
 
 func BuildPlan(options Options) (Plan, error) {
@@ -126,13 +121,21 @@ func Diff(plan Plan) string {
 			continue
 		}
 		builder.WriteString("--- current\n")
+		writeDiffContent(&builder, target.currentContent)
 		builder.WriteString("+++ planned\n")
-		builder.Write(target.content)
-		if len(target.content) == 0 || target.content[len(target.content)-1] != '\n' {
-			builder.WriteByte('\n')
-		}
+		writeDiffContent(&builder, target.content)
 	}
 	return builder.String()
+}
+
+func writeDiffContent(builder *strings.Builder, content []byte) {
+	if len(content) == 0 {
+		return
+	}
+	builder.Write(content)
+	if content[len(content)-1] != '\n' {
+		builder.WriteByte('\n')
+	}
 }
 
 func Apply(plan Plan, options ApplyOptions) error {
@@ -251,7 +254,14 @@ func buildConfigContent(root string, binary string, configPath string) ([]byte, 
 		command = append(command, "--config", configPath)
 	}
 	command = append(command, "mcp")
-	mcp["outlook-agent"] = mcpServer{Type: "local", Command: command, Enabled: true}
+	server, _ := mcp["outlook-agent"].(map[string]any)
+	if server == nil {
+		server = map[string]any{}
+	}
+	server["type"] = "local"
+	server["command"] = command
+	server["enabled"] = true
+	mcp["outlook-agent"] = server
 	existing["mcp"] = mcp
 
 	content, err := json.MarshalIndent(existing, "", "  ")
@@ -267,7 +277,9 @@ func planTarget(root string, relativePath string, kind string, content []byte) (
 		return Target{}, err
 	}
 	status := StatusNew
+	var currentContent []byte
 	if existing, err := os.ReadFile(absoluteTarget); err == nil {
+		currentContent = append([]byte(nil), existing...)
 		if bytes.Equal(existing, content) {
 			status = StatusUnchanged
 		} else {
@@ -277,11 +289,12 @@ func planTarget(root string, relativePath string, kind string, content []byte) (
 		return Target{}, fmt.Errorf("read target %s: %w", relativePath, err)
 	}
 	target := Target{
-		Path:     relativePath,
-		Kind:     kind,
-		Status:   status,
-		repoRoot: root,
-		content:  append([]byte(nil), content...),
+		Path:           relativePath,
+		Kind:           kind,
+		Status:         status,
+		repoRoot:       root,
+		currentContent: currentContent,
+		content:        append([]byte(nil), content...),
 	}
 	return target, nil
 }
