@@ -65,9 +65,14 @@ resulting JSON token credential behind the profile `secret_ref`, and writes only
 sanitized metadata to stdout. It must not print `device_code`, `access_token`,
 or `refresh_token`.
 
-Supported secret references are `keychain:service/account` for macOS Keychain
-and explicit `file:/absolute/path` for cross-platform local or CI/dev use. File
-secrets must be user-only readable/writable (`0600` on Unix-like systems).
+Supported secret references are `keychain:service/account` for macOS Keychain,
+explicit `file:/absolute/path` for cross-platform local or CI/dev use, and
+`external:name` for operator-managed command providers. File secrets must be
+user-only readable/writable (`0600` on Unix-like systems). External secret
+commands are defined in config under `secrets.external.<name>` as an absolute
+`command` path plus an `args` array. The runtime invokes the command directly
+without a shell, applies a timeout and bounded stdout read, trims trailing
+newlines, and must not include command stdout or stderr in returned errors.
 
 `policy explain` without arguments returns the stable safety-class list.
 `policy explain --action <name>` returns all built-in transport capability
@@ -387,6 +392,29 @@ Configuration should support:
 - environment variable pointing to a config path.
 
 Config values may reference secret-store keys but must not store secret values.
+External command secret refs must be named references, not shell strings:
+
+```json
+{
+  "secrets": {
+    "external": {
+      "mail-credential": {
+        "command": "/usr/local/bin/op",
+        "args": ["read", "op://vault/item/field"]
+      }
+    }
+  },
+  "profiles": {
+    "work": {
+      "transport": "graph",
+      "secret_ref": "external:mail-credential"
+    }
+  }
+}
+```
+
+The command path must be absolute. Arguments are passed as argv and are never
+interpreted by a shell.
 
 When a config is loaded, runtime entrypoints must preserve the resolved profile
 name. CLI auth checks, MCP auth checks, and confirmation-token bindings default

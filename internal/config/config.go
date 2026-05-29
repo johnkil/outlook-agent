@@ -22,7 +22,17 @@ type Source struct {
 
 type Config struct {
 	DefaultProfile string             `json:"default_profile"`
+	Secrets        SecretStores       `json:"secrets,omitempty"`
 	Profiles       map[string]Profile `json:"profiles"`
+}
+
+type SecretStores struct {
+	External map[string]ExternalSecretCommand `json:"external,omitempty"`
+}
+
+type ExternalSecretCommand struct {
+	Command string   `json:"command"`
+	Args    []string `json:"args,omitempty"`
 }
 
 type Profile struct {

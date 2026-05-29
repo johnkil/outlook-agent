@@ -95,6 +95,10 @@ outside this public repository.
 Rules:
 
 - Use secret-store references in config, not secret values.
+- Use `external:name` when an enterprise wrapper such as 1Password, Bitwarden,
+  or Vault should provide the secret. Define the command under
+  `secrets.external.<name>` as an absolute command path plus argv array; do not
+  use shell strings.
 - Keep profile ownership clear: one owner for Graph, one owner for EWS, and one
   owner for OWA-like enterprise profiles.
 - Rotate credentials through the identity or mail platform, then refresh the

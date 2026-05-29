@@ -265,10 +265,18 @@ Safe public shape:
 ```json
 {
   "default_profile": "work",
+  "secrets": {
+    "external": {
+      "mail-credential": {
+        "command": "/usr/local/bin/op",
+        "args": ["read", "op://vault/item/field"]
+      }
+    }
+  },
   "profiles": {
     "work": {
       "transport": "owa",
-      "secret_ref": "keychain:mail.example.com/DOMAIN\\user",
+      "secret_ref": "external:mail-credential",
       "settings": {
         "base_url": "https://mail.example.com",
         "username": "DOMAIN\\user",
@@ -284,3 +292,9 @@ Private enterprise overlays may define real hosts, account names, mailbox
 addresses, rollout groups, package-manager channels, and organization policy
 links, but those overlays must live outside this public repository and must not
 be copied into issues, pull requests, release artifacts, or public docs.
+
+External command secrets must use `external:name` references plus
+`secrets.external.<name>` config entries. The command must be an absolute path
+and arguments must be an argv array; do not store shell strings, inline
+passwords, tokens, cookies, canary values, or captured command output in
+config.

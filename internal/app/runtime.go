@@ -66,19 +66,19 @@ func BuildTransportResult(options Options) (TransportResult, error) {
 	case "", "fake":
 		return TransportResult{Client: fake.New(), Source: source, Profile: profileName}, nil
 	case "owa":
-		client, err := buildOWATransport(profile, options)
+		client, err := buildOWATransport(profile, loaded.Secrets, options)
 		if err != nil {
 			return TransportResult{Source: source, Profile: profileName}, err
 		}
 		return TransportResult{Client: client, Source: source, Profile: profileName}, nil
 	case "ews":
-		client, err := buildEWSTransport(profile, options)
+		client, err := buildEWSTransport(profile, loaded.Secrets, options)
 		if err != nil {
 			return TransportResult{Source: source, Profile: profileName}, err
 		}
 		return TransportResult{Client: client, Source: source, Profile: profileName}, nil
 	case "graph":
-		client, err := buildGraphTransport(profile, options)
+		client, err := buildGraphTransport(profile, loaded.Secrets, options)
 		if err != nil {
 			return TransportResult{Source: source, Profile: profileName}, err
 		}
@@ -88,10 +88,10 @@ func BuildTransportResult(options Options) (TransportResult, error) {
 	}
 }
 
-func buildOWATransport(profile config.Profile, options Options) (transport.Transport, error) {
+func buildOWATransport(profile config.Profile, secretStores config.SecretStores, options Options) (transport.Transport, error) {
 	secrets := options.Secrets
 	if secrets == nil {
-		secrets = secret.NewStoreForRef(secret.Ref(profile.SecretRef))
+		secrets = secretStoreForRef(profile.SecretRef, secretStores)
 	}
 	config := owa.Config{
 		BaseURL:      stringSetting(profile.Settings, "base_url"),
@@ -106,10 +106,10 @@ func buildOWATransport(profile config.Profile, options Options) (transport.Trans
 	return owa.NewTransport(config, secrets, options.HTTPClient), nil
 }
 
-func buildEWSTransport(profile config.Profile, options Options) (transport.Transport, error) {
+func buildEWSTransport(profile config.Profile, secretStores config.SecretStores, options Options) (transport.Transport, error) {
 	secrets := options.Secrets
 	if secrets == nil {
-		secrets = secret.NewStoreForRef(secret.Ref(profile.SecretRef))
+		secrets = secretStoreForRef(profile.SecretRef, secretStores)
 	}
 	config := ews.Config{
 		EndpointURL: stringSetting(profile.Settings, "endpoint_url"),
@@ -122,10 +122,10 @@ func buildEWSTransport(profile config.Profile, options Options) (transport.Trans
 	return ews.NewTransport(config, secrets, options.HTTPClient), nil
 }
 
-func buildGraphTransport(profile config.Profile, options Options) (transport.Transport, error) {
+func buildGraphTransport(profile config.Profile, secretStores config.SecretStores, options Options) (transport.Transport, error) {
 	secrets := options.Secrets
 	if secrets == nil {
-		secrets = secret.NewStoreForRef(secret.Ref(profile.SecretRef))
+		secrets = secretStoreForRef(profile.SecretRef, secretStores)
 	}
 	config := graphConfigFromProfile(profile)
 	if err := config.Validate(); err != nil {
@@ -152,7 +152,7 @@ func EnrollGraphDeviceCode(ctx context.Context, options Options, onChallenge fun
 	}
 	secrets := options.Secrets
 	if secrets == nil {
-		secrets = secret.NewStoreForRef(secret.Ref(profile.SecretRef))
+		secrets = secretStoreForRef(profile.SecretRef, loaded.Secrets)
 	}
 	writable, ok := secrets.(secret.WritableStore)
 	if !ok {
@@ -169,6 +169,17 @@ func EnrollGraphDeviceCode(ctx context.Context, options Options, onChallenge fun
 		Scope:     enrollment.Scope,
 		ExpiresAt: enrollment.ExpiresAt,
 	}, nil
+}
+
+func secretStoreForRef(ref string, stores config.SecretStores) secret.Store {
+	externalCommands := make(map[string]secret.ExternalCommand, len(stores.External))
+	for name, command := range stores.External {
+		externalCommands[name] = secret.ExternalCommand{
+			Command: command.Command,
+			Args:    append([]string(nil), command.Args...),
+		}
+	}
+	return secret.NewStoreForRefWithExternal(secret.Ref(ref), externalCommands)
 }
 
 func graphConfigFromProfile(profile config.Profile) graph.Config {

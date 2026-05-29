@@ -137,11 +137,17 @@ tokens, and cookies are rejected on purpose.
 ```text
 keychain:service/account     # macOS Keychain
 file:/absolute/path          # cross-platform, for CI/dev
+external:name                # operator-managed command provider
 ```
 
 File secrets must be **user-only** (`0600`); Outlook Agent refuses to read one
-that's group- or world-readable. For Graph, `auth graph-device-code` walks you
-through device-code sign-in instructions and stores + refreshes a JSON token credential behind your `secret_ref`. Advanced operators can override
+that's group- or world-readable. External secrets are resolved from
+`secrets.external.<name>` config entries with an absolute command path plus an
+argv array; Outlook Agent invokes the command directly without a shell, applies
+a timeout and output cap, trims the trailing newline, and keeps command output
+out of error messages. For Graph, `auth graph-device-code` walks you through
+device-code sign-in instructions and stores + refreshes a JSON token credential
+behind your `secret_ref`. Advanced operators can override
 `settings.client_id`, `settings.scopes`, and `settings.device_code_url` in
 controlled Graph profiles; the stored credential may contain a `refresh_token`.
 
