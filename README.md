@@ -143,10 +143,12 @@ There are two confirmation layers:
 OUTLOOK_AGENT_APPROVAL_TOKEN="your-host-held-secret"
 ```
 
-When set, every write also requires the host to pass `approval_token` back at
-confirmation. In a properly wired host, the **agent never sees it** — the host
-keeps it out of the agent context and only supplies it after you approve, and
-the dry-run response never carries it. 🔒
+When set, every confirmation-gated write also requires the host to pass
+`approval_token` back at confirmation. In a properly wired host, the **agent
+never sees it** — the host keeps it out of the agent context and only supplies
+it after you approve, and the dry-run response never carries it. Save-only draft
+creation (`mail.create_draft`) does not send mail and does not use the
+confirmation flow. 🔒
 
 > Honest caveat: this is only as strong as the host wiring. Without that
 > boundary, dry-run tokens still block payload substitution, but they can't
@@ -158,7 +160,7 @@ the dry-run response never carries it. 🔒
 
 The write surface is **deliberately small** today: `mail.create_draft`,
 `mail.move_to_deleted_items`, and `mail.rules.set_enabled` for enabling or
-disabling an existing rule with dry-run confirmation. explicit body reads use `mail.fetch_body`;
+disabling an existing rule with dry-run confirmation. For explicit body reads, use `mail.fetch_body`;
 everything higher-stakes — send, reply/forward, accept/decline invites,
 reschedule, move to arbitrary folders, archive/flag/categorize — is
 intentionally not a high-level tool yet.
