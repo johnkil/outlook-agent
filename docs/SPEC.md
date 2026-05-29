@@ -131,8 +131,9 @@ Key tool inputs:
   that support delegated or shared mailbox targeting. Graph uses that value as
   `/users/{id|userPrincipalName}`; when omitted, Graph uses `/me`.
 - `outlook.mail_search` returns normalized metadata plus bounded-window fields
-  `returned`, `limit`, and `truncated`. Graph also returns `next_link` when
-  Microsoft Graph provides `@odata.nextLink`.
+  `returned`, `limit`, and `truncated`. When the selected transport supports
+  continuation, it returns an opaque `next_cursor`; agents continue with
+  `outlook.mail_search_next` instead of storing provider continuation URLs.
 - `outlook.calendar_availability`: `start`, `end`, and optional `email`.
   When `email` is omitted, OWA profiles use `settings.mailbox_email` if
   configured.

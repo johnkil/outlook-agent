@@ -25,6 +25,7 @@ func TestCatalogContainsInitialTools(t *testing.T) {
 		"outlook.auth_check",
 		"outlook.capabilities",
 		"outlook.mail_search",
+		"outlook.mail_search_next",
 		"outlook.mail_fetch_metadata",
 		"outlook.mail_fetch_body",
 		"outlook.mail_list_attachments",
@@ -57,6 +58,11 @@ func TestToolDescriptionsGuideAgentWorkflow(t *testing.T) {
 			"first",
 			"metadata-only",
 			"bounded",
+		},
+		"outlook.mail_search_next": {
+			"next",
+			"metadata-only",
+			"cursor",
 		},
 		"outlook.mail_fetch_body": {
 			"explicit message",

@@ -14,6 +14,7 @@ Compatibility version `0.1` includes these tool names:
 - `outlook.auth_check`
 - `outlook.capabilities`
 - `outlook.mail_search`
+- `outlook.mail_search_next`
 - `outlook.mail_fetch_metadata`
 - `outlook.mail_fetch_body`
 - `outlook.mail_list_attachments`
@@ -48,6 +49,12 @@ Compatibility version `0.1` includes the additive optional `mailbox` input on
 high-level mail and calendar tools. Transports that support delegated or shared
 mailbox targeting may use it; transports that do not support it keep their
 existing behavior or return a normal transport error.
+
+Compatibility version `0.1` also returns opaque `next_cursor` values from
+paginated mail search responses when a transport supports continuation. Clients
+must call `outlook.mail_search_next` with that cursor instead of storing or
+replaying provider continuation URLs. Raw provider `next_link` values are not
+returned by default.
 
 Compatibility version `0.1` also includes additive tools for mailbox rules and
 mailbox settings: read-metadata `outlook.mail_rules_list`,

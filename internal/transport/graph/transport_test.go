@@ -93,6 +93,7 @@ func TestTransportGraphCapabilitiesIncludeBodyDraftMove(t *testing.T) {
 		{name: "GetMailFolder", class: policy.ReadMetadata, level: action.LevelRawGuardedExecution},
 		{name: "GraphRequest", class: policy.Destructive, level: action.LevelRawGuardedExecution},
 		{name: "mail.search", class: policy.ReadMetadata, level: action.LevelHighLevelMCPTool},
+		{name: "mail.search_next", class: policy.ReadMetadata, level: action.LevelHighLevelMCPTool},
 		{name: "mail.fetch_metadata", class: policy.ReadMetadata, level: action.LevelHighLevelMCPTool},
 		{name: "mail.fetch_body", class: policy.ReadBodyExplicit, level: action.LevelHighLevelMCPTool},
 		{name: "mail.list_attachments", class: policy.ReadAttachmentExplicit, level: action.LevelHighLevelMCPTool},
@@ -438,6 +439,60 @@ func TestTransportMailSearchReportsPaginationMetadata(t *testing.T) {
 	}
 	if result.Data["next_link"] != "https://graph.example.test/v1.0/me/mailFolders/inbox/messages?$skiptoken=next" {
 		t.Fatalf("unexpected next_link: %#v", result.Data["next_link"])
+	}
+}
+
+func TestTransportExecutesMailSearchNext(t *testing.T) {
+	var nextURL string
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		if request.Method != http.MethodGet || request.URL.Path != "/v1.0/me/mailFolders/inbox/messages" {
+			t.Fatalf("unexpected request: %s %s", request.Method, request.URL.String())
+		}
+		if request.URL.Query().Get("$skiptoken") != "next" {
+			t.Fatalf("expected skiptoken next, got %q", request.URL.Query().Get("$skiptoken"))
+		}
+		response.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(response).Encode(map[string]any{
+			"value": []any{
+				graphMessageResponse("message-2", "Next", "Bob", "bob@example.com"),
+			},
+		})
+	}))
+	defer server.Close()
+	nextURL = server.URL + "/v1.0/me/mailFolders/inbox/messages?$skiptoken=next"
+
+	client := graph.NewTransport(graph.Config{
+		BaseURL:   server.URL + "/v1.0",
+		SecretRef: secret.Ref("memory:graph"),
+	}, secret.NewMemoryStore(map[string]string{"memory:graph": "token-secret"}), server.Client())
+
+	result := client.Execute(context.Background(), transport.ActionRequest{
+		Name:    "mail.search_next",
+		Payload: map[string]any{"next_link": nextURL},
+	})
+
+	if !result.OK {
+		t.Fatalf("expected mail.search_next ok, got %#v", result)
+	}
+	messages := result.Data["messages"].([]any)
+	if len(messages) != 1 || messages[0].(map[string]any)["subject"] != "Next" {
+		t.Fatalf("unexpected next page messages: %#v", messages)
+	}
+}
+
+func TestTransportRejectsMailSearchNextForUnexpectedHost(t *testing.T) {
+	client := graph.NewTransport(graph.Config{
+		BaseURL:   "https://graph.example.test/v1.0",
+		SecretRef: secret.Ref("memory:graph"),
+	}, secret.NewMemoryStore(map[string]string{"memory:graph": "token-secret"}), nil)
+
+	result := client.Execute(context.Background(), transport.ActionRequest{
+		Name:    "mail.search_next",
+		Payload: map[string]any{"next_link": "https://attacker.example.test/v1.0/me/messages?$skiptoken=next"},
+	})
+
+	if result.OK || !strings.Contains(result.Error, "next_link") {
+		t.Fatalf("expected malicious next_link to be rejected, got %#v", result)
 	}
 }
 

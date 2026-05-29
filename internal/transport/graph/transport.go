@@ -50,6 +50,7 @@ func (client *Transport) Capabilities(context.Context) transport.CapabilitySet {
 		{Name: "GetMailFolder", Transport: "graph", Class: policy.ReadMetadata, Level: action.LevelRawGuardedExecution},
 		{Name: "GraphRequest", Transport: "graph", Class: policy.Destructive, Level: action.LevelRawGuardedExecution},
 		{Name: "mail.search", Transport: "graph", Class: policy.ReadMetadata, Level: action.LevelHighLevelMCPTool},
+		{Name: "mail.search_next", Transport: "graph", Class: policy.ReadMetadata, Level: action.LevelHighLevelMCPTool},
 		{Name: "mail.fetch_metadata", Transport: "graph", Class: policy.ReadMetadata, Level: action.LevelHighLevelMCPTool},
 		{Name: "mail.fetch_body", Transport: "graph", Class: policy.ReadBodyExplicit, Level: action.LevelHighLevelMCPTool},
 		{Name: "mail.list_attachments", Transport: "graph", Class: policy.ReadAttachmentExplicit, Level: action.LevelHighLevelMCPTool},
@@ -111,6 +112,20 @@ func (client *Transport) Execute(ctx context.Context, request transport.ActionRe
 		}
 		if limit.Clamped {
 			data["limit_clamped"] = true
+		}
+		if result.NextLink != "" {
+			data["next_link"] = result.NextLink
+		}
+		return transport.ActionResponse{OK: true, Data: data}
+	case "mail.search_next":
+		result, err := client.listMessagesNext(ctx, stringValue(request.Payload, "next_link", ""))
+		if err != nil {
+			return transport.ActionResponse{OK: false, Error: err.Error()}
+		}
+		data := map[string]any{
+			"messages":  result.Messages,
+			"returned":  len(result.Messages),
+			"truncated": result.NextLink != "",
 		}
 		if result.NextLink != "" {
 			data["next_link"] = result.NextLink
@@ -508,6 +523,25 @@ func (client *Transport) listMessages(ctx context.Context, mailbox string, folde
 		if matchesQuery(normalized, query) {
 			messages = append(messages, normalized)
 		}
+	}
+	if messages == nil {
+		messages = []any{}
+	}
+	return messageSearchResult{Messages: messages, NextLink: response.NextLink}, nil
+}
+
+func (client *Transport) listMessagesNext(ctx context.Context, nextLink string) (messageSearchResult, error) {
+	requestURL, err := client.validMessagesNextLink(nextLink)
+	if err != nil {
+		return messageSearchResult{}, err
+	}
+	var response messageList
+	if err := client.getJSON(ctx, requestURL, &response); err != nil {
+		return messageSearchResult{}, err
+	}
+	messages := make([]any, 0, len(response.Value))
+	for _, item := range response.Value {
+		messages = append(messages, normalizeGraphMessage(item))
 	}
 	if messages == nil {
 		messages = []any{}
@@ -1051,6 +1085,53 @@ func (client *Transport) messagesURL(mailbox string, folderID string, maxItems i
 	values.Set("$top", strconv.Itoa(maxItems))
 	values.Set("$select", messageMetadataSelect)
 	return base + graphOwnerPath(mailbox) + "/mailFolders/" + url.PathEscape(folderID) + "/messages?" + values.Encode(), nil
+}
+
+func (client *Transport) validMessagesNextLink(nextLink string) (string, error) {
+	raw := strings.TrimSpace(nextLink)
+	if raw == "" {
+		return "", fmt.Errorf("mail.search_next requires next_link")
+	}
+	parsed, err := url.Parse(raw)
+	if err != nil || !parsed.IsAbs() {
+		return "", fmt.Errorf("invalid next_link")
+	}
+	if parsed.User != nil {
+		return "", fmt.Errorf("invalid next_link userinfo")
+	}
+	baseRaw, err := client.config.normalizedBaseURL()
+	if err != nil {
+		return "", err
+	}
+	base, err := url.Parse(baseRaw)
+	if err != nil {
+		return "", err
+	}
+	if parsed.Scheme != base.Scheme || parsed.Host != base.Host {
+		return "", fmt.Errorf("next_link host is not allowed")
+	}
+	basePath := strings.TrimRight(base.EscapedPath(), "/")
+	relativePath := strings.TrimPrefix(parsed.EscapedPath(), basePath)
+	if !strings.HasPrefix(relativePath, "/") {
+		return "", fmt.Errorf("next_link path is outside Graph base")
+	}
+	if !isAllowedMessagesNextPath(relativePath) {
+		return "", fmt.Errorf("next_link path is not an allowed messages page")
+	}
+	return parsed.String(), nil
+}
+
+func isAllowedMessagesNextPath(relativePath string) bool {
+	if strings.HasPrefix(relativePath, "/me/messages") {
+		return true
+	}
+	if strings.HasPrefix(relativePath, "/me/mailFolders/") && strings.Contains(relativePath, "/messages") {
+		return true
+	}
+	if strings.HasPrefix(relativePath, "/users/") && strings.Contains(relativePath, "/messages") {
+		return true
+	}
+	return false
 }
 
 func (client *Transport) messageURL(mailbox string, id string) (string, error) {

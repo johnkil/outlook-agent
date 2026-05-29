@@ -14,6 +14,7 @@ import (
 	"github.com/johnkil/outlook-agent/internal/buildinfo"
 	"github.com/johnkil/outlook-agent/internal/capability"
 	"github.com/johnkil/outlook-agent/internal/confirm"
+	"github.com/johnkil/outlook-agent/internal/cursor"
 	"github.com/johnkil/outlook-agent/internal/policy"
 	"github.com/johnkil/outlook-agent/internal/redact"
 	"github.com/johnkil/outlook-agent/internal/transport"
@@ -63,11 +64,16 @@ type MailSearchInput struct {
 }
 
 type MailSearchOutput struct {
-	Messages  []any  `json:"messages"`
-	Returned  int    `json:"returned"`
-	Limit     int    `json:"limit"`
-	Truncated bool   `json:"truncated"`
-	NextLink  string `json:"next_link,omitempty"`
+	Messages   []any  `json:"messages"`
+	Returned   int    `json:"returned"`
+	Limit      int    `json:"limit"`
+	Truncated  bool   `json:"truncated"`
+	NextCursor string `json:"next_cursor,omitempty"`
+	NextLink   string `json:"next_link,omitempty"`
+}
+
+type MailSearchNextInput struct {
+	Cursor string `json:"cursor" jsonschema:"opaque cursor from outlook.mail_search"`
 }
 
 type MessageIDInput struct {
@@ -211,6 +217,7 @@ type Runtime struct {
 	client         transport.Transport
 	confirm        *confirm.Store
 	approval       *approval.Store
+	cursors        *cursor.Store
 	profile        string
 	approvalPolicy approval.Policy
 }
@@ -238,7 +245,10 @@ var toolRegistrations = []toolRegistration{
 		mcp.AddTool(server, mcpTool(name), capabilitiesHandler(runtime))
 	}},
 	{name: "outlook.mail_search", add: func(server *mcp.Server, runtime *Runtime, name string) {
-		mcp.AddTool(server, mcpTool(name), mailSearchHandler(runtime.client))
+		mcp.AddTool(server, mcpTool(name), mailSearchHandler(runtime))
+	}},
+	{name: "outlook.mail_search_next", add: func(server *mcp.Server, runtime *Runtime, name string) {
+		mcp.AddTool(server, mcpTool(name), mailSearchNextHandler(runtime))
 	}},
 	{name: "outlook.mail_fetch_metadata", add: func(server *mcp.Server, runtime *Runtime, name string) {
 		mcp.AddTool(server, mcpTool(name), mailFetchMetadataHandler(runtime.client))
@@ -288,6 +298,7 @@ var toolDescriptionByName = map[string]string{
 	"outlook.auth_check":                 "Check authentication for the selected Outlook profile without returning secrets.",
 	"outlook.capabilities":               "List supported actions, safety classes, and policy gates before raw or unfamiliar workflows.",
 	"outlook.mail_search":                "First step for bounded mail discovery; returns metadata-only message results.",
+	"outlook.mail_search_next":           "Fetch the next metadata-only mail search page using an opaque cursor from outlook.mail_search.",
 	"outlook.mail_fetch_metadata":        "Fetch metadata for one explicit message before body or attachment reads.",
 	"outlook.mail_fetch_body":            "Fetch body text for one explicit message; not a bulk body reader.",
 	"outlook.mail_list_attachments":      "List attachment metadata for one explicit message; does not fetch attachment content.",
@@ -362,6 +373,7 @@ func NewRuntimeWithProfile(client transport.Transport, profile string) *Runtime 
 		client:         client,
 		confirm:        confirm.NewStore(time.Now),
 		approval:       approval.NewStore(time.Now),
+		cursors:        cursor.NewStore(time.Now),
 		profile:        profile,
 		approvalPolicy: approval.PolicyFromEnv(client.Name(), os.Getenv),
 	}
@@ -419,26 +431,108 @@ func capabilitiesHandler(runtime *Runtime) func(context.Context, *mcp.CallToolRe
 	}
 }
 
-func mailSearchHandler(client transport.Transport) func(context.Context, *mcp.CallToolRequest, MailSearchInput) (*mcp.CallToolResult, MailSearchOutput, error) {
+func mailSearchHandler(runtime *Runtime) func(context.Context, *mcp.CallToolRequest, MailSearchInput) (*mcp.CallToolResult, MailSearchOutput, error) {
 	return func(ctx context.Context, _ *mcp.CallToolRequest, input MailSearchInput) (*mcp.CallToolResult, MailSearchOutput, error) {
 		payload := withMailbox(map[string]any{"query": input.Query}, input.Mailbox)
-		response := client.Execute(ctx, transport.ActionRequest{
+		response := runtime.client.Execute(ctx, transport.ActionRequest{
 			Name:    "mail.search",
 			Payload: payload,
 		})
 		if err := transportResponseError(response); err != nil {
 			return nil, MailSearchOutput{}, err
 		}
+		rawNextLink := stringMetadata(response.Data, "next_link")
 		redacted := redact.Value(response.Data).(map[string]any)
 		messages, _ := redacted["messages"].([]any)
-		return nil, MailSearchOutput{
+		output := MailSearchOutput{
 			Messages:  messages,
 			Returned:  intMetadata(redacted, "returned"),
 			Limit:     intMetadata(redacted, "limit"),
 			Truncated: boolMetadata(redacted, "truncated"),
-			NextLink:  stringMetadata(redacted, "next_link"),
-		}, nil
+		}
+		if rawNextLink != "" {
+			cursorID, err := runtime.issueSearchCursor(input, rawNextLink)
+			if err != nil {
+				return nil, MailSearchOutput{}, err
+			}
+			output.NextCursor = cursorID
+			if exposeProviderNextLink() {
+				output.NextLink = rawNextLink
+			}
+		}
+		return nil, output, nil
 	}
+}
+
+func mailSearchNextHandler(runtime *Runtime) func(context.Context, *mcp.CallToolRequest, MailSearchNextInput) (*mcp.CallToolResult, MailSearchOutput, error) {
+	return func(ctx context.Context, _ *mcp.CallToolRequest, input MailSearchNextInput) (*mcp.CallToolResult, MailSearchOutput, error) {
+		record, ok := runtime.cursors.ConsumeScoped(input.Cursor, cursor.Scope{
+			Transport: runtime.client.Name(),
+			Profile:   runtime.profile,
+			Action:    "mail.search",
+		})
+		if !ok {
+			return nil, MailSearchOutput{}, errors.New("cursor is invalid or expired")
+		}
+		response := runtime.client.Execute(ctx, transport.ActionRequest{
+			Name: "mail.search_next",
+			Payload: map[string]any{
+				"next_link": record.NextLink,
+			},
+		})
+		if err := transportResponseError(response); err != nil {
+			return nil, MailSearchOutput{}, err
+		}
+		rawNextLink := stringMetadata(response.Data, "next_link")
+		redacted := redact.Value(response.Data).(map[string]any)
+		messages, _ := redacted["messages"].([]any)
+		output := MailSearchOutput{
+			Messages:  messages,
+			Returned:  intMetadata(redacted, "returned"),
+			Limit:     intMetadata(redacted, "limit"),
+			Truncated: boolMetadata(redacted, "truncated"),
+		}
+		if rawNextLink != "" {
+			cursorID, err := runtime.issueSearchCursorFromBinding(record.Binding, rawNextLink)
+			if err != nil {
+				return nil, MailSearchOutput{}, err
+			}
+			output.NextCursor = cursorID
+			if exposeProviderNextLink() {
+				output.NextLink = rawNextLink
+			}
+		}
+		return nil, output, nil
+	}
+}
+
+func (runtime *Runtime) issueSearchCursor(input MailSearchInput, nextLink string) (string, error) {
+	if !supportsCursorPagination(runtime.client.Name()) {
+		return "", nil
+	}
+	binding := cursor.Binding{
+		Transport: runtime.client.Name(),
+		Profile:   runtime.profile,
+		Action:    "mail.search",
+		Mailbox:   strings.TrimSpace(input.Mailbox),
+		QueryHash: transport.PayloadFingerprint(map[string]any{"query": input.Query}),
+	}
+	return runtime.issueSearchCursorFromBinding(binding, nextLink)
+}
+
+func (runtime *Runtime) issueSearchCursorFromBinding(binding cursor.Binding, nextLink string) (string, error) {
+	if strings.TrimSpace(nextLink) == "" || runtime.cursors == nil {
+		return "", nil
+	}
+	return runtime.cursors.Issue(binding, runtime.client.Name(), nextLink, 30*time.Minute)
+}
+
+func supportsCursorPagination(transportName string) bool {
+	return transportName == "graph"
+}
+
+func exposeProviderNextLink() bool {
+	return os.Getenv("OUTLOOK_AGENT_EXPOSE_PROVIDER_NEXT_LINK") == "1"
 }
 
 func mailFetchMetadataHandler(client transport.Transport) func(context.Context, *mcp.CallToolRequest, MessageIDInput) (*mcp.CallToolResult, MailFetchMetadataOutput, error) {
