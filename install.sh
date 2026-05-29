@@ -138,6 +138,20 @@ choose_install_dir() {
   die "no writable directory found on PATH and HOME is not set; pass --dir"
 }
 
+path_contains_dir() {
+  needle="$1"
+  old_ifs="$IFS"
+  IFS=:
+  for dir in ${PATH:-}; do
+    if [ "$dir" = "$needle" ]; then
+      IFS="$old_ifs"
+      return 0
+    fi
+  done
+  IFS="$old_ifs"
+  return 1
+}
+
 verify_checksum() {
   checksum_file="$1"
   archive_name="$2"
@@ -270,10 +284,25 @@ fi
 mv "$install_tmp" "$target_path"
 install_tmp=""
 
-cat <<EOF
+if path_contains_dir "$install_dir"; then
+  cat <<EOF
 Installed ${BIN_NAME} ${VERSION} to ${target_path}
 
 Next steps:
   outlook-agent help
   outlook-agent doctor
 EOF
+else
+  cat <<EOF
+Installed ${BIN_NAME} ${VERSION} to ${target_path}
+
+Warning: ${install_dir} is not on PATH.
+
+Add it for future shells:
+  export PATH="${install_dir}:\$PATH"
+
+Next steps:
+  ${target_path} help
+  ${target_path} doctor
+EOF
+fi

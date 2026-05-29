@@ -1,10 +1,13 @@
 package app_test
 
 import (
+	"crypto/sha256"
 	"encoding/json"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -119,6 +122,138 @@ func TestInstallScriptReadinessMarkers(t *testing.T) {
 		if !strings.Contains(text, marker) {
 			t.Fatalf("expected %s to contain %q", path, marker)
 		}
+	}
+}
+
+func TestInstallScriptFallbackDirExplainsPathWhenOutsidePATH(t *testing.T) {
+	if runtime.GOOS != "darwin" && runtime.GOOS != "linux" {
+		t.Skip("install.sh archives are only supported on darwin/linux")
+	}
+	if runtime.GOARCH != "amd64" && runtime.GOARCH != "arm64" {
+		t.Skip("install.sh archives are only supported on amd64/arm64")
+	}
+
+	root := filepath.Join("..", "..")
+	home := t.TempDir()
+	fakeBin := filepath.Join(t.TempDir(), "bin")
+	releaseDir := t.TempDir()
+	if err := os.MkdirAll(fakeBin, 0o755); err != nil {
+		t.Fatalf("create fake bin: %v", err)
+	}
+	for name, path := range map[string]string{
+		"tar":    "/usr/bin/tar",
+		"grep":   "/usr/bin/grep",
+		"mktemp": "/usr/bin/mktemp",
+		"shasum": "/usr/bin/shasum",
+		"uname":  "/usr/bin/uname",
+		"cut":    "/usr/bin/cut",
+		"rm":     "/bin/rm",
+		"mkdir":  "/bin/mkdir",
+		"cp":     "/bin/cp",
+		"chmod":  "/bin/chmod",
+		"mv":     "/bin/mv",
+		"cat":    "/bin/cat",
+	} {
+		if _, err := os.Stat(path); err != nil {
+			t.Skipf("%s is required for installer integration test: %v", path, err)
+		}
+		if err := os.Symlink(path, filepath.Join(fakeBin, name)); err != nil {
+			t.Fatalf("link fake command %s: %v", name, err)
+		}
+	}
+
+	version := "vfallbacktest"
+	archiveName := fmt.Sprintf("outlook-agent_%s_%s_%s.tar.gz", version, runtime.GOOS, runtime.GOARCH)
+	packageName := strings.TrimSuffix(archiveName, ".tar.gz")
+	packageDir := filepath.Join(releaseDir, packageName)
+	if err := os.MkdirAll(packageDir, 0o755); err != nil {
+		t.Fatalf("create package dir: %v", err)
+	}
+	for name, content := range map[string]string{
+		"outlook-agent": "#!/bin/sh\nexit 0\n",
+		"README.md":     "# README\n",
+		"RELEASE.md":    "# Release\n",
+	} {
+		if err := os.WriteFile(filepath.Join(packageDir, name), []byte(content), 0o755); err != nil {
+			t.Fatalf("write package file %s: %v", name, err)
+		}
+	}
+	archivePath := filepath.Join(releaseDir, archiveName)
+	tarCmd := exec.Command("/usr/bin/tar", "-czf", archivePath, "-C", releaseDir, packageName)
+	if output, err := tarCmd.CombinedOutput(); err != nil {
+		t.Fatalf("create archive: %v\n%s", err, string(output))
+	}
+	archiveData, err := os.ReadFile(archivePath)
+	if err != nil {
+		t.Fatalf("read archive: %v", err)
+	}
+	sum := sha256.Sum256(archiveData)
+	checksums := fmt.Sprintf("%x  %s\n", sum, archiveName)
+	if err := os.WriteFile(filepath.Join(releaseDir, "SHA256SUMS.txt"), []byte(checksums), 0o644); err != nil {
+		t.Fatalf("write checksums: %v", err)
+	}
+
+	fakeCurl := fmt.Sprintf(`#!/bin/sh
+set -eu
+out=""
+url=""
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    -o)
+      shift
+      out="$1"
+      ;;
+    -*)
+      ;;
+    *)
+      url="$1"
+      ;;
+  esac
+  shift
+done
+case "$url" in
+  */SHA256SUMS.txt)
+    /bin/cp "$FAKE_RELEASE_DIR/SHA256SUMS.txt" "$out"
+    ;;
+  */%s)
+    /bin/cp "$FAKE_RELEASE_DIR/%s" "$out"
+    ;;
+  *)
+    echo "unexpected url: $url" >&2
+    exit 22
+    ;;
+esac
+`, archiveName, archiveName)
+	if err := os.WriteFile(filepath.Join(fakeBin, "curl"), []byte(fakeCurl), 0o755); err != nil {
+		t.Fatalf("write fake curl: %v", err)
+	}
+	if err := os.Chmod(fakeBin, 0o555); err != nil {
+		t.Fatalf("make fake bin non-writable: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = os.Chmod(fakeBin, 0o755)
+	})
+
+	cmd := exec.Command("/bin/sh", filepath.Join(root, "install.sh"), "--version", version)
+	cmd.Env = []string{
+		"HOME=" + home,
+		"PATH=" + fakeBin,
+		"FAKE_RELEASE_DIR=" + releaseDir,
+	}
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("install script failed: %v\n%s", err, string(output))
+	}
+	targetPath := filepath.Join(home, ".local", "bin", "outlook-agent")
+	if _, err := os.Stat(targetPath); err != nil {
+		t.Fatalf("expected fallback install target: %v", err)
+	}
+	text := string(output)
+	if !strings.Contains(text, "not on PATH") {
+		t.Fatalf("expected fallback install output to explain PATH issue, got:\n%s", text)
+	}
+	if !strings.Contains(text, targetPath+" help") {
+		t.Fatalf("expected fallback install output to show full binary path, got:\n%s", text)
 	}
 }
 
