@@ -100,6 +100,9 @@ func TestTransportGraphCapabilitiesIncludeBodyDraftMove(t *testing.T) {
 		{name: "mail.fetch_attachment", class: policy.ReadAttachmentExplicit, level: action.LevelHighLevelMCPTool},
 		{name: "mail.create_draft", class: policy.DraftOnly, level: action.LevelHighLevelMCPTool},
 		{name: "mail.send_draft", class: policy.SendLike, level: action.LevelHighLevelMCPTool},
+		{name: "mail.create_reply_draft", class: policy.DraftOnly, level: action.LevelHighLevelMCPTool},
+		{name: "mail.create_reply_all_draft", class: policy.DraftOnly, level: action.LevelHighLevelMCPTool},
+		{name: "mail.create_forward_draft", class: policy.DraftOnly, level: action.LevelHighLevelMCPTool},
 		{name: "mail.move_to_deleted_items", class: policy.ReversibleBulk, level: action.LevelHighLevelMCPTool},
 		{name: "mail.rules.list", class: policy.ReadMetadata, level: action.LevelHighLevelMCPTool},
 		{name: "mail.rules.set_enabled", class: policy.SettingsOrRules, level: action.LevelHighLevelMCPTool},
@@ -794,6 +797,105 @@ func TestTransportExecutesMailCreateDraft(t *testing.T) {
 	draft := result.Data["draft"].(map[string]any)
 	if draft["id"] != "draft-1" || draft["subject"] != "Draft subject" || draft["status"] != "saved" {
 		t.Fatalf("unexpected draft response: %#v", draft)
+	}
+}
+
+func TestTransportExecutesMailCreateReplyDrafts(t *testing.T) {
+	tests := []struct {
+		name       string
+		actionName string
+		path       string
+		payload    map[string]any
+		wantTo     string
+	}{
+		{
+			name:       "reply",
+			actionName: "mail.create_reply_draft",
+			path:       "/v1.0/me/messages/message-1/createReply",
+			payload:    map[string]any{"message_id": "message-1", "body": "Reply body"},
+		},
+		{
+			name:       "reply all",
+			actionName: "mail.create_reply_all_draft",
+			path:       "/v1.0/me/messages/message-1/createReplyAll",
+			payload:    map[string]any{"message_id": "message-1", "body": "Reply all body"},
+		},
+		{
+			name:       "forward",
+			actionName: "mail.create_forward_draft",
+			path:       "/v1.0/me/messages/message-1/createForward",
+			payload:    map[string]any{"message_id": "message-1", "body": "Forward body", "to": []string{"alex@example.com"}},
+			wantTo:     "alex@example.com",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var sawRequest bool
+			server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+				if strings.HasSuffix(request.URL.Path, "/send") {
+					t.Fatalf("draft helper must not send: %s %s", request.Method, request.URL.String())
+				}
+				if request.Method != http.MethodPost || request.URL.Path != tt.path {
+					t.Fatalf("unexpected request: %s %s", request.Method, request.URL.String())
+				}
+				sawRequest = true
+				var body map[string]any
+				if err := json.NewDecoder(request.Body).Decode(&body); err != nil {
+					t.Fatalf("decode request body: %v", err)
+				}
+				message := body["message"].(map[string]any)
+				messageBody := message["body"].(map[string]any)
+				if messageBody["contentType"] != "Text" || messageBody["content"] != tt.payload["body"] {
+					t.Fatalf("unexpected draft body: %#v", body)
+				}
+				if tt.wantTo != "" {
+					recipients := message["toRecipients"].([]any)
+					first := recipients[0].(map[string]any)
+					email := first["emailAddress"].(map[string]any)
+					if email["address"] != tt.wantTo {
+						t.Fatalf("unexpected forward recipient: %#v", body)
+					}
+				}
+				response.Header().Set("Content-Type", "application/json")
+				_ = json.NewEncoder(response).Encode(graphMessageResponse("draft-"+tt.name, "Draft "+tt.name, "Me", "me@example.com"))
+			}))
+			defer server.Close()
+
+			client := graph.NewTransport(graph.Config{
+				BaseURL:   server.URL + "/v1.0",
+				SecretRef: secret.Ref("memory:graph"),
+			}, secret.NewMemoryStore(map[string]string{"memory:graph": "token-secret"}), server.Client())
+
+			result := client.Execute(context.Background(), transport.ActionRequest{
+				Name:    tt.actionName,
+				Payload: tt.payload,
+			})
+
+			if !result.OK || !sawRequest {
+				t.Fatalf("expected %s ok, got %#v", tt.actionName, result)
+			}
+			draft := result.Data["draft"].(map[string]any)
+			if draft["status"] != "saved" || draft["id"] == "" {
+				t.Fatalf("unexpected draft response: %#v", draft)
+			}
+		})
+	}
+}
+
+func TestTransportRejectsMailCreateForwardDraftWithoutRecipients(t *testing.T) {
+	client := graph.NewTransport(graph.Config{
+		BaseURL:   "https://graph.example.test/v1.0",
+		SecretRef: secret.Ref("memory:graph"),
+	}, secret.NewMemoryStore(map[string]string{"memory:graph": "token-secret"}), nil)
+
+	result := client.Execute(context.Background(), transport.ActionRequest{
+		Name:    "mail.create_forward_draft",
+		Payload: map[string]any{"message_id": "message-1", "body": "Forward body"},
+	})
+
+	if result.OK || !strings.Contains(result.Error, "to") {
+		t.Fatalf("expected missing forward recipients to be rejected, got %#v", result)
 	}
 }
 

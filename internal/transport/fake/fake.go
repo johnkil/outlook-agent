@@ -23,6 +23,9 @@ func New() *Transport {
 			{Name: "mail.fetch_attachment", Transport: "fake", Class: policy.ReadAttachmentExplicit, Level: action.LevelHighLevelMCPTool},
 			{Name: "mail.create_draft", Transport: "fake", Class: policy.DraftOnly, Level: action.LevelHighLevelMCPTool},
 			{Name: "mail.send_draft", Transport: "fake", Class: policy.SendLike, Level: action.LevelHighLevelMCPTool},
+			{Name: "mail.create_reply_draft", Transport: "fake", Class: policy.DraftOnly, Level: action.LevelHighLevelMCPTool},
+			{Name: "mail.create_reply_all_draft", Transport: "fake", Class: policy.DraftOnly, Level: action.LevelHighLevelMCPTool},
+			{Name: "mail.create_forward_draft", Transport: "fake", Class: policy.DraftOnly, Level: action.LevelHighLevelMCPTool},
 			{Name: "mail.move_to_deleted_items", Transport: "fake", Class: policy.ReversibleBulk, Level: action.LevelHighLevelMCPTool},
 			{Name: "mail.rules.list", Transport: "fake", Class: policy.ReadMetadata, Level: action.LevelHighLevelMCPTool},
 			{Name: "mail.rules.set_enabled", Transport: "fake", Class: policy.SettingsOrRules, Level: action.LevelHighLevelMCPTool},
@@ -118,6 +121,17 @@ func (client *Transport) Execute(_ context.Context, request transport.ActionRequ
 				"draft": map[string]any{
 					"id":      "draft-1",
 					"subject": valueOrDefault(request.Payload, "subject", "Draft"),
+					"status":  "saved",
+				},
+			},
+		}
+	case "mail.create_reply_draft", "mail.create_reply_all_draft", "mail.create_forward_draft":
+		return transport.ActionResponse{
+			OK: true,
+			Data: map[string]any{
+				"draft": map[string]any{
+					"id":      valueOrDefault(request.Payload, "message_id", "draft-1"),
+					"subject": "Fake draft",
 					"status":  "saved",
 				},
 			},

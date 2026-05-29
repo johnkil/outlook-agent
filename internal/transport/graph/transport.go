@@ -57,6 +57,9 @@ func (client *Transport) Capabilities(context.Context) transport.CapabilitySet {
 		{Name: "mail.fetch_attachment", Transport: "graph", Class: policy.ReadAttachmentExplicit, Level: action.LevelHighLevelMCPTool},
 		{Name: "mail.create_draft", Transport: "graph", Class: policy.DraftOnly, Level: action.LevelHighLevelMCPTool},
 		{Name: "mail.send_draft", Transport: "graph", Class: policy.SendLike, Level: action.LevelHighLevelMCPTool},
+		{Name: "mail.create_reply_draft", Transport: "graph", Class: policy.DraftOnly, Level: action.LevelHighLevelMCPTool},
+		{Name: "mail.create_reply_all_draft", Transport: "graph", Class: policy.DraftOnly, Level: action.LevelHighLevelMCPTool},
+		{Name: "mail.create_forward_draft", Transport: "graph", Class: policy.DraftOnly, Level: action.LevelHighLevelMCPTool},
 		{Name: "mail.move_to_deleted_items", Transport: "graph", Class: policy.ReversibleBulk, Level: action.LevelHighLevelMCPTool},
 		{Name: "mail.rules.list", Transport: "graph", Class: policy.ReadMetadata, Level: action.LevelHighLevelMCPTool},
 		{Name: "mail.rules.set_enabled", Transport: "graph", Class: policy.SettingsOrRules, Level: action.LevelHighLevelMCPTool},
@@ -175,6 +178,24 @@ func (client *Transport) Execute(ctx context.Context, request transport.ActionRe
 		return transport.ActionResponse{OK: true, Data: map[string]any{"attachment": normalizeGraphAttachment(attachment)}}
 	case "mail.create_draft":
 		draft, err := client.createDraft(ctx, mailbox, request.Payload)
+		if err != nil {
+			return transport.ActionResponse{OK: false, Error: err.Error()}
+		}
+		return transport.ActionResponse{OK: true, Data: map[string]any{"draft": normalizeGraphDraft(draft)}}
+	case "mail.create_reply_draft":
+		draft, err := client.createMessageDraftAction(ctx, mailbox, request.Payload, "createReply", false)
+		if err != nil {
+			return transport.ActionResponse{OK: false, Error: err.Error()}
+		}
+		return transport.ActionResponse{OK: true, Data: map[string]any{"draft": normalizeGraphDraft(draft)}}
+	case "mail.create_reply_all_draft":
+		draft, err := client.createMessageDraftAction(ctx, mailbox, request.Payload, "createReplyAll", false)
+		if err != nil {
+			return transport.ActionResponse{OK: false, Error: err.Error()}
+		}
+		return transport.ActionResponse{OK: true, Data: map[string]any{"draft": normalizeGraphDraft(draft)}}
+	case "mail.create_forward_draft":
+		draft, err := client.createMessageDraftAction(ctx, mailbox, request.Payload, "createForward", true)
 		if err != nil {
 			return transport.ActionResponse{OK: false, Error: err.Error()}
 		}
@@ -728,6 +749,43 @@ func (client *Transport) createDraft(ctx context.Context, mailbox string, payloa
 	}
 	var draft message
 	if err := client.doJSON(ctx, http.MethodPost, requestURL, body, &draft); err != nil {
+		return message{}, err
+	}
+	if draft.ID == "" {
+		return message{}, fmt.Errorf("missing Graph draft response")
+	}
+	return draft, nil
+}
+
+func (client *Transport) createMessageDraftAction(ctx context.Context, mailbox string, payload map[string]any, operation string, requireRecipients bool) (message, error) {
+	messageID := strings.TrimSpace(stringValue(payload, "message_id", ""))
+	if messageID == "" {
+		return message{}, fmt.Errorf("message_id is required")
+	}
+	requestURL, err := client.messageDraftActionURL(mailbox, messageID, operation)
+	if err != nil {
+		return message{}, err
+	}
+	messagePayload := map[string]any{}
+	if body := stringValue(payload, "body", ""); body != "" {
+		messagePayload["body"] = map[string]any{
+			"contentType": "Text",
+			"content":     body,
+		}
+	}
+	if requireRecipients {
+		recipients := draftRecipients(payload["to"])
+		if len(recipients) == 0 {
+			return message{}, fmt.Errorf("mail.create_forward_draft requires to")
+		}
+		messagePayload["toRecipients"] = recipients
+	}
+	var requestBody any
+	if len(messagePayload) > 0 {
+		requestBody = map[string]any{"message": messagePayload}
+	}
+	var draft message
+	if err := client.doJSON(ctx, http.MethodPost, requestURL, requestBody, &draft); err != nil {
 		return message{}, err
 	}
 	if draft.ID == "" {
@@ -1327,6 +1385,19 @@ func (client *Transport) messageSendURL(mailbox string, id string) (string, erro
 		return "", err
 	}
 	return base + graphOwnerPath(mailbox) + "/messages/" + url.PathEscape(id) + "/send", nil
+}
+
+func (client *Transport) messageDraftActionURL(mailbox string, id string, operation string) (string, error) {
+	base, err := client.config.normalizedBaseURL()
+	if err != nil {
+		return "", err
+	}
+	switch operation {
+	case "createReply", "createReplyAll", "createForward":
+	default:
+		return "", fmt.Errorf("unsupported Graph draft operation %q", operation)
+	}
+	return base + graphOwnerPath(mailbox) + "/messages/" + url.PathEscape(id) + "/" + operation, nil
 }
 
 func (client *Transport) messageRulesURL(mailbox string, folderID string) (string, error) {

@@ -98,6 +98,9 @@ outlook.mail_fetch_body
 outlook.mail_list_attachments
 outlook.mail_fetch_attachment
 outlook.mail_create_draft
+outlook.mail_create_reply_draft
+outlook.mail_create_reply_all_draft
+outlook.mail_create_forward_draft
 outlook.mail_send_draft
 outlook.mail_move_to_deleted_items
 outlook.mail_rules_list
@@ -144,6 +147,18 @@ Key tool inputs:
 - `outlook.mail_fetch_attachment`: `message_id` and `attachment_id`. The tool
   is explicit-target only and returns normalized attachment metadata plus
   base64 content when the transport provides it.
+- `outlook.mail_create_reply_draft`: `message_id`, optional `body`, and
+  optional `mailbox`. The action maps to `mail.create_reply_draft`, is
+  classified as `draft_only`, and creates a save-only reply draft without
+  sending.
+- `outlook.mail_create_reply_all_draft`: `message_id`, optional `body`, and
+  optional `mailbox`. The action maps to `mail.create_reply_all_draft`, is
+  classified as `draft_only`, and creates a save-only reply-all draft without
+  sending.
+- `outlook.mail_create_forward_draft`: `message_id`, `to`, optional `body`,
+  and optional `mailbox`. The action maps to `mail.create_forward_draft`, is
+  classified as `draft_only`, and creates a save-only forward draft without
+  sending.
 - `outlook.mail_send_draft`: `draft_id`, `confirm_token`, optional
   `approval_challenge_id`, optional `approval_token`, and optional `mailbox`.
   The action maps to `mail.send_draft`, is classified as `send_like`, and
@@ -267,7 +282,8 @@ Configured transports:
   `GetMailFolder`, `mail.search`, `mail.fetch_metadata`, `mail.rules.list`,
   `mailbox.settings.get`, `calendar.list`, and `calendar.availability`, plus
   explicit `mail.fetch_body`, explicit `mail.list_attachments`, explicit
-  `mail.fetch_attachment`, `mail.create_draft`,
+  `mail.fetch_attachment`, `mail.create_draft`, `mail.create_reply_draft`,
+  `mail.create_reply_all_draft`, `mail.create_forward_draft`,
   `mail.move_to_deleted_items`, confirmed `mail.rules.set_enabled`, and raw
   guarded `GraphRequest`; `auth check` probes `/me/mailFolders/inbox`.
   `mail.rules.list` uses

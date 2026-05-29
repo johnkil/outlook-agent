@@ -20,6 +20,9 @@ Compatibility version `0.1` includes these tool names:
 - `outlook.mail_list_attachments`
 - `outlook.mail_fetch_attachment`
 - `outlook.mail_create_draft`
+- `outlook.mail_create_reply_draft`
+- `outlook.mail_create_reply_all_draft`
+- `outlook.mail_create_forward_draft`
 - `outlook.mail_send_draft`
 - `outlook.mail_move_to_deleted_items`
 - `outlook.mail_rules_list`
@@ -69,6 +72,12 @@ one existing draft through the typed high-risk path. Clients must first call
 `outlook.action_dry_run` for action `mail.send_draft`, review the returned
 packet, and then call `outlook.mail_send_draft` with the exact confirmation
 token plus host approval fields when approval mode requires them.
+
+Compatibility version `0.1` also includes save-only related draft helpers:
+`outlook.mail_create_reply_draft`, `outlook.mail_create_reply_all_draft`, and
+`outlook.mail_create_forward_draft`. These create drafts only and never send;
+use `outlook.mail_send_draft` as a separate reviewed operation if the draft
+must later be sent.
 
 Clients must ignore unknown output fields and unknown capability detail fields.
 Servers must keep existing fields present with compatible meanings.

@@ -115,6 +115,19 @@ type MailCreateDraftOutput struct {
 	Draft any `json:"draft"`
 }
 
+type MailReplyDraftInput struct {
+	MessageID string `json:"message_id" jsonschema:"source message id"`
+	Body      string `json:"body,omitempty" jsonschema:"draft body text"`
+	Mailbox   string `json:"mailbox,omitempty" jsonschema:"optional mailbox user id or user principal name"`
+}
+
+type MailForwardDraftInput struct {
+	MessageID string   `json:"message_id" jsonschema:"source message id"`
+	Body      string   `json:"body,omitempty" jsonschema:"draft body text"`
+	To        []string `json:"to" jsonschema:"forward draft recipients"`
+	Mailbox   string   `json:"mailbox,omitempty" jsonschema:"optional mailbox user id or user principal name"`
+}
+
 type MailSendDraftInput struct {
 	DraftID             string `json:"draft_id" jsonschema:"draft message id to send"`
 	ConfirmToken        string `json:"confirm_token" jsonschema:"confirmation token from outlook.action_dry_run"`
@@ -273,6 +286,15 @@ var toolRegistrations = []toolRegistration{
 	{name: "outlook.mail_create_draft", add: func(server *mcp.Server, runtime *Runtime, name string) {
 		mcp.AddTool(server, mcpTool(name), mailCreateDraftHandler(runtime.client))
 	}},
+	{name: "outlook.mail_create_reply_draft", add: func(server *mcp.Server, runtime *Runtime, name string) {
+		mcp.AddTool(server, mcpTool(name), mailCreateReplyDraftHandler(runtime.client))
+	}},
+	{name: "outlook.mail_create_reply_all_draft", add: func(server *mcp.Server, runtime *Runtime, name string) {
+		mcp.AddTool(server, mcpTool(name), mailCreateReplyAllDraftHandler(runtime.client))
+	}},
+	{name: "outlook.mail_create_forward_draft", add: func(server *mcp.Server, runtime *Runtime, name string) {
+		mcp.AddTool(server, mcpTool(name), mailCreateForwardDraftHandler(runtime.client))
+	}},
 	{name: "outlook.mail_send_draft", add: func(server *mcp.Server, runtime *Runtime, name string) {
 		mcp.AddTool(server, mcpTool(name), mailSendDraftHandler(runtime))
 	}},
@@ -306,25 +328,28 @@ var toolRegistrations = []toolRegistration{
 }
 
 var toolDescriptionByName = map[string]string{
-	"outlook.auth_check":                 "Check authentication for the selected Outlook profile without returning secrets.",
-	"outlook.capabilities":               "List supported actions, safety classes, and policy gates before raw or unfamiliar workflows.",
-	"outlook.mail_search":                "First step for bounded mail discovery; returns metadata-only message results.",
-	"outlook.mail_search_next":           "Fetch the next metadata-only mail search page using an opaque cursor from outlook.mail_search.",
-	"outlook.mail_fetch_metadata":        "Fetch metadata for one explicit message before body or attachment reads.",
-	"outlook.mail_fetch_body":            "Fetch body text for one explicit message; not a bulk body reader.",
-	"outlook.mail_list_attachments":      "List attachment metadata for one explicit message; does not fetch attachment content.",
-	"outlook.mail_fetch_attachment":      "Fetch one explicit attachment by message id and attachment id.",
-	"outlook.mail_create_draft":          "Create a save-only draft; does not send mail.",
-	"outlook.mail_send_draft":            "Send one exact draft only after dry-run review, confirmation, and required approval.",
-	"outlook.mail_move_to_deleted_items": "Move exact message ids to Deleted Items after the required dry-run confirmation token.",
-	"outlook.mail_rules_list":            "List read-only mailbox rule metadata before any rule change.",
-	"outlook.mail_rule_set_enabled":      "Enable or disable one settings/rules item only with a dry-run confirmation token.",
-	"outlook.mailbox_settings_get":       "Get read-only mailbox settings metadata.",
-	"outlook.calendar_list":              "List calendar events for a bounded time window.",
-	"outlook.calendar_availability":      "List free/busy availability for a bounded time window.",
-	"outlook.action_dry_run":             "Required summary step for broad, mutating, send-like, destructive, or unknown actions.",
-	"outlook.action_confirm":             "Execute only the exact payload reviewed by outlook.action_dry_run.",
-	"outlook.raw_action":                 "Advanced policy-guarded escape hatch for capability-discovered actions; prefer high-level tools first.",
+	"outlook.auth_check":                  "Check authentication for the selected Outlook profile without returning secrets.",
+	"outlook.capabilities":                "List supported actions, safety classes, and policy gates before raw or unfamiliar workflows.",
+	"outlook.mail_search":                 "First step for bounded mail discovery; returns metadata-only message results.",
+	"outlook.mail_search_next":            "Fetch the next metadata-only mail search page using an opaque cursor from outlook.mail_search.",
+	"outlook.mail_fetch_metadata":         "Fetch metadata for one explicit message before body or attachment reads.",
+	"outlook.mail_fetch_body":             "Fetch body text for one explicit message; not a bulk body reader.",
+	"outlook.mail_list_attachments":       "List attachment metadata for one explicit message; does not fetch attachment content.",
+	"outlook.mail_fetch_attachment":       "Fetch one explicit attachment by message id and attachment id.",
+	"outlook.mail_create_draft":           "Create a save-only draft; does not send mail.",
+	"outlook.mail_create_reply_draft":     "Create a save-only reply draft for one explicit source message; does not send mail.",
+	"outlook.mail_create_reply_all_draft": "Create a save-only reply-all draft for one explicit source message; does not send mail.",
+	"outlook.mail_create_forward_draft":   "Create a save-only forward draft for one explicit source message and recipients; does not send mail.",
+	"outlook.mail_send_draft":             "Send one exact draft only after dry-run review, confirmation, and required approval.",
+	"outlook.mail_move_to_deleted_items":  "Move exact message ids to Deleted Items after the required dry-run confirmation token.",
+	"outlook.mail_rules_list":             "List read-only mailbox rule metadata before any rule change.",
+	"outlook.mail_rule_set_enabled":       "Enable or disable one settings/rules item only with a dry-run confirmation token.",
+	"outlook.mailbox_settings_get":        "Get read-only mailbox settings metadata.",
+	"outlook.calendar_list":               "List calendar events for a bounded time window.",
+	"outlook.calendar_availability":       "List free/busy availability for a bounded time window.",
+	"outlook.action_dry_run":              "Required summary step for broad, mutating, send-like, destructive, or unknown actions.",
+	"outlook.action_confirm":              "Execute only the exact payload reviewed by outlook.action_dry_run.",
+	"outlook.raw_action":                  "Advanced policy-guarded escape hatch for capability-discovered actions; prefer high-level tools first.",
 }
 
 func toolDescription(name string) string {
@@ -612,6 +637,43 @@ func mailCreateDraftHandler(client transport.Transport) func(context.Context, *m
 		redacted := redact.Value(response.Data).(map[string]any)
 		return nil, MailCreateDraftOutput{Draft: redacted["draft"]}, nil
 	}
+}
+
+func mailCreateReplyDraftHandler(client transport.Transport) func(context.Context, *mcp.CallToolRequest, MailReplyDraftInput) (*mcp.CallToolResult, MailCreateDraftOutput, error) {
+	return func(ctx context.Context, _ *mcp.CallToolRequest, input MailReplyDraftInput) (*mcp.CallToolResult, MailCreateDraftOutput, error) {
+		return createRelatedDraft(ctx, client, "mail.create_reply_draft", withMailbox(map[string]any{
+			"message_id": input.MessageID,
+			"body":       input.Body,
+		}, input.Mailbox))
+	}
+}
+
+func mailCreateReplyAllDraftHandler(client transport.Transport) func(context.Context, *mcp.CallToolRequest, MailReplyDraftInput) (*mcp.CallToolResult, MailCreateDraftOutput, error) {
+	return func(ctx context.Context, _ *mcp.CallToolRequest, input MailReplyDraftInput) (*mcp.CallToolResult, MailCreateDraftOutput, error) {
+		return createRelatedDraft(ctx, client, "mail.create_reply_all_draft", withMailbox(map[string]any{
+			"message_id": input.MessageID,
+			"body":       input.Body,
+		}, input.Mailbox))
+	}
+}
+
+func mailCreateForwardDraftHandler(client transport.Transport) func(context.Context, *mcp.CallToolRequest, MailForwardDraftInput) (*mcp.CallToolResult, MailCreateDraftOutput, error) {
+	return func(ctx context.Context, _ *mcp.CallToolRequest, input MailForwardDraftInput) (*mcp.CallToolResult, MailCreateDraftOutput, error) {
+		return createRelatedDraft(ctx, client, "mail.create_forward_draft", withMailbox(map[string]any{
+			"message_id": input.MessageID,
+			"body":       input.Body,
+			"to":         input.To,
+		}, input.Mailbox))
+	}
+}
+
+func createRelatedDraft(ctx context.Context, client transport.Transport, actionName string, payload map[string]any) (*mcp.CallToolResult, MailCreateDraftOutput, error) {
+	response := client.Execute(ctx, transport.ActionRequest{Name: actionName, Payload: payload})
+	if err := transportResponseError(response); err != nil {
+		return nil, MailCreateDraftOutput{}, err
+	}
+	redacted := redact.Value(response.Data).(map[string]any)
+	return nil, MailCreateDraftOutput{Draft: redacted["draft"]}, nil
 }
 
 func mailSendDraftHandler(runtime *Runtime) func(context.Context, *mcp.CallToolRequest, MailSendDraftInput) (*mcp.CallToolResult, ActionResultOutput, error) {

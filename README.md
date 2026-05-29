@@ -165,9 +165,10 @@ In required mode, high-risk actions return `requires_approval=true` plus an
 after showing the review packet to a human, then passes
 `approval_challenge_id` and `approval_token` back at confirmation. In a properly
 wired host, the **agent never sees the secret**. Save-only draft creation
-(`mail.create_draft`) does not send mail and does not use the confirmation
-flow. Sending an existing draft (`mail.send_draft`) is send-like and always goes
-through dry-run review, exact confirmation, and required host approval. 🔒
+(`mail.create_draft`, reply/reply-all/forward draft helpers) does not send mail
+and does not use the confirmation flow. Sending an existing draft
+(`mail.send_draft`) is send-like and always goes through dry-run review, exact
+confirmation, and required host approval. 🔒
 
 `OUTLOOK_AGENT_APPROVAL_TOKEN` remains as a legacy static token for optional
 mode compatibility. It is not considered production-grade because it is not
@@ -178,12 +179,12 @@ bound to the dry-run payload or review.
 ## 🛡️ Honest things
 
 The write surface is **deliberately small** today: `mail.create_draft`,
-`mail.send_draft`, `mail.move_to_deleted_items`, and `mail.rules.set_enabled`
-for enabling or disabling an existing rule with dry-run confirmation. For
-explicit body reads, use `mail.fetch_body`; everything higher-stakes beyond
-sending a reviewed draft — reply/forward draft helpers, accept/decline invites,
-reschedule, move to arbitrary folders, archive/flag/categorize — is
-intentionally not a high-level tool yet.
+reply/reply-all/forward draft helpers, `mail.send_draft`,
+`mail.move_to_deleted_items`, and `mail.rules.set_enabled` for enabling or
+disabling an existing rule with dry-run confirmation. For explicit body reads,
+use `mail.fetch_body`; everything higher-stakes beyond sending a reviewed draft
+— accept/decline invites, reschedule, move to arbitrary folders,
+archive/flag/categorize — is intentionally not a high-level tool yet.
 
 The model protects a **cooperative** agent working *through* this gateway; it
 can't help if that same agent has another unrestricted path to your mailbox.

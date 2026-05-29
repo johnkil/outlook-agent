@@ -20,7 +20,10 @@ specific message or thread.
    narrow targets.
 5. List attachment metadata with `outlook.mail_list_attachments` before using
    `outlook.mail_fetch_attachment` for one explicit attachment id.
-6. Create drafts with `outlook.mail_create_draft` before any send-like flow.
+6. Create new drafts with `outlook.mail_create_draft`, and source-message
+   drafts with `outlook.mail_create_reply_draft`,
+   `outlook.mail_create_reply_all_draft`, or
+   `outlook.mail_create_forward_draft`, before any send-like flow.
 7. Send an existing draft only through `outlook.action_dry_run` for
    `mail.send_draft`, exact confirmation, required host approval, and
    `outlook.mail_send_draft`.

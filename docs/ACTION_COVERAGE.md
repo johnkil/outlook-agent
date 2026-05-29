@@ -31,6 +31,9 @@ level 5: workflow skill guidance
 | Mail | `outlook.mail_list_attachments` | 4 |
 | Mail | `outlook.mail_fetch_attachment` | 4 |
 | Mail | `outlook.mail_create_draft` | 4 |
+| Mail | `outlook.mail_create_reply_draft` | 4 |
+| Mail | `outlook.mail_create_reply_all_draft` | 4 |
+| Mail | `outlook.mail_create_forward_draft` | 4 |
 | Mail | `outlook.mail_send_draft` | 4 |
 | Mail | `outlook.mail_move_to_deleted_items` | 4 |
 | Mail | `outlook.mail_rules_list` | 4 |

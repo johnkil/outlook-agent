@@ -164,6 +164,9 @@ The MCP server registers the initial public tool surface from `docs/SPEC.md`:
 - `outlook.mail_list_attachments`
 - `outlook.mail_fetch_attachment`
 - `outlook.mail_create_draft`
+- `outlook.mail_create_reply_draft`
+- `outlook.mail_create_reply_all_draft`
+- `outlook.mail_create_forward_draft`
 - `outlook.mail_send_draft`
 - `outlook.mail_move_to_deleted_items`
 - `outlook.mail_rules_list`
