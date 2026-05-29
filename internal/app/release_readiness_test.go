@@ -85,6 +85,48 @@ func TestReleaseReadinessArtifactsExist(t *testing.T) {
 	}
 }
 
+func TestGitHubWorkflowActionsArePinnedByCommitSHA(t *testing.T) {
+	workflowFiles, err := filepath.Glob(filepath.Join("..", "..", ".github", "workflows", "*.yml"))
+	if err != nil {
+		t.Fatalf("glob GitHub workflows: %v", err)
+	}
+	if len(workflowFiles) == 0 {
+		t.Fatal("expected GitHub workflow files")
+	}
+
+	for _, path := range workflowFiles {
+		data, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatalf("read workflow %s: %v", path, err)
+		}
+		for lineNumber, line := range strings.Split(string(data), "\n") {
+			trimmed := strings.TrimSpace(line)
+			if !strings.HasPrefix(trimmed, "uses:") {
+				continue
+			}
+			reference := strings.TrimSpace(strings.TrimPrefix(trimmed, "uses:"))
+			reference = strings.Fields(reference)[0]
+			name, ref, ok := strings.Cut(reference, "@")
+			if !ok || !isFullCommitSHA(ref) {
+				t.Fatalf("workflow %s:%d uses mutable or unpinned action reference %q; pin %s to a full commit SHA", path, lineNumber+1, reference, name)
+			}
+		}
+	}
+}
+
+func isFullCommitSHA(value string) bool {
+	if len(value) != 40 {
+		return false
+	}
+	for _, char := range value {
+		if (char >= '0' && char <= '9') || (char >= 'a' && char <= 'f') || (char >= 'A' && char <= 'F') {
+			continue
+		}
+		return false
+	}
+	return true
+}
+
 func TestActionCoverageSmokeRejectsForbiddenOpencodeToolCalls(t *testing.T) {
 	if _, err := exec.LookPath("bash"); err != nil {
 		t.Skip("bash is required for action coverage smoke")

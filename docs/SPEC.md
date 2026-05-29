@@ -75,7 +75,7 @@ matches for that action name with the same policy fields exposed by MCP
 capability details: safety class, coverage level, direct/gated booleans,
 explicit target or intent requirements, unsafe requirement, and
 `execution_route`. If the action is not known in the built-in catalogs, the
-response includes an `unknown` detail with route `unsafe_direct`.
+response includes an `unknown` detail with route `unsafe_dry_run_confirm`.
 
 `policy coverage` returns the complete built-in action coverage matrix across
 configured transport catalogs. Each row includes action name, transport, safety
@@ -123,8 +123,8 @@ Key tool inputs:
   `requires_unsafe`. Explicit read or mutation requirements are exposed through
   `requires_explicit_target` and `requires_explicit_intent`. The
   `execution_route` field is one of `direct`, `direct_explicit_target`,
-  `direct_explicit_intent`, `dry_run_confirm`, `unsafe_dry_run_confirm`, or
-  `unsafe_direct`.
+  `direct_explicit_intent`, `dry_run_confirm`, or
+  `unsafe_dry_run_confirm`.
 - High-level mail and calendar tools accept optional `mailbox` for transports
   that support delegated or shared mailbox targeting. Graph uses that value as
   `/users/{id|userPrincipalName}`; when omitted, Graph uses `/me`.
