@@ -83,7 +83,7 @@ When you're ready, point at a config and start the MCP server:
 
 ```bash
 ./outlook-agent --config .local/outlook-agent.json auth check
-./outlook-agent setup opencode --print --config .local/outlook-agent.json
+./outlook-agent setup opencode --print --binary ./outlook-agent --config .local/outlook-agent.json
 ./outlook-agent --config .local/outlook-agent.json mcp
 ```
 
