@@ -18,7 +18,9 @@ links, and facts from the source thread unless the user asks to change them.
    `outlook.mail_create_forward_draft` as appropriate.
 5. Send only after exact user confirmation, `outlook.action_dry_run` for
    `mail.send_draft`, and required host approval; execute with
-   `outlook.mail_send_draft`.
+   `outlook.mail_send_draft`. If dry-run returns an `approval_challenge`, pass
+   only host-provided `approval_challenge_id` and `approval_token`; never ask
+   for the approval secret.
 
 ## Safety
 

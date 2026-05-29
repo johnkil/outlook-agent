@@ -14,7 +14,9 @@ Call `outlook.capabilities` before raw, gated, or unfamiliar actions. Use
 `outlook.raw_action` only for a capability-discovered transport action without a
 high-level tool. Do not change attendees, reminders, body, recurrence, or time
 without `outlook.action_dry_run`, `outlook.action_confirm`, and exact
-confirmation for the reviewed payload.
+confirmation for the reviewed payload. If a dry-run returns an
+`approval_challenge`, the host supplies `approval_challenge_id` and
+`approval_token`; never ask for the approval secret.
 
 ## Output
 
