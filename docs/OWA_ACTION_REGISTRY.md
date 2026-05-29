@@ -138,8 +138,9 @@ notes.
 | Safety class | Actions |
 | --- | --- |
 | `read_metadata` | `ConvertId`, `ExpandDL`, `FindConversation`, `FindFolder`, `FindItem`, `FindPeople`, `GetCalendarView`, `GetConversationItems`, `GetFolder`, `GetMailTips`, `GetPersona`, `GetReminders`, `GetRoomLists`, `GetRooms`, `GetServerTimeZones`, `GetServiceConfiguration`, `GetSharingFolder`, `GetSharingMetadata`, `GetUserAvailability`, `GetUserAvailabilityInternal`, `GetUserPhoto`, `GetUserRetentionPolicyTags`, `NotificationSubscribe`, `ResolveNames`, `SyncFolderHierarchy`, `SyncFolderItems` |
-| `read_body_explicit` | `GetItem`, `SearchMailboxes` |
+| `read_body_explicit` | `GetItem` |
 | `read_attachment_explicit` | `GetAttachment` |
+| `unknown` | `SearchMailboxes` |
 | `reversible_bulk` | `ArchiveItem`, `CopyFolder`, `CopyItem`, `CreateAttachment`, `MarkAllItemsAsRead`, `MarkAsJunk`, `MoveFolder`, `MoveItem`, `PerformReminderAction` |
 | `send_like` | `CreateItem`, `SendItem` |
 | `destructive` | `ApplyBulkItemAction`, `ApplyConversationAction`, `ApplyMessageAction`, `DeleteAttachment`, `DeleteFolder`, `DeleteItem`, `EmptyFolder` |
@@ -156,6 +157,9 @@ notes.
   `DeleteFolder` payloads with `DeleteType=MoveToDeletedItems` are treated as
   payload-sensitive reversible bulk operations by the MCP dry-run/confirm
   policy; hard-delete and soft-delete payloads still require unsafe mode.
+- `SearchMailboxes` is classified as `unknown` because the raw action can
+  express broad mailbox searches and does not have a narrow item-id target that
+  the generic explicit-target policy can prove safe.
 - Registry completeness is expected to grow through live discovery and
   documentation review. A newly discovered action must start as `unknown` or be
   added here with a safety class and tests.

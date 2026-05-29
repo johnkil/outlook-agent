@@ -85,6 +85,116 @@ func TestReleaseReadinessArtifactsExist(t *testing.T) {
 	}
 }
 
+func TestGitHubWorkflowActionsArePinnedByCommitSHA(t *testing.T) {
+	workflowFiles, err := githubWorkflowFiles(filepath.Join("..", ".."))
+	if err != nil {
+		t.Fatalf("discover GitHub workflows: %v", err)
+	}
+	if len(workflowFiles) == 0 {
+		t.Fatal("expected GitHub workflow files")
+	}
+
+	for _, path := range workflowFiles {
+		data, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatalf("read workflow %s: %v", path, err)
+		}
+		for lineNumber, line := range strings.Split(string(data), "\n") {
+			trimmed := strings.TrimSpace(line)
+			if !strings.HasPrefix(trimmed, "uses:") {
+				continue
+			}
+			reference := strings.TrimSpace(strings.TrimPrefix(trimmed, "uses:"))
+			reference = strings.Fields(reference)[0]
+			name, ref, ok := strings.Cut(reference, "@")
+			if !ok || !isFullCommitSHA(ref) {
+				t.Fatalf("workflow %s:%d uses mutable or unpinned action reference %q; pin %s to a full commit SHA", path, lineNumber+1, reference, name)
+			}
+			if !hasSpecificVersionComment(line) {
+				t.Fatalf("workflow %s:%d pins %s to a SHA without a specific semver release comment; use %s@<sha> # vX.Y.Z", path, lineNumber+1, name, name)
+			}
+		}
+	}
+}
+
+func githubWorkflowFiles(repoRoot string) ([]string, error) {
+	var workflowFiles []string
+	for _, extension := range []string{"*.yml", "*.yaml"} {
+		matches, err := filepath.Glob(filepath.Join(repoRoot, ".github", "workflows", extension))
+		if err != nil {
+			return nil, err
+		}
+		workflowFiles = append(workflowFiles, matches...)
+	}
+	return workflowFiles, nil
+}
+
+func TestGitHubWorkflowFileDiscoveryIncludesYAMLExtension(t *testing.T) {
+	repoRoot := t.TempDir()
+	workflowDir := filepath.Join(repoRoot, ".github", "workflows")
+	if err := os.MkdirAll(workflowDir, 0o755); err != nil {
+		t.Fatalf("create workflow fixture dir: %v", err)
+	}
+	for _, name := range []string{"ci.yml", "release.yaml", "README.md"} {
+		path := filepath.Join(workflowDir, name)
+		if err := os.WriteFile(path, []byte("name: fixture\n"), 0o644); err != nil {
+			t.Fatalf("write workflow fixture %s: %v", name, err)
+		}
+	}
+
+	workflowFiles, err := githubWorkflowFiles(repoRoot)
+	if err != nil {
+		t.Fatalf("discover workflow files: %v", err)
+	}
+
+	var basenames []string
+	for _, path := range workflowFiles {
+		basenames = append(basenames, filepath.Base(path))
+	}
+	want := []string{"ci.yml", "release.yaml"}
+	if strings.Join(basenames, ",") != strings.Join(want, ",") {
+		t.Fatalf("expected workflow files %v, got %v", want, basenames)
+	}
+}
+
+func isFullCommitSHA(value string) bool {
+	if len(value) != 40 {
+		return false
+	}
+	for _, char := range value {
+		if (char >= '0' && char <= '9') || (char >= 'a' && char <= 'f') || (char >= 'A' && char <= 'F') {
+			continue
+		}
+		return false
+	}
+	return true
+}
+
+func hasSpecificVersionComment(line string) bool {
+	commentIndex := strings.Index(line, "#")
+	if commentIndex == -1 {
+		return false
+	}
+	comment := strings.TrimSpace(line[commentIndex+1:])
+	parts := strings.Split(comment, ".")
+	if len(parts) != 3 || !strings.HasPrefix(parts[0], "v") {
+		return false
+	}
+	return len(parts[0]) > 1 && isDecimal(parts[0][1:]) && isDecimal(parts[1]) && isDecimal(parts[2])
+}
+
+func isDecimal(value string) bool {
+	if value == "" {
+		return false
+	}
+	for _, char := range value {
+		if char < '0' || char > '9' {
+			return false
+		}
+	}
+	return true
+}
+
 func TestActionCoverageSmokeRejectsForbiddenOpencodeToolCalls(t *testing.T) {
 	if _, err := exec.LookPath("bash"); err != nil {
 		t.Skip("bash is required for action coverage smoke")

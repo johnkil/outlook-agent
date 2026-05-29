@@ -179,8 +179,7 @@ with `name`, `transport`, `safety_class`, and numeric coverage `level` plus
 or preserve the missing condition before attempting execution. The
 `execution_route` field summarizes the route as `direct`,
 `direct_explicit_target`, `direct_explicit_intent`, `dry_run_confirm`,
-`unsafe_dry_run_confirm`, or `unsafe_direct`. For gated actions, the expected
-flow is:
+or `unsafe_dry_run_confirm`. For gated actions, the expected flow is:
 
 1. Read `outlook.capabilities.details`.
 2. If direct execution is not allowed, call `outlook.action_dry_run`.
