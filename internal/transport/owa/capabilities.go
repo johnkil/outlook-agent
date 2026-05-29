@@ -50,7 +50,7 @@ func rawServiceCapabilities() []action.Definition {
 
 		raw("GetAttachment", policy.ReadAttachmentExplicit),
 		raw("GetItem", policy.ReadBodyExplicit),
-		raw("SearchMailboxes", policy.ReadBodyExplicit),
+		raw("SearchMailboxes", policy.Unknown),
 
 		raw("ArchiveItem", policy.ReversibleBulk),
 		raw("CopyFolder", policy.ReversibleBulk),

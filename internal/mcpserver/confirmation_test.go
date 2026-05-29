@@ -440,11 +440,17 @@ func TestOWARawCapabilitiesExposeExecutionRoutes(t *testing.T) {
 	}
 
 	rawCount := 0
+	sawSearchMailboxesUnsafe := false
 	for _, detail := range output.Details {
 		if detail.Transport != "owa" || detail.Level != int(action.LevelRawGuardedExecution) {
 			continue
 		}
 		rawCount++
+		if detail.Name == "SearchMailboxes" {
+			sawSearchMailboxesUnsafe = detail.SafetyClass == string(policy.Unknown) &&
+				detail.ExecutionRoute == "unsafe_dry_run_confirm" &&
+				detail.RequiresUnsafe
+		}
 		if detail.ExecutionRoute == "" {
 			t.Fatalf("expected execution route for raw OWA action: %#v", detail)
 		}
@@ -461,7 +467,7 @@ func TestOWARawCapabilitiesExposeExecutionRoutes(t *testing.T) {
 			if detail.ExecutionRoute != "dry_run_confirm" {
 				t.Fatalf("expected dry-run-confirm route for %s: %#v", detail.SafetyClass, detail)
 			}
-		case string(policy.Destructive):
+		case string(policy.Destructive), string(policy.Unknown):
 			if detail.ExecutionRoute != "unsafe_dry_run_confirm" {
 				t.Fatalf("expected unsafe dry-run-confirm route for %s: %#v", detail.SafetyClass, detail)
 			}
@@ -471,6 +477,9 @@ func TestOWARawCapabilitiesExposeExecutionRoutes(t *testing.T) {
 	}
 	if rawCount != 55 {
 		t.Fatalf("expected 55 OWA raw capabilities, got %d", rawCount)
+	}
+	if !sawSearchMailboxesUnsafe {
+		t.Fatal("expected SearchMailboxes to require unsafe dry-run confirmation")
 	}
 }
 
@@ -521,6 +530,33 @@ func TestRawActionDoesNotTrustCallerSuppliedExplicitTarget(t *testing.T) {
 	}
 	if client.executed {
 		t.Fatal("broad body read must not execute when only caller-supplied explicit_target is present")
+	}
+	if !strings.Contains(output.Error, "explicit target required") {
+		t.Fatalf("expected explicit target policy error, got %#v", output)
+	}
+}
+
+func TestRawActionDoesNotTreatUnrelatedTopLevelIDAsBodyReadTarget(t *testing.T) {
+	client := newRecordingTransport(action.Definition{Name: "GetItem", Transport: "test", Class: policy.ReadBodyExplicit, Level: action.LevelRawGuardedExecution})
+	runtime := NewRuntime(client)
+
+	_, output, err := rawActionHandler(runtime)(context.Background(), nil, RawActionInput{
+		Action: "GetItem",
+		Payload: map[string]any{
+			"id": "dummy-target",
+			"Body": map[string]any{
+				"Query": "broad body search",
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("raw action handler: %v", err)
+	}
+	if output.OK {
+		t.Fatalf("unrelated top-level id must not allow body read: %#v", output)
+	}
+	if client.executed {
+		t.Fatal("body read must not execute when only an unrelated top-level id is present")
 	}
 	if !strings.Contains(output.Error, "explicit target required") {
 		t.Fatalf("expected explicit target policy error, got %#v", output)

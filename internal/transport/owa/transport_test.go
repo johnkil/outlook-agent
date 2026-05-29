@@ -254,7 +254,7 @@ func TestTransportCapabilitiesIncludeClassifiedOWAServiceActions(t *testing.T) {
 	assertClass(t, byName, "UpdateItem", policy.SettingsOrRules)
 	assertClass(t, byName, "CreateSweepRuleForSender", policy.SettingsOrRules)
 	assertClass(t, byName, "UpdateUserConfiguration", policy.SettingsOrRules)
-	assertClass(t, byName, "SearchMailboxes", policy.ReadBodyExplicit)
+	assertClass(t, byName, "SearchMailboxes", policy.Unknown)
 	assertClass(t, byName, "NotificationSubscribe", policy.ReadMetadata)
 
 	assertMissing(t, capabilities.Actions, "UpdateInboxRules")

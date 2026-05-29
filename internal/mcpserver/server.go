@@ -653,7 +653,7 @@ func rawActionHandler(runtime *Runtime) func(context.Context, *mcp.CallToolReque
 		class := safetyClassForPayload(runtime.client, input.Action, input.Payload)
 		decision := policy.Evaluate(policy.Request{
 			Class:          class,
-			ExplicitTarget: hasExplicitTarget(input.Payload),
+			ExplicitTarget: hasExplicitTargetForAction(input.Action, input.Payload),
 			ExplicitIntent: input.ExplicitIntent,
 			UnsafeMode:     input.UnsafeMode,
 		})
@@ -694,7 +694,7 @@ func safetyClassFor(client transport.Transport, actionName string) policy.Safety
 func confirmedActionDecision(client transport.Transport, actionName string, payload map[string]any, unsafeMode bool) policy.Decision {
 	return policy.EvaluateConfirmed(policy.Request{
 		Class:          safetyClassForPayload(client, actionName, payload),
-		ExplicitTarget: hasExplicitTarget(payload),
+		ExplicitTarget: hasExplicitTargetForAction(actionName, payload),
 		UnsafeMode:     unsafeMode,
 	})
 }
@@ -714,6 +714,32 @@ func isMoveToDeletedItems(actionName string, payload map[string]any) bool {
 	body, _ := payload["Body"].(map[string]any)
 	deleteType, _ := body["DeleteType"].(string)
 	return deleteType == "MoveToDeletedItems"
+}
+
+func hasExplicitTargetForAction(actionName string, payload map[string]any) bool {
+	switch actionName {
+	case "GetItem":
+		return hasBodyExplicitTarget(payload, "ItemIds", "ItemId")
+	case "GetAttachment":
+		return hasBodyExplicitTarget(payload, "AttachmentIds", "AttachmentId")
+	case "SearchMailboxes":
+		return false
+	default:
+		return hasExplicitTarget(payload)
+	}
+}
+
+func hasBodyExplicitTarget(payload map[string]any, keys ...string) bool {
+	if payload == nil {
+		return false
+	}
+	body, _ := payload["Body"].(map[string]any)
+	for _, key := range keys {
+		if countExplicitTargetValue(body[key]) == 1 {
+			return true
+		}
+	}
+	return false
 }
 
 func hasExplicitTarget(payload map[string]any) bool {
