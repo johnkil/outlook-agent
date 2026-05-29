@@ -285,6 +285,16 @@ DryRun(ctx, ActionRequest) DryRunSummary
 
 Transport implementations must not print or return secrets.
 
+The MCP runtime may emit optional operator-controlled audit events when
+`OUTLOOK_AGENT_AUDIT_LOG=stderr` or `OUTLOOK_AGENT_AUDIT_LOG_FILE` is set.
+Audit events are JSONL records for dry-run, confirm, execute, and reject
+decisions. They include action metadata, safety class, decision, count,
+payload fingerprint, review fingerprint, and redacted error category; they
+must not include raw payloads, raw provider responses, message bodies,
+attachment bytes, cookies, canary values, passwords, access tokens, refresh
+tokens, or session dumps. File audit logs are append-only and created with
+user-only permissions (`0600` on Unix-like systems).
+
 Configured transports:
 
 - `fake`: local deterministic development data.

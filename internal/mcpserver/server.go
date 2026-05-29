@@ -11,6 +11,7 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/johnkil/outlook-agent/internal/approval"
+	"github.com/johnkil/outlook-agent/internal/audit"
 	"github.com/johnkil/outlook-agent/internal/buildinfo"
 	"github.com/johnkil/outlook-agent/internal/capability"
 	"github.com/johnkil/outlook-agent/internal/confirm"
@@ -294,6 +295,7 @@ type Runtime struct {
 	confirm        *confirm.Store
 	approval       *approval.Store
 	cursors        *cursor.Store
+	audit          *audit.Recorder
 	profile        string
 	approvalPolicy approval.Policy
 }
@@ -485,11 +487,16 @@ func NewRuntimeWithProfile(client transport.Transport, profile string) *Runtime 
 	if strings.TrimSpace(profile) == "" {
 		profile = "default"
 	}
+	recorder, err := audit.NewFromEnv(os.Getenv, os.Stderr, time.Now)
+	if err != nil {
+		recorder = audit.NewNoop()
+	}
 	return &Runtime{
 		client:         client,
 		confirm:        confirm.NewStore(time.Now),
 		approval:       approval.NewStore(time.Now),
 		cursors:        cursor.NewStore(time.Now),
+		audit:          recorder,
 		profile:        profile,
 		approvalPolicy: approval.PolicyFromEnv(client.Name(), os.Getenv),
 	}
@@ -764,22 +771,28 @@ func mailSendDraftHandler(runtime *Runtime) func(context.Context, *mcp.CallToolR
 			return nil, ActionResultOutput{OK: false, Error: "confirm_token required"}, nil
 		}
 		payload := withMailbox(map[string]any{"draft_id": input.DraftID}, input.Mailbox)
-		_, class, review := dryRunReviewFor(ctx, runtime.client, "mail.send_draft", payload, false)
+		summary, class, review := dryRunReviewFor(ctx, runtime.client, "mail.send_draft", payload, false)
 		pendingApproval, err := runtime.validateExternalApproval(input.ApprovalChallengeID, input.ApprovalToken, "mail.send_draft", payload, false, runtime.profile, review, class)
 		if err != nil {
+			runtime.recordAudit(audit.TypeReject, "mail.send_draft", payload, runtime.profile, class, review, "blocked", summary.Count, err.Error())
 			return nil, ActionResultOutput{OK: false, Error: err.Error()}, nil
 		}
 		if !runtime.confirm.Consume(input.ConfirmToken, confirmationBindingFor(runtime.client, runtime.profile, "mail.send_draft", payload, false, review, class)) {
+			runtime.recordAudit(audit.TypeReject, "mail.send_draft", payload, runtime.profile, class, review, "blocked", summary.Count, "confirmation token is invalid")
 			return nil, ActionResultOutput{OK: false, Error: "confirmation token is invalid"}, nil
 		}
 		if err := runtime.consumeExternalApproval(pendingApproval); err != nil {
+			runtime.recordAudit(audit.TypeReject, "mail.send_draft", payload, runtime.profile, class, review, "blocked", summary.Count, err.Error())
 			return nil, ActionResultOutput{OK: false, Error: err.Error()}, nil
 		}
 		decision := confirmedActionDecision(runtime.client, "mail.send_draft", payload, false)
 		if !decision.Allowed {
+			runtime.recordAudit(audit.TypeReject, "mail.send_draft", payload, runtime.profile, class, review, "blocked", summary.Count, decision.Reason)
 			return nil, ActionResultOutput{OK: false, Error: decision.Reason}, nil
 		}
+		runtime.recordAudit(audit.TypeConfirm, "mail.send_draft", payload, runtime.profile, class, review, "accepted", summary.Count, "")
 		response := runtime.client.Execute(ctx, transport.ActionRequest{Name: "mail.send_draft", Payload: payload})
+		runtime.recordAudit(audit.TypeExecute, "mail.send_draft", payload, runtime.profile, class, review, auditDecisionForResponse(response), summary.Count, response.Error)
 		return nil, actionResultFromResponse(response), nil
 	}
 }
@@ -835,26 +848,30 @@ func executeReversibleMessageMutation(ctx context.Context, runtime *Runtime, act
 	if countExplicitTargetValue(payload["ids"]) == 0 {
 		return nil, ActionResultOutput{OK: false, Error: "ids required"}, nil
 	}
-	class := safetyClassForPayload(runtime.client, actionName, payload)
+	summary, class, review := dryRunReviewFor(ctx, runtime.client, actionName, payload, false)
 	if class == policy.ReversibleBulk {
 		if confirmToken == "" {
 			return nil, ActionResultOutput{OK: false, Error: "confirm_token required"}, nil
 		}
-		_, class, review := dryRunReviewFor(ctx, runtime.client, actionName, payload, false)
 		pendingApproval, err := runtime.validateExternalApproval(approvalChallengeID, approvalToken, actionName, payload, false, runtime.profile, review, class)
 		if err != nil {
+			runtime.recordAudit(audit.TypeReject, actionName, payload, runtime.profile, class, review, "blocked", summary.Count, err.Error())
 			return nil, ActionResultOutput{OK: false, Error: err.Error()}, nil
 		}
 		if !runtime.confirm.Consume(confirmToken, confirmationBindingFor(runtime.client, runtime.profile, actionName, payload, false, review, class)) {
+			runtime.recordAudit(audit.TypeReject, actionName, payload, runtime.profile, class, review, "blocked", summary.Count, "confirmation token is invalid")
 			return nil, ActionResultOutput{OK: false, Error: "confirmation token is invalid"}, nil
 		}
 		if err := runtime.consumeExternalApproval(pendingApproval); err != nil {
+			runtime.recordAudit(audit.TypeReject, actionName, payload, runtime.profile, class, review, "blocked", summary.Count, err.Error())
 			return nil, ActionResultOutput{OK: false, Error: err.Error()}, nil
 		}
 		decision := confirmedActionDecision(runtime.client, actionName, payload, false)
 		if !decision.Allowed {
+			runtime.recordAudit(audit.TypeReject, actionName, payload, runtime.profile, class, review, "blocked", summary.Count, decision.Reason)
 			return nil, ActionResultOutput{OK: false, Error: decision.Reason}, nil
 		}
+		runtime.recordAudit(audit.TypeConfirm, actionName, payload, runtime.profile, class, review, "accepted", summary.Count, "")
 	} else {
 		decision := policy.Evaluate(policy.Request{
 			Class:          class,
@@ -862,10 +879,12 @@ func executeReversibleMessageMutation(ctx context.Context, runtime *Runtime, act
 			ExplicitIntent: true,
 		})
 		if !decision.Allowed {
+			runtime.recordAudit(audit.TypeReject, actionName, payload, runtime.profile, class, review, "blocked", summary.Count, decision.Reason)
 			return nil, ActionResultOutput{OK: false, Error: decision.Reason}, nil
 		}
 	}
 	response := runtime.client.Execute(ctx, transport.ActionRequest{Name: actionName, Payload: payload})
+	runtime.recordAudit(audit.TypeExecute, actionName, payload, runtime.profile, class, review, auditDecisionForResponse(response), summary.Count, response.Error)
 	return nil, actionResultFromResponse(response), nil
 }
 
@@ -875,18 +894,23 @@ func mailMoveToDeletedItemsHandler(runtime *Runtime) func(context.Context, *mcp.
 			return nil, ActionResultOutput{OK: false, Error: "confirm_token required"}, nil
 		}
 		payload := withMailbox(map[string]any{"ids": stringsToAny(input.IDs)}, input.Mailbox)
-		_, class, review := dryRunReviewFor(ctx, runtime.client, "mail.move_to_deleted_items", payload, false)
+		summary, class, review := dryRunReviewFor(ctx, runtime.client, "mail.move_to_deleted_items", payload, false)
 		pendingApproval, err := runtime.validateExternalApproval(input.ApprovalChallengeID, input.ApprovalToken, "mail.move_to_deleted_items", payload, false, runtime.profile, review, class)
 		if err != nil {
+			runtime.recordAudit(audit.TypeReject, "mail.move_to_deleted_items", payload, runtime.profile, class, review, "blocked", summary.Count, err.Error())
 			return nil, ActionResultOutput{OK: false, Error: err.Error()}, nil
 		}
 		if !runtime.confirm.Consume(input.ConfirmToken, confirmationBindingFor(runtime.client, runtime.profile, "mail.move_to_deleted_items", payload, false, review, class)) {
+			runtime.recordAudit(audit.TypeReject, "mail.move_to_deleted_items", payload, runtime.profile, class, review, "blocked", summary.Count, "confirmation token is invalid")
 			return nil, ActionResultOutput{OK: false, Error: "confirmation token is invalid"}, nil
 		}
 		if err := runtime.consumeExternalApproval(pendingApproval); err != nil {
+			runtime.recordAudit(audit.TypeReject, "mail.move_to_deleted_items", payload, runtime.profile, class, review, "blocked", summary.Count, err.Error())
 			return nil, ActionResultOutput{OK: false, Error: err.Error()}, nil
 		}
+		runtime.recordAudit(audit.TypeConfirm, "mail.move_to_deleted_items", payload, runtime.profile, class, review, "accepted", summary.Count, "")
 		response := runtime.client.Execute(ctx, transport.ActionRequest{Name: "mail.move_to_deleted_items", Payload: payload})
+		runtime.recordAudit(audit.TypeExecute, "mail.move_to_deleted_items", payload, runtime.profile, class, review, auditDecisionForResponse(response), summary.Count, response.Error)
 		return nil, actionResultFromResponse(response), nil
 	}
 }
@@ -916,18 +940,23 @@ func mailRuleSetEnabledHandler(runtime *Runtime) func(context.Context, *mcp.Call
 			"enabled":   input.Enabled,
 			"folder_id": input.FolderID,
 		}, input.Mailbox)
-		_, class, review := dryRunReviewFor(ctx, runtime.client, "mail.rules.set_enabled", payload, false)
+		summary, class, review := dryRunReviewFor(ctx, runtime.client, "mail.rules.set_enabled", payload, false)
 		pendingApproval, err := runtime.validateExternalApproval(input.ApprovalChallengeID, input.ApprovalToken, "mail.rules.set_enabled", payload, false, runtime.profile, review, class)
 		if err != nil {
+			runtime.recordAudit(audit.TypeReject, "mail.rules.set_enabled", payload, runtime.profile, class, review, "blocked", summary.Count, err.Error())
 			return nil, ActionResultOutput{OK: false, Error: err.Error()}, nil
 		}
 		if !runtime.confirm.Consume(input.ConfirmToken, confirmationBindingFor(runtime.client, runtime.profile, "mail.rules.set_enabled", payload, false, review, class)) {
+			runtime.recordAudit(audit.TypeReject, "mail.rules.set_enabled", payload, runtime.profile, class, review, "blocked", summary.Count, "confirmation token is invalid")
 			return nil, ActionResultOutput{OK: false, Error: "confirmation token is invalid"}, nil
 		}
 		if err := runtime.consumeExternalApproval(pendingApproval); err != nil {
+			runtime.recordAudit(audit.TypeReject, "mail.rules.set_enabled", payload, runtime.profile, class, review, "blocked", summary.Count, err.Error())
 			return nil, ActionResultOutput{OK: false, Error: err.Error()}, nil
 		}
+		runtime.recordAudit(audit.TypeConfirm, "mail.rules.set_enabled", payload, runtime.profile, class, review, "accepted", summary.Count, "")
 		response := runtime.client.Execute(ctx, transport.ActionRequest{Name: "mail.rules.set_enabled", Payload: payload})
+		runtime.recordAudit(audit.TypeExecute, "mail.rules.set_enabled", payload, runtime.profile, class, review, auditDecisionForResponse(response), summary.Count, response.Error)
 		return nil, actionResultFromResponse(response), nil
 	}
 }
@@ -992,22 +1021,28 @@ func calendarRespondHandler(runtime *Runtime) func(context.Context, *mcp.CallToo
 			"comment":       input.Comment,
 			"send_response": input.SendResponse,
 		}, input.Mailbox)
-		_, class, review := dryRunReviewFor(ctx, runtime.client, "calendar.respond", payload, false)
+		summary, class, review := dryRunReviewFor(ctx, runtime.client, "calendar.respond", payload, false)
 		pendingApproval, err := runtime.validateExternalApproval(input.ApprovalChallengeID, input.ApprovalToken, "calendar.respond", payload, false, runtime.profile, review, class)
 		if err != nil {
+			runtime.recordAudit(audit.TypeReject, "calendar.respond", payload, runtime.profile, class, review, "blocked", summary.Count, err.Error())
 			return nil, ActionResultOutput{OK: false, Error: err.Error()}, nil
 		}
 		if !runtime.confirm.Consume(input.ConfirmToken, confirmationBindingFor(runtime.client, runtime.profile, "calendar.respond", payload, false, review, class)) {
+			runtime.recordAudit(audit.TypeReject, "calendar.respond", payload, runtime.profile, class, review, "blocked", summary.Count, "confirmation token is invalid")
 			return nil, ActionResultOutput{OK: false, Error: "confirmation token is invalid"}, nil
 		}
 		if err := runtime.consumeExternalApproval(pendingApproval); err != nil {
+			runtime.recordAudit(audit.TypeReject, "calendar.respond", payload, runtime.profile, class, review, "blocked", summary.Count, err.Error())
 			return nil, ActionResultOutput{OK: false, Error: err.Error()}, nil
 		}
 		decision := confirmedActionDecision(runtime.client, "calendar.respond", payload, false)
 		if !decision.Allowed {
+			runtime.recordAudit(audit.TypeReject, "calendar.respond", payload, runtime.profile, class, review, "blocked", summary.Count, decision.Reason)
 			return nil, ActionResultOutput{OK: false, Error: decision.Reason}, nil
 		}
+		runtime.recordAudit(audit.TypeConfirm, "calendar.respond", payload, runtime.profile, class, review, "accepted", summary.Count, "")
 		response := runtime.client.Execute(ctx, transport.ActionRequest{Name: "calendar.respond", Payload: payload})
+		runtime.recordAudit(audit.TypeExecute, "calendar.respond", payload, runtime.profile, class, review, auditDecisionForResponse(response), summary.Count, response.Error)
 		return nil, actionResultFromResponse(response), nil
 	}
 }
@@ -1041,6 +1076,7 @@ func dryRunHandler(runtime *Runtime) func(context.Context, *mcp.CallToolRequest,
 		requiresApproval := runtime.requiresApproval(class)
 		decision := confirmedActionDecision(runtime.client, input.Action, input.Payload, input.UnsafeMode)
 		if !decision.Allowed {
+			runtime.recordAudit(audit.TypeReject, input.Action, input.Payload, runtime.profileOrDefault(input.Profile), class, review, "blocked", summary.Count, decision.Reason)
 			return nil, DryRunOutput{
 				Action:               summary.Action,
 				OK:                   false,
@@ -1066,6 +1102,7 @@ func dryRunHandler(runtime *Runtime) func(context.Context, *mcp.CallToolRequest,
 			}
 			challenge = &issued
 		}
+		runtime.recordAudit(audit.TypeDryRun, input.Action, input.Payload, runtime.profileOrDefault(input.Profile), class, review, "allowed", summary.Count, "")
 		return nil, DryRunOutput{
 			Action:               summary.Action,
 			OK:                   true,
@@ -1084,22 +1121,28 @@ func dryRunHandler(runtime *Runtime) func(context.Context, *mcp.CallToolRequest,
 
 func actionConfirmHandler(runtime *Runtime) func(context.Context, *mcp.CallToolRequest, ActionConfirmInput) (*mcp.CallToolResult, ActionResultOutput, error) {
 	return func(ctx context.Context, _ *mcp.CallToolRequest, input ActionConfirmInput) (*mcp.CallToolResult, ActionResultOutput, error) {
-		_, class, review := dryRunReviewFor(ctx, runtime.client, input.Action, input.Payload, input.UnsafeMode)
+		summary, class, review := dryRunReviewFor(ctx, runtime.client, input.Action, input.Payload, input.UnsafeMode)
 		pendingApproval, err := runtime.validateExternalApproval(input.ApprovalChallengeID, input.ApprovalToken, input.Action, input.Payload, input.UnsafeMode, runtime.profileOrDefault(input.Profile), review, class)
 		if err != nil {
+			runtime.recordAudit(audit.TypeReject, input.Action, input.Payload, runtime.profileOrDefault(input.Profile), class, review, "blocked", summary.Count, err.Error())
 			return nil, ActionResultOutput{OK: false, Error: err.Error()}, nil
 		}
 		if !runtime.confirm.Consume(input.ConfirmToken, confirmationBindingFor(runtime.client, runtime.profileOrDefault(input.Profile), input.Action, input.Payload, input.UnsafeMode, review, class)) {
+			runtime.recordAudit(audit.TypeReject, input.Action, input.Payload, runtime.profileOrDefault(input.Profile), class, review, "blocked", summary.Count, "confirmation token is invalid")
 			return nil, ActionResultOutput{OK: false, Error: "confirmation token is invalid"}, nil
 		}
 		if err := runtime.consumeExternalApproval(pendingApproval); err != nil {
+			runtime.recordAudit(audit.TypeReject, input.Action, input.Payload, runtime.profileOrDefault(input.Profile), class, review, "blocked", summary.Count, err.Error())
 			return nil, ActionResultOutput{OK: false, Error: err.Error()}, nil
 		}
 		decision := confirmedActionDecision(runtime.client, input.Action, input.Payload, input.UnsafeMode)
 		if !decision.Allowed {
+			runtime.recordAudit(audit.TypeReject, input.Action, input.Payload, runtime.profileOrDefault(input.Profile), class, review, "blocked", summary.Count, decision.Reason)
 			return nil, ActionResultOutput{OK: false, Error: decision.Reason}, nil
 		}
+		runtime.recordAudit(audit.TypeConfirm, input.Action, input.Payload, runtime.profileOrDefault(input.Profile), class, review, "accepted", summary.Count, "")
 		response := runtime.client.Execute(ctx, transport.ActionRequest{Name: input.Action, Payload: input.Payload, UnsafeMode: input.UnsafeMode})
+		runtime.recordAudit(audit.TypeExecute, input.Action, input.Payload, runtime.profileOrDefault(input.Profile), class, review, auditDecisionForResponse(response), summary.Count, response.Error)
 		return nil, actionResultFromResponse(response), nil
 	}
 }
@@ -1114,11 +1157,47 @@ func rawActionHandler(runtime *Runtime) func(context.Context, *mcp.CallToolReque
 			UnsafeMode:     input.UnsafeMode,
 		})
 		if !decision.Allowed {
+			review := reviewPacketFor(runtime.client, input.Action, input.Payload, transport.DryRunSummary{Action: input.Action}, class)
+			runtime.recordAudit(audit.TypeReject, input.Action, input.Payload, runtime.profileOrDefault(input.Profile), class, review, "blocked", 0, decision.Reason)
 			return nil, ActionResultOutput{OK: false, Error: decision.Reason}, nil
 		}
 		response := runtime.client.Execute(ctx, transport.ActionRequest{Name: input.Action, Payload: input.Payload, UnsafeMode: input.UnsafeMode})
+		review := reviewPacketFor(runtime.client, input.Action, input.Payload, transport.DryRunSummary{Action: input.Action}, class)
+		runtime.recordAudit(audit.TypeExecute, input.Action, input.Payload, runtime.profileOrDefault(input.Profile), class, review, auditDecisionForResponse(response), 0, response.Error)
 		return nil, actionResultFromResponse(response), nil
 	}
+}
+
+func (runtime *Runtime) recordAudit(eventType string, actionName string, payload map[string]any, profile string, class policy.SafetyClass, review transport.ReviewPacket, decision string, count int, message string) {
+	if runtime == nil || runtime.audit == nil {
+		return
+	}
+	if profile == "" {
+		profile = runtime.profile
+	}
+	payloadFingerprint := review.PayloadFingerprint
+	if payloadFingerprint == "" {
+		payloadFingerprint = transport.PayloadFingerprint(payload)
+	}
+	_ = runtime.audit.Record(audit.Event{
+		Type:               eventType,
+		Transport:          runtime.client.Name(),
+		Profile:            profile,
+		Action:             actionName,
+		SafetyClass:        string(class),
+		Decision:           decision,
+		PayloadFingerprint: payloadFingerprint,
+		ReviewFingerprint:  transport.ReviewFingerprint(review),
+		Count:              count,
+		Error:              message,
+	})
+}
+
+func auditDecisionForResponse(response transport.ActionResponse) string {
+	if response.OK {
+		return "ok"
+	}
+	return "error"
 }
 
 func bindingFor(client transport.Transport, profile string, action string, payload map[string]any, unsafeMode bool) confirm.Binding {

@@ -174,6 +174,18 @@ confirmation, and required host approval. 🔒
 mode compatibility. It is not considered production-grade because it is not
 bound to the dry-run payload or review.
 
+Optional redacted audit logging can be enabled by the host/operator:
+
+```bash
+OUTLOOK_AGENT_AUDIT_LOG="stderr"
+OUTLOOK_AGENT_AUDIT_LOG_FILE="/absolute/path/outlook-agent-audit.jsonl"
+```
+
+Audit events are JSONL records for dry-run, confirm, execute, and reject
+decisions. They include action metadata plus payload/review fingerprints, never
+raw payloads, message bodies, attachment bytes, cookies, canary values, or
+tokens. File audit logs are created `0600`.
+
 ---
 
 ## 🛡️ Honest things
