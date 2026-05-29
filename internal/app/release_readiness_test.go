@@ -87,6 +87,31 @@ func TestReleaseReadinessArtifactsExist(t *testing.T) {
 	}
 }
 
+func TestDependabotReadiness(t *testing.T) {
+	path := filepath.Join("..", "..", ".github", "dependabot.yml")
+	requiredMarkers := []string{
+		"version: 2",
+		"package-ecosystem: gomod",
+		"directory: \"/\"",
+		"package-ecosystem: github-actions",
+		"directory: \"/\"",
+		"interval: weekly",
+		"open-pull-requests-limit",
+		"labels:",
+	}
+
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read Dependabot config %s: %v", path, err)
+	}
+	text := string(data)
+	for _, marker := range requiredMarkers {
+		if !strings.Contains(text, marker) {
+			t.Fatalf("expected %s to contain %q", path, marker)
+		}
+	}
+}
+
 func TestGitHubWorkflowActionsArePinnedByCommitSHA(t *testing.T) {
 	workflowFiles, err := githubWorkflowFiles(filepath.Join("..", ".."))
 	if err != nil {
