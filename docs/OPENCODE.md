@@ -179,6 +179,7 @@ The MCP server registers the initial public tool surface from `docs/SPEC.md`:
 - `outlook.mailbox_settings_get`
 - `outlook.calendar_list`
 - `outlook.calendar_availability`
+- `outlook.calendar_respond`
 - `outlook.action_dry_run`
 - `outlook.action_confirm`
 - `outlook.raw_action`

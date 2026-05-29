@@ -3,6 +3,7 @@ package graph_test
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -109,6 +110,7 @@ func TestTransportGraphCapabilitiesIncludeBodyDraftMove(t *testing.T) {
 		{name: "mailbox.settings.get", class: policy.ReadMetadata, level: action.LevelHighLevelMCPTool},
 		{name: "calendar.list", class: policy.ReadMetadata, level: action.LevelHighLevelMCPTool},
 		{name: "calendar.availability", class: policy.ReadMetadata, level: action.LevelHighLevelMCPTool},
+		{name: "calendar.respond", class: policy.SendLike, level: action.LevelHighLevelMCPTool},
 	} {
 		definition, ok := findGraphCapability(capabilities.Actions, tt.name)
 		if !ok {
@@ -971,6 +973,96 @@ func TestTransportExecutesMailSendDraft(t *testing.T) {
 	sent := result.Data["sent"].(map[string]any)
 	if sent["id"] != "draft-1" || sent["status"] != "sent" {
 		t.Fatalf("unexpected sent metadata: %#v", sent)
+	}
+}
+
+func TestTransportDryRunCalendarRespondBuildsReview(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		if request.Method != http.MethodGet || request.URL.Path != "/v1.0/me/events/event-1" {
+			t.Fatalf("unexpected request: %s %s", request.Method, request.URL.String())
+		}
+		response.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(response).Encode(graphEventResponse("event-1", "Planning", "2026-05-28T09:00:00", "2026-05-28T09:30:00", "Room 1"))
+	}))
+	defer server.Close()
+
+	client := graph.NewTransport(graph.Config{
+		BaseURL:   server.URL + "/v1.0",
+		SecretRef: secret.Ref("memory:graph"),
+	}, secret.NewMemoryStore(map[string]string{"memory:graph": "token-secret"}), server.Client())
+
+	summary := client.DryRun(context.Background(), transport.ActionRequest{
+		Name: "calendar.respond",
+		Payload: map[string]any{
+			"event_id":      "event-1",
+			"response":      "accept",
+			"comment":       "Looks good; access_token=secret",
+			"send_response": true,
+		},
+	})
+
+	if summary.Action != "calendar.respond" || summary.Count != 1 || summary.Reversible || !summary.RequiresConfirmation {
+		t.Fatalf("unexpected calendar respond dry-run summary: %#v", summary)
+	}
+	if summary.SafetyClass != string(policy.SendLike) {
+		t.Fatalf("expected send-like safety class, got %#v", summary)
+	}
+	if summary.Review == nil || summary.Review.Calendar == nil || summary.Review.Mutation == nil {
+		t.Fatalf("expected calendar review packet: %#v", summary.Review)
+	}
+	if summary.Review.Calendar.EventID != "event-1" || summary.Review.Calendar.Response != "accept" || !summary.Review.Calendar.SendsResponse {
+		t.Fatalf("unexpected calendar review: %#v", summary.Review.Calendar)
+	}
+	if len(summary.Review.Targets) != 1 || summary.Review.Targets[0].Name != "Planning" {
+		t.Fatalf("expected event target in review: %#v", summary.Review.Targets)
+	}
+	if strings.Contains(fmt.Sprint(summary.Review.Mutation.NewState), "secret") {
+		t.Fatalf("expected comment preview to be redacted: %#v", summary.Review.Mutation.NewState)
+	}
+	if summary.Review.PayloadFingerprint == "" {
+		t.Fatalf("expected payload fingerprint: %#v", summary.Review)
+	}
+}
+
+func TestTransportExecutesCalendarRespond(t *testing.T) {
+	var sawRespond bool
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		if request.Method != http.MethodPost || request.URL.Path != "/v1.0/me/events/event-1/accept" {
+			t.Fatalf("unexpected request: %s %s", request.Method, request.URL.String())
+		}
+		var body map[string]any
+		if err := json.NewDecoder(request.Body).Decode(&body); err != nil {
+			t.Fatalf("decode request body: %v", err)
+		}
+		if body["comment"] != "Accepted" || body["sendResponse"] != true {
+			t.Fatalf("unexpected calendar response body: %#v", body)
+		}
+		sawRespond = true
+		response.WriteHeader(http.StatusAccepted)
+	}))
+	defer server.Close()
+
+	client := graph.NewTransport(graph.Config{
+		BaseURL:   server.URL + "/v1.0",
+		SecretRef: secret.Ref("memory:graph"),
+	}, secret.NewMemoryStore(map[string]string{"memory:graph": "token-secret"}), server.Client())
+
+	result := client.Execute(context.Background(), transport.ActionRequest{
+		Name: "calendar.respond",
+		Payload: map[string]any{
+			"event_id":      "event-1",
+			"response":      "accept",
+			"comment":       "Accepted",
+			"send_response": true,
+		},
+	})
+
+	if !result.OK || !sawRespond {
+		t.Fatalf("expected calendar.respond ok, got %#v", result)
+	}
+	responded := result.Data["response"].(map[string]any)
+	if responded["event_id"] != "event-1" || responded["response"] != "accept" || responded["status"] != "submitted" {
+		t.Fatalf("unexpected calendar response metadata: %#v", responded)
 	}
 }
 

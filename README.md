@@ -183,12 +183,14 @@ reply/reply-all/forward draft helpers, `mail.send_draft`,
 `mail.move_to_deleted_items`, reversible message organization helpers
 (`mail.move_to_folder`, `mail.archive`, `mail.flag`, `mail.categorize`,
 `mail.mark_read`), and `mail.rules.set_enabled` for enabling or disabling an
-existing rule with dry-run confirmation. Single explicit message organization
-changes can execute directly when the tool has the exact id and new state; bulk
-message organization changes require dry-run review and exact confirmation. For
-explicit body reads, use `mail.fetch_body`; everything higher-stakes beyond
-sending a reviewed draft — accept/decline invites, reschedule, or broader
-rule/settings writes — is intentionally not a high-level tool yet.
+existing rule with dry-run confirmation. `calendar.respond` handles
+accept/decline/tentative meeting responses as a send-like reviewed operation.
+Single explicit message organization changes can execute directly when the tool
+has the exact id and new state; bulk message organization changes require
+dry-run review and exact confirmation. For explicit body reads, use
+`mail.fetch_body`; everything higher-stakes beyond sending a reviewed draft and
+responding to an exact event — reschedule, cancel, or broader rule/settings
+writes — is intentionally not a high-level tool yet.
 
 The model protects a **cooperative** agent working *through* this gateway; it
 can't help if that same agent has another unrestricted path to your mailbox.

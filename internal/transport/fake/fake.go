@@ -37,6 +37,7 @@ func New() *Transport {
 			{Name: "mailbox.settings.get", Transport: "fake", Class: policy.ReadMetadata, Level: action.LevelHighLevelMCPTool},
 			{Name: "calendar.list", Transport: "fake", Class: policy.ReadMetadata, Level: action.LevelHighLevelMCPTool},
 			{Name: "calendar.availability", Transport: "fake", Class: policy.ReadMetadata, Level: action.LevelHighLevelMCPTool},
+			{Name: "calendar.respond", Transport: "fake", Class: policy.SendLike, Level: action.LevelHighLevelMCPTool},
 		},
 	}
 }
@@ -236,6 +237,17 @@ func (client *Transport) Execute(_ context.Context, request transport.ActionRequ
 				},
 			},
 		}
+	case "calendar.respond":
+		return transport.ActionResponse{
+			OK: true,
+			Data: map[string]any{
+				"response": map[string]any{
+					"event_id": valueOrDefault(request.Payload, "event_id", "evt-1"),
+					"response": valueOrDefault(request.Payload, "response", "accept"),
+					"status":   "submitted",
+				},
+			},
+		}
 	default:
 		return transport.ActionResponse{
 			OK:    false,
@@ -307,11 +319,44 @@ func (client *Transport) DryRun(_ context.Context, request transport.ActionReque
 			Review:               &review,
 		}
 	}
+	if request.Name == "calendar.respond" {
+		review := fakeCalendarRespondReview(request.Name, request.Payload)
+		return transport.DryRunSummary{
+			Action:               request.Name,
+			Count:                1,
+			Reversible:           false,
+			RequiresConfirmation: true,
+			SafetyClass:          string(policy.SendLike),
+			Review:               &review,
+		}
+	}
 	return transport.DryRunSummary{
 		Action:               request.Name,
 		Count:                dryRunCount(request),
 		Reversible:           request.Name == "mail.move_to_deleted_items" || request.Name == "mail.rules.set_enabled",
 		RequiresConfirmation: true,
+	}
+}
+
+func fakeCalendarRespondReview(actionName string, payload map[string]any) transport.ReviewPacket {
+	eventID := stringValue(payload, "event_id", "evt-1")
+	response := stringValue(payload, "response", "accept")
+	sendResponse, _ := payload["send_response"].(bool)
+	comment := stringValue(payload, "comment", "")
+	newState := map[string]any{"response": response, "send_response": sendResponse}
+	if comment != "" {
+		newState["comment_preview"] = transport.RedactedPreview(comment, 500)
+		newState["comment_sha256"] = transport.BodySHA256(comment)
+	}
+	return transport.ReviewPacket{
+		Version:            transport.ReviewPacketVersion,
+		Transport:          "fake",
+		Action:             actionName,
+		SafetyClass:        string(policy.SendLike),
+		Targets:            []transport.TargetRef{{Kind: "event", ID: eventID, Name: "Fake event"}},
+		Mutation:           &transport.MutationReview{Operation: "calendar_response", NewState: newState},
+		Calendar:           &transport.CalendarReview{EventID: eventID, Response: response, SendsResponse: sendResponse},
+		PayloadFingerprint: transport.PayloadFingerprint(payload),
 	}
 }
 

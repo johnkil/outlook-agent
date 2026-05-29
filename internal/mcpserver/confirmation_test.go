@@ -331,6 +331,84 @@ func TestMailSendDraftRequiresPayloadBoundApprovalInRequiredMode(t *testing.T) {
 	}
 }
 
+func TestCalendarRespondRequiresPayloadBoundApprovalInRequiredMode(t *testing.T) {
+	client := newRecordingTransport(action.Definition{Name: "calendar.respond", Transport: "test", Class: policy.SendLike, Level: action.LevelHighLevelMCPTool})
+	runtime := NewRuntime(client)
+	runtime.approvalPolicy = approval.Policy{Mode: approval.ModeRequired, Secret: "approval-secret"}
+	runtime.approval = approval.NewStore(time.Now)
+	payload := map[string]any{"event_id": "evt-1", "response": "accept", "comment": "", "send_response": true}
+
+	_, dryRun, err := dryRunHandler(runtime)(context.Background(), nil, DryRunInput{
+		Action:  "calendar.respond",
+		Payload: payload,
+	})
+	if err != nil {
+		t.Fatalf("dry-run handler: %v", err)
+	}
+	approvalToken, err := approval.SignChallenge("approval-secret", *dryRun.ApprovalChallenge)
+	if err != nil {
+		t.Fatalf("sign approval challenge: %v", err)
+	}
+
+	_, missingApproval, err := calendarRespondHandler(runtime)(context.Background(), nil, CalendarRespondInput{
+		EventID:       "evt-1",
+		Response:      "accept",
+		SendResponse:  true,
+		ConfirmToken:  dryRun.ConfirmationToken,
+		ApprovalToken: "",
+	})
+	if err != nil {
+		t.Fatalf("calendar respond handler: %v", err)
+	}
+	if missingApproval.OK || !strings.Contains(missingApproval.Error, "payload-bound external approval") {
+		t.Fatalf("expected missing approval to be rejected, got %#v", missingApproval)
+	}
+
+	_, output, err := calendarRespondHandler(runtime)(context.Background(), nil, CalendarRespondInput{
+		EventID:             "evt-1",
+		Response:            "accept",
+		SendResponse:        true,
+		ConfirmToken:        dryRun.ConfirmationToken,
+		ApprovalChallengeID: dryRun.ApprovalChallenge.ID,
+		ApprovalToken:       approvalToken,
+	})
+	if err != nil {
+		t.Fatalf("calendar respond handler: %v", err)
+	}
+	if !output.OK || !client.executed {
+		t.Fatalf("expected approved calendar response to execute: %#v executed=%v", output, client.executed)
+	}
+}
+
+func TestCalendarRespondValidatesRequiredFields(t *testing.T) {
+	runtime := NewRuntime(fake.New())
+
+	_, missingEvent, err := calendarRespondHandler(runtime)(context.Background(), nil, CalendarRespondInput{
+		Response:     "accept",
+		SendResponse: true,
+		ConfirmToken: "token",
+	})
+	if err != nil {
+		t.Fatalf("calendar respond handler: %v", err)
+	}
+	if missingEvent.OK || !strings.Contains(missingEvent.Error, "event_id required") {
+		t.Fatalf("expected missing event id to be rejected, got %#v", missingEvent)
+	}
+
+	_, badResponse, err := calendarRespondHandler(runtime)(context.Background(), nil, CalendarRespondInput{
+		EventID:      "evt-1",
+		Response:     "maybe",
+		SendResponse: true,
+		ConfirmToken: "token",
+	})
+	if err != nil {
+		t.Fatalf("calendar respond handler: %v", err)
+	}
+	if badResponse.OK || !strings.Contains(badResponse.Error, "response must be") {
+		t.Fatalf("expected invalid response to be rejected, got %#v", badResponse)
+	}
+}
+
 func TestMailSendDraftRequiresDraftID(t *testing.T) {
 	client := newRecordingTransport(action.Definition{Name: "mail.send_draft", Transport: "test", Class: policy.SendLike, Level: action.LevelHighLevelMCPTool})
 	runtime := NewRuntime(client)

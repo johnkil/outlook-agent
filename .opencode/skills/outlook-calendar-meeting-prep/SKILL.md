@@ -26,3 +26,6 @@ confirmation for the reviewed payload.
 - suggested talking points.
 
 Do not add attendee-facing notes without explicit approval.
+Do not accept, decline, or tentatively accept the meeting unless the user asks
+for that exact response; then use `outlook.calendar_respond` only after dry-run
+review and exact confirmation.

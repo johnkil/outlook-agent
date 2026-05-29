@@ -78,7 +78,8 @@ Status: implemented initial slice.
   `mail.send_draft`, `mail.move_to_folder`, `mail.archive`, `mail.flag`,
   `mail.categorize`, `mail.mark_read`, `mail.move_to_deleted_items`,
   `mail.rules.list`, `mail.rules.set_enabled`, `mailbox.settings.get`,
-  `calendar.list`, and `calendar.availability` actions implemented; guarded raw `GraphRequest`
+  `calendar.list`, `calendar.availability`, and `calendar.respond` actions
+  implemented; guarded raw `GraphRequest`
   implemented as an unsafe
   dry-run/confirm escape hatch; admin consent and live token storage validation
   remain.

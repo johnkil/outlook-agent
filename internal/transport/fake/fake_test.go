@@ -76,6 +76,7 @@ func TestFakeTransportExecutesInitialHighLevelActions(t *testing.T) {
 		{name: "mail.move_to_deleted_items", key: "moved_count"},
 		{name: "calendar.list", key: "events"},
 		{name: "calendar.availability", key: "windows"},
+		{name: "calendar.respond", key: "response"},
 	}
 
 	for _, tt := range tests {
@@ -209,6 +210,36 @@ func TestFakeTransportDryRunReversibleMessageMutationReview(t *testing.T) {
 				t.Fatalf("expected payload fingerprint in review: %#v", summary.Review)
 			}
 		})
+	}
+}
+
+func TestFakeTransportDryRunCalendarRespondReview(t *testing.T) {
+	client := fake.New()
+
+	summary := client.DryRun(context.Background(), transport.ActionRequest{
+		Name: "calendar.respond",
+		Payload: map[string]any{
+			"event_id":      "evt-1",
+			"response":      "decline",
+			"comment":       "No; token=secret",
+			"send_response": true,
+		},
+	})
+
+	if summary.Action != "calendar.respond" || summary.Count != 1 || summary.Reversible || !summary.RequiresConfirmation {
+		t.Fatalf("unexpected dry-run summary: %#v", summary)
+	}
+	if summary.SafetyClass != "send_like" {
+		t.Fatalf("expected send_like safety class, got %q", summary.SafetyClass)
+	}
+	if summary.Review == nil || summary.Review.Calendar == nil || summary.Review.Mutation == nil {
+		t.Fatalf("expected calendar review packet: %#v", summary)
+	}
+	if summary.Review.Calendar.EventID != "evt-1" || summary.Review.Calendar.Response != "decline" || !summary.Review.Calendar.SendsResponse {
+		t.Fatalf("unexpected calendar review: %#v", summary.Review.Calendar)
+	}
+	if summary.Review.PayloadFingerprint == "" {
+		t.Fatalf("expected payload fingerprint in review: %#v", summary.Review)
 	}
 }
 

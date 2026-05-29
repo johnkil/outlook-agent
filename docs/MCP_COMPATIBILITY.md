@@ -35,6 +35,7 @@ Compatibility version `0.1` includes these tool names:
 - `outlook.mailbox_settings_get`
 - `outlook.calendar_list`
 - `outlook.calendar_availability`
+- `outlook.calendar_respond`
 - `outlook.action_dry_run`
 - `outlook.action_confirm`
 - `outlook.raw_action`
@@ -92,6 +93,12 @@ when the request contains the exact id and new state. Bulk changes require
 `outlook.action_dry_run` for the matching action, user/host review of the
 returned packet, and exact confirmation fields when calling the high-level
 tool.
+
+Compatibility version `0.1` also includes `outlook.calendar_respond` for
+responding accept, decline, or tentative to one exact event. The underlying
+action is `calendar.respond`, is classified as `send_like`, and requires
+dry-run review, exact confirmation, and host approval when approval mode
+requires it.
 
 Clients must ignore unknown output fields and unknown capability detail fields.
 Servers must keep existing fields present with compatible meanings.

@@ -113,6 +113,7 @@ outlook.mail_rule_set_enabled
 outlook.mailbox_settings_get
 outlook.calendar_list
 outlook.calendar_availability
+outlook.calendar_respond
 outlook.action_dry_run
 outlook.action_confirm
 outlook.raw_action
@@ -147,6 +148,11 @@ Key tool inputs:
 - `outlook.calendar_availability`: `start`, `end`, and optional `email`.
   When `email` is omitted, OWA profiles use `settings.mailbox_email` if
   configured.
+- `outlook.calendar_respond`: `event_id`, `response` (`accept`, `decline`, or
+  `tentative`), `send_response`, `confirm_token`, optional `comment`, optional
+  `approval_challenge_id`, optional `approval_token`, and optional `mailbox`.
+  The action maps to `calendar.respond`, is classified as `send_like`, and
+  requires a matching `outlook.action_dry_run` review before execution.
 - `outlook.mail_list_attachments`: `id` for one explicit message. The tool
   returns attachment metadata only and must not return attachment content.
 - `outlook.mail_fetch_attachment`: `message_id` and `attachment_id`. The tool
@@ -313,7 +319,9 @@ Configured transports:
   `mail.send_draft`, `mail.move_to_folder`, `mail.archive`, `mail.flag`,
   `mail.categorize`, `mail.mark_read`, `mail.move_to_deleted_items`,
   confirmed `mail.rules.set_enabled`, and raw guarded `GraphRequest`; `auth
-  check` probes `/me/mailFolders/inbox`.
+  check` probes `/me/mailFolders/inbox`. `calendar.respond` uses Microsoft
+  Graph event response actions for accept, decline, and tentative responses to
+  exact event ids.
   `mail.rules.list` uses
   `/me/mailFolders/{folder}/messageRules`, defaulting to Inbox.
   `mail.rules.set_enabled` uses `PATCH

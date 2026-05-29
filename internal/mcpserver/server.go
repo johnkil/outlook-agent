@@ -229,6 +229,17 @@ type CalendarWindowInput struct {
 	Mailbox string `json:"mailbox,omitempty" jsonschema:"optional mailbox user id or user principal name"`
 }
 
+type CalendarRespondInput struct {
+	EventID             string `json:"event_id" jsonschema:"calendar event id"`
+	Response            string `json:"response" jsonschema:"accept, decline, or tentative"`
+	Comment             string `json:"comment,omitempty" jsonschema:"optional response comment"`
+	SendResponse        bool   `json:"send_response" jsonschema:"whether to send the response to the organizer"`
+	ConfirmToken        string `json:"confirm_token" jsonschema:"confirmation token from outlook.action_dry_run"`
+	ApprovalChallengeID string `json:"approval_challenge_id,omitempty" jsonschema:"payload-bound external approval challenge id"`
+	ApprovalToken       string `json:"approval_token,omitempty" jsonschema:"external approval token supplied by the host after user approval"`
+	Mailbox             string `json:"mailbox,omitempty" jsonschema:"optional mailbox user id or user principal name"`
+}
+
 type CalendarListOutput struct {
 	Events []any `json:"events"`
 }
@@ -375,6 +386,9 @@ var toolRegistrations = []toolRegistration{
 	{name: "outlook.calendar_availability", add: func(server *mcp.Server, runtime *Runtime, name string) {
 		mcp.AddTool(server, mcpTool(name), calendarAvailabilityHandler(runtime.client))
 	}},
+	{name: "outlook.calendar_respond", add: func(server *mcp.Server, runtime *Runtime, name string) {
+		mcp.AddTool(server, mcpTool(name), calendarRespondHandler(runtime))
+	}},
 	{name: "outlook.action_dry_run", add: func(server *mcp.Server, runtime *Runtime, name string) {
 		mcp.AddTool(server, mcpTool(name), dryRunHandler(runtime))
 	}},
@@ -411,6 +425,7 @@ var toolDescriptionByName = map[string]string{
 	"outlook.mailbox_settings_get":        "Get read-only mailbox settings metadata.",
 	"outlook.calendar_list":               "List calendar events for a bounded time window.",
 	"outlook.calendar_availability":       "List free/busy availability for a bounded time window.",
+	"outlook.calendar_respond":            "Respond to one exact event only after dry-run review, confirmation, and required approval.",
 	"outlook.action_dry_run":              "Required summary step for broad, mutating, send-like, destructive, or unknown actions.",
 	"outlook.action_confirm":              "Execute only the exact payload reviewed by outlook.action_dry_run.",
 	"outlook.raw_action":                  "Advanced policy-guarded escape hatch for capability-discovered actions; prefer high-level tools first.",
@@ -958,6 +973,45 @@ func calendarAvailabilityHandler(client transport.Transport) func(context.Contex
 	}
 }
 
+func calendarRespondHandler(runtime *Runtime) func(context.Context, *mcp.CallToolRequest, CalendarRespondInput) (*mcp.CallToolResult, ActionResultOutput, error) {
+	return func(ctx context.Context, _ *mcp.CallToolRequest, input CalendarRespondInput) (*mcp.CallToolResult, ActionResultOutput, error) {
+		eventID := strings.TrimSpace(input.EventID)
+		if eventID == "" {
+			return nil, ActionResultOutput{OK: false, Error: "event_id required"}, nil
+		}
+		responseName, err := normalizeCalendarRespondInput(input.Response)
+		if err != nil {
+			return nil, ActionResultOutput{OK: false, Error: err.Error()}, nil
+		}
+		if input.ConfirmToken == "" {
+			return nil, ActionResultOutput{OK: false, Error: "confirm_token required"}, nil
+		}
+		payload := withMailbox(map[string]any{
+			"event_id":      eventID,
+			"response":      responseName,
+			"comment":       input.Comment,
+			"send_response": input.SendResponse,
+		}, input.Mailbox)
+		_, class, review := dryRunReviewFor(ctx, runtime.client, "calendar.respond", payload, false)
+		pendingApproval, err := runtime.validateExternalApproval(input.ApprovalChallengeID, input.ApprovalToken, "calendar.respond", payload, false, runtime.profile, review, class)
+		if err != nil {
+			return nil, ActionResultOutput{OK: false, Error: err.Error()}, nil
+		}
+		if !runtime.confirm.Consume(input.ConfirmToken, confirmationBindingFor(runtime.client, runtime.profile, "calendar.respond", payload, false, review, class)) {
+			return nil, ActionResultOutput{OK: false, Error: "confirmation token is invalid"}, nil
+		}
+		if err := runtime.consumeExternalApproval(pendingApproval); err != nil {
+			return nil, ActionResultOutput{OK: false, Error: err.Error()}, nil
+		}
+		decision := confirmedActionDecision(runtime.client, "calendar.respond", payload, false)
+		if !decision.Allowed {
+			return nil, ActionResultOutput{OK: false, Error: decision.Reason}, nil
+		}
+		response := runtime.client.Execute(ctx, transport.ActionRequest{Name: "calendar.respond", Payload: payload})
+		return nil, actionResultFromResponse(response), nil
+	}
+}
+
 func transportResponseError(response transport.ActionResponse) error {
 	if response.OK {
 		return nil
@@ -1378,4 +1432,18 @@ func nonEmptyStrings(values []string) []string {
 		}
 	}
 	return output
+}
+
+func normalizeCalendarRespondInput(value string) (string, error) {
+	normalized := strings.ToLower(strings.TrimSpace(strings.ReplaceAll(strings.ReplaceAll(value, "_", ""), "-", "")))
+	switch normalized {
+	case "accept", "accepted":
+		return "accept", nil
+	case "decline", "declined":
+		return "decline", nil
+	case "tentative", "tentativelyaccept", "tentativelyaccepted":
+		return "tentative", nil
+	default:
+		return "", errors.New("response must be accept, decline, or tentative")
+	}
 }

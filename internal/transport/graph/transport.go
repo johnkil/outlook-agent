@@ -71,6 +71,7 @@ func (client *Transport) Capabilities(context.Context) transport.CapabilitySet {
 		{Name: "mailbox.settings.get", Transport: "graph", Class: policy.ReadMetadata, Level: action.LevelHighLevelMCPTool},
 		{Name: "calendar.list", Transport: "graph", Class: policy.ReadMetadata, Level: action.LevelHighLevelMCPTool},
 		{Name: "calendar.availability", Transport: "graph", Class: policy.ReadMetadata, Level: action.LevelHighLevelMCPTool},
+		{Name: "calendar.respond", Transport: "graph", Class: policy.SendLike, Level: action.LevelHighLevelMCPTool},
 	}}
 }
 
@@ -305,6 +306,12 @@ func (client *Transport) Execute(ctx context.Context, request transport.ActionRe
 			return transport.ActionResponse{OK: false, Error: err.Error()}
 		}
 		return transport.ActionResponse{OK: true, Data: map[string]any{"windows": windows}}
+	case "calendar.respond":
+		result, err := client.respondCalendarEvent(ctx, mailbox, request.Payload)
+		if err != nil {
+			return transport.ActionResponse{OK: false, Error: err.Error()}
+		}
+		return transport.ActionResponse{OK: true, Data: map[string]any{"response": result}}
 	default:
 		return transport.ActionResponse{OK: false, Error: "graph transport action is not implemented"}
 	}
@@ -325,6 +332,10 @@ func (client *Transport) DryRun(ctx context.Context, request transport.ActionReq
 		class := reversibleClassForCount(len(ids))
 		review := graphReversibleMutationReview(request.Name, request.Payload, ids, class)
 		return transport.DryRunSummary{Action: request.Name, Count: len(ids), Reversible: true, RequiresConfirmation: len(ids) > 1, SafetyClass: string(class), Review: &review, Warnings: review.Limitations}
+	}
+	if request.Name == "calendar.respond" {
+		review := client.graphCalendarRespondReview(ctx, mailboxTarget(request.Payload), request.Name, request.Payload)
+		return transport.DryRunSummary{Action: request.Name, Count: 1, Reversible: false, RequiresConfirmation: true, SafetyClass: string(policy.SendLike), Review: &review, Warnings: review.Limitations}
 	}
 	if request.Name == "GraphRequest" {
 		review := graphRawRequestReview(request.Name, request.Payload)
@@ -444,6 +455,51 @@ func graphReversibleMutationReview(actionName string, payload map[string]any, id
 		Mutation:           mutation,
 		PayloadFingerprint: transport.PayloadFingerprint(payload),
 	}
+}
+
+func (client *Transport) graphCalendarRespondReview(ctx context.Context, mailbox string, actionName string, payload map[string]any) transport.ReviewPacket {
+	eventID := strings.TrimSpace(stringValue(payload, "event_id", ""))
+	responseName, _, err := normalizeCalendarResponse(stringValue(payload, "response", ""))
+	if err != nil {
+		responseName = strings.TrimSpace(stringValue(payload, "response", ""))
+	}
+	sendResponse, _ := boolValue(payload, "send_response")
+	comment := stringValue(payload, "comment", "")
+	newState := map[string]any{"response": responseName, "send_response": sendResponse}
+	if comment != "" {
+		newState["comment_preview"] = transport.RedactedPreview(comment, 500)
+		newState["comment_sha256"] = transport.BodySHA256(comment)
+	}
+	review := transport.ReviewPacket{
+		Version:            transport.ReviewPacketVersion,
+		Transport:          "graph",
+		Action:             actionName,
+		SafetyClass:        string(policy.SendLike),
+		Targets:            []transport.TargetRef{{Kind: "event", ID: eventID}},
+		Mutation:           &transport.MutationReview{Operation: "calendar_response", NewState: newState},
+		Calendar:           &transport.CalendarReview{EventID: eventID, Response: responseName, SendsResponse: sendResponse},
+		PayloadFingerprint: transport.PayloadFingerprint(payload),
+	}
+	if eventID == "" {
+		review.Limitations = append(review.Limitations, "event id was not provided")
+		return review
+	}
+	requestURL, err := client.calendarEventURL(mailbox, eventID)
+	if err != nil {
+		review.Limitations = append(review.Limitations, "event metadata could not be reviewed: "+err.Error())
+		return review
+	}
+	var event calendarEvent
+	if err := client.getJSON(ctx, requestURL, &event); err != nil {
+		review.Limitations = append(review.Limitations, "event metadata could not be reviewed: "+err.Error())
+		return review
+	}
+	if event.Subject != "" {
+		review.Targets[0].Name = event.Subject
+	}
+	review.Calendar.Start = event.Start.DateTime
+	review.Calendar.End = event.End.DateTime
+	return review
 }
 
 func graphQueryKeys(rawQuery any) []string {
@@ -1114,8 +1170,77 @@ func (client *Transport) getSchedule(ctx context.Context, payload map[string]any
 	return windows, nil
 }
 
+func (client *Transport) respondCalendarEvent(ctx context.Context, mailbox string, payload map[string]any) (map[string]any, error) {
+	eventID := strings.TrimSpace(stringValue(payload, "event_id", ""))
+	if eventID == "" {
+		return nil, fmt.Errorf("calendar.respond requires event_id")
+	}
+	responseName, graphAction, err := normalizeCalendarResponse(stringValue(payload, "response", ""))
+	if err != nil {
+		return nil, err
+	}
+	sendResponse, ok := boolValue(payload, "send_response")
+	if !ok {
+		return nil, fmt.Errorf("calendar.respond requires send_response")
+	}
+	requestURL, err := client.calendarEventRespondURL(mailbox, eventID, graphAction)
+	if err != nil {
+		return nil, err
+	}
+	body := map[string]any{
+		"comment":      stringValue(payload, "comment", ""),
+		"sendResponse": sendResponse,
+	}
+	if err := client.postNoContentJSON(ctx, requestURL, body); err != nil {
+		return nil, err
+	}
+	return map[string]any{"event_id": eventID, "response": responseName, "status": "submitted"}, nil
+}
+
 func (client *Transport) getJSON(ctx context.Context, requestURL string, output any) error {
 	return client.doJSON(ctx, http.MethodGet, requestURL, nil, output)
+}
+
+func (client *Transport) postNoContentJSON(ctx context.Context, requestURL string, body any) error {
+	if err := client.config.Validate(); err != nil {
+		return err
+	}
+	token, err := client.bearerToken(ctx)
+	if err != nil {
+		return err
+	}
+	encoded, err := json.Marshal(body)
+	if err != nil {
+		return err
+	}
+	request, err := http.NewRequestWithContext(ctx, http.MethodPost, requestURL, bytes.NewReader(encoded))
+	if err != nil {
+		return err
+	}
+	request.Header.Set("Authorization", "Bearer "+token)
+	request.Header.Set("Accept", "application/json")
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("User-Agent", "outlook-agent")
+
+	response, err := client.client.Do(request)
+	if err != nil {
+		return err
+	}
+	defer response.Body.Close()
+
+	rawBody, err := transport.ReadLimited(response.Body, transport.MaxResponseBytes)
+	if err != nil {
+		return err
+	}
+	if response.StatusCode < 200 || response.StatusCode >= 300 {
+		var errorPayload graphErrorResponse
+		_ = json.Unmarshal(rawBody, &errorPayload)
+		if errorPayload.Error.Code != "" {
+			return fmt.Errorf("graph returned HTTP %d: %s", response.StatusCode, errorPayload.Error.Code)
+		}
+		return fmt.Errorf("graph returned HTTP %d", response.StatusCode)
+	}
+	return nil
 }
 
 func (client *Transport) doJSON(ctx context.Context, method string, requestURL string, body any, output any) error {
@@ -1600,6 +1725,30 @@ func (client *Transport) getScheduleURL(mailbox string) (string, error) {
 	return base + graphOwnerPath(mailbox) + "/calendar/getSchedule", nil
 }
 
+func (client *Transport) calendarEventURL(mailbox string, eventID string) (string, error) {
+	base, err := client.config.normalizedBaseURL()
+	if err != nil {
+		return "", err
+	}
+	if strings.TrimSpace(eventID) == "" {
+		return "", fmt.Errorf("calendar.respond requires event_id")
+	}
+	return base + graphOwnerPath(mailbox) + "/events/" + url.PathEscape(eventID), nil
+}
+
+func (client *Transport) calendarEventRespondURL(mailbox string, eventID string, graphAction string) (string, error) {
+	base, err := client.calendarEventURL(mailbox, eventID)
+	if err != nil {
+		return "", err
+	}
+	switch graphAction {
+	case "accept", "decline", "tentativelyAccept":
+	default:
+		return "", fmt.Errorf("unsupported calendar response %q", graphAction)
+	}
+	return base + "/" + graphAction, nil
+}
+
 func normalizeGraphMessage(item message) map[string]any {
 	return map[string]any{
 		"id":              item.ID,
@@ -1827,6 +1976,20 @@ func normalizeGraphFlagStatus(value string) (string, error) {
 		return "notFlagged", nil
 	default:
 		return "", fmt.Errorf("unsupported flag_status %q", value)
+	}
+}
+
+func normalizeCalendarResponse(value string) (string, string, error) {
+	normalized := strings.ToLower(strings.TrimSpace(strings.ReplaceAll(strings.ReplaceAll(value, "_", ""), "-", "")))
+	switch normalized {
+	case "accept", "accepted":
+		return "accept", "accept", nil
+	case "decline", "declined":
+		return "decline", "decline", nil
+	case "tentative", "tentativelyaccept", "tentativelyaccepted":
+		return "tentative", "tentativelyAccept", nil
+	default:
+		return "", "", fmt.Errorf("response must be accept, decline, or tentative")
 	}
 }
 

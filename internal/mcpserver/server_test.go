@@ -46,6 +46,7 @@ func TestCatalogContainsInitialTools(t *testing.T) {
 		"outlook.mailbox_settings_get",
 		"outlook.calendar_list",
 		"outlook.calendar_availability",
+		"outlook.calendar_respond",
 		"outlook.action_dry_run",
 		"outlook.action_confirm",
 		"outlook.raw_action",
@@ -117,6 +118,11 @@ func TestToolDescriptionsGuideAgentWorkflow(t *testing.T) {
 		"outlook.mail_mark_read": {
 			"read",
 			"exact",
+		},
+		"outlook.calendar_respond": {
+			"event",
+			"dry-run",
+			"approval",
 		},
 		"outlook.mail_rule_set_enabled": {
 			"dry-run",

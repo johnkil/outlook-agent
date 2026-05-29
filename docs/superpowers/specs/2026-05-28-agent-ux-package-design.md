@@ -72,6 +72,8 @@ Rewrite public tool descriptions so the model can infer the intended workflow:
   required.
 - `outlook.calendar_list`: bounded event window only.
 - `outlook.calendar_availability`: bounded free/busy window.
+- `outlook.calendar_respond`: respond to one exact event only after dry-run,
+  confirmation, and required approval.
 - `outlook.action_dry_run`: required summary step for broad, mutating, send-like,
   destructive, or unknown actions.
 - `outlook.action_confirm`: execute only the exact payload reviewed in dry-run.

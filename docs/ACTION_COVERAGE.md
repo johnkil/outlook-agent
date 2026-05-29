@@ -46,6 +46,7 @@ level 5: workflow skill guidance
 | Mail | `outlook.mailbox_settings_get` | 4 |
 | Calendar | `outlook.calendar_list` | 4 |
 | Calendar | `outlook.calendar_availability` | 4 |
+| Calendar | `outlook.calendar_respond` | 4 |
 | Raw | `outlook.action_dry_run` | 4 |
 | Raw | `outlook.action_confirm` | 4 |
 | Raw | `outlook.raw_action` | 4 |
@@ -134,6 +135,7 @@ Implemented high-level OWA mappings:
 | dry-run payload catalog | 26 mutating raw OWA actions | sanitized example payload exists for every raw `reversible_bulk`, `destructive`, `send_like`, and `settings_or_rules` action; each example produces a non-zero dry-run count without network calls and is live stdio MCP smoke-tested after auth without confirmation |
 | raw Graph escape hatch | `GraphRequest` | implemented and unit-tested as a destructive raw action with a dry-run summary requiring unsafe mode plus exact confirmation; device-code token acquisition and refresh-capable token cache are unit-tested; live Graph enablement remains blocked on app registration/admin consent/live token storage |
 | typed Graph message organization | `mail.move_to_folder`, `mail.archive`, `mail.flag`, `mail.categorize`, `mail.mark_read` | implemented as reversible typed actions with exact message ids, rich dry-run review packets, single-item direct execution, and bulk dry-run/confirmation gates; live Graph write smoke remains deferred to controlled fixtures |
+| typed Graph calendar response | `calendar.respond` | implemented as a send-like typed action for accept/decline/tentative responses to one exact event with dry-run review, confirmation, and approval gates; live Graph write smoke remains deferred to controlled fixtures |
 | typed EWS mail search | EWS `FindItem` | implemented as metadata-only `mail.search` with unit coverage; live EWS enablement remains blocked on endpoint/auth policy |
 | typed EWS mail metadata fetch | EWS `GetItem` | implemented as metadata-only `mail.fetch_metadata` with unit coverage; live EWS enablement remains blocked on endpoint/auth policy |
 | typed EWS mail body fetch | EWS `GetItem` with `BodyType=Text` | implemented as explicit `mail.fetch_body` with unit coverage; live EWS read-metadata harness intentionally excludes body reads |
