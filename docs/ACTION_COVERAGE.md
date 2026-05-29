@@ -74,12 +74,13 @@ level 5: workflow skill guidance
     execute the action in automated live smoke.
 - `scripts/action-coverage-smoke.sh` verifies the matrix shape and safety-route
   invariants for every registered action. With `OUTLOOK_AGENT_LIVE_CONFIG`, it
-  also verifies live auth. With `OUTLOOK_AGENT_OPENCODE_LIVE_DIR`, it runs a
-  sanitized Opencode MCP smoke for auth, capabilities, and destructive
-  dry-run-guard behavior without confirmation execution, and rejects extra
-  Outlook MCP tool calls outside the smoke's explicit allowlist. The Opencode
-  smoke also asserts both `unsafe_mode=false` and `unsafe_mode=true` dry-runs
-  target the same destructive `DeleteItem` / `HardDelete` fixture.
+  also verifies live auth. With `OUTLOOK_AGENT_OPENCODE_LIVE_DIR`, it requires
+  an explicit `OUTLOOK_AGENT_OPENCODE_MODEL` and runs a sanitized Opencode MCP
+  smoke for auth, capabilities, and destructive dry-run-guard behavior without
+  confirmation execution, and rejects extra Outlook MCP tool calls outside the
+  smoke's explicit allowlist. The Opencode smoke also asserts both
+  `unsafe_mode=false` and `unsafe_mode=true` dry-runs target the same
+  destructive `DeleteItem` / `HardDelete` fixture.
 - MCP callers should inspect `outlook.capabilities.details` before choosing
   `outlook.raw_action`; the details array exposes each action's transport,
   safety class, coverage level, and direct policy gates from the runtime

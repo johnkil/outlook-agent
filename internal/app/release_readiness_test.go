@@ -47,6 +47,7 @@ func TestReleaseReadinessArtifactsExist(t *testing.T) {
 		},
 		filepath.Join("..", "..", "scripts", "public-safety-check.sh"): {
 			"OUTLOOK_AGENT_PUBLIC_SAFETY_PATTERN",
+			"rg --hidden",
 			"forbidden generated artifact",
 		},
 		filepath.Join("..", "..", "scripts", "action-coverage-smoke.sh"): {
@@ -54,6 +55,7 @@ func TestReleaseReadinessArtifactsExist(t *testing.T) {
 			"live_check_level",
 			"OUTLOOK_AGENT_LIVE_CONFIG",
 			"OUTLOOK_AGENT_OPENCODE_LIVE_DIR",
+			"OUTLOOK_AGENT_OPENCODE_MODEL is required",
 			"outlook.action_dry_run",
 		},
 		filepath.Join("..", "..", ".github", "workflows", "ci.yml"): {
@@ -237,6 +239,7 @@ JSONL
 	command.Env = append(os.Environ(),
 		"OUTLOOK_AGENT_BIN="+fakeAgentPath,
 		"OUTLOOK_AGENT_OPENCODE_LIVE_DIR="+liveDir,
+		"OUTLOOK_AGENT_OPENCODE_MODEL=example/test-model",
 		"PATH="+tempDir+string(os.PathListSeparator)+os.Getenv("PATH"),
 	)
 	output, err := command.CombinedOutput()
@@ -290,6 +293,7 @@ JSONL
 	command.Env = append(os.Environ(),
 		"OUTLOOK_AGENT_BIN="+fakeAgentPath,
 		"OUTLOOK_AGENT_OPENCODE_LIVE_DIR="+liveDir,
+		"OUTLOOK_AGENT_OPENCODE_MODEL=example/test-model",
 		"PATH="+tempDir+string(os.PathListSeparator)+os.Getenv("PATH"),
 	)
 	output, err := command.CombinedOutput()
@@ -342,6 +346,7 @@ JSONL
 	command.Env = append(os.Environ(),
 		"OUTLOOK_AGENT_BIN="+fakeAgentPath,
 		"OUTLOOK_AGENT_OPENCODE_LIVE_DIR="+liveDir,
+		"OUTLOOK_AGENT_OPENCODE_MODEL=example/test-model",
 		"PATH="+tempDir+string(os.PathListSeparator)+os.Getenv("PATH"),
 	)
 	output, err := command.CombinedOutput()
@@ -394,6 +399,7 @@ JSONL
 	command.Env = append(os.Environ(),
 		"OUTLOOK_AGENT_BIN="+fakeAgentPath,
 		"OUTLOOK_AGENT_OPENCODE_LIVE_DIR="+liveDir,
+		"OUTLOOK_AGENT_OPENCODE_MODEL=example/test-model",
 		"PATH="+tempDir+string(os.PathListSeparator)+os.Getenv("PATH"),
 	)
 	output, err := command.CombinedOutput()
@@ -460,6 +466,7 @@ JSONL
 	command.Env = append(os.Environ(),
 		"OUTLOOK_AGENT_BIN="+fakeAgentPath,
 		"OUTLOOK_AGENT_OPENCODE_LIVE_DIR="+liveDir,
+		"OUTLOOK_AGENT_OPENCODE_MODEL=example/test-model",
 		"OPENCODE_CONFIG="+filepath.Join(tempDir, "unsafe-opencode.json"),
 		"PATH="+tempDir+string(os.PathListSeparator)+os.Getenv("PATH"),
 	)
@@ -513,6 +520,7 @@ JSONL
 	command.Env = append(os.Environ(),
 		"OUTLOOK_AGENT_BIN="+fakeAgentPath,
 		"OUTLOOK_AGENT_OPENCODE_LIVE_DIR="+liveDir,
+		"OUTLOOK_AGENT_OPENCODE_MODEL=example/test-model",
 		"PATH="+tempDir+string(os.PathListSeparator)+os.Getenv("PATH"),
 	)
 	output, err := command.CombinedOutput()
@@ -565,6 +573,7 @@ JSONL
 	command.Env = append(os.Environ(),
 		"OUTLOOK_AGENT_BIN="+fakeAgentPath,
 		"OUTLOOK_AGENT_OPENCODE_LIVE_DIR="+liveDir,
+		"OUTLOOK_AGENT_OPENCODE_MODEL=example/test-model",
 		"PATH="+tempDir+string(os.PathListSeparator)+os.Getenv("PATH"),
 	)
 	output, err := command.CombinedOutput()
