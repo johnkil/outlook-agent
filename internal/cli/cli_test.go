@@ -43,6 +43,39 @@ func TestDoctorPrintsMachineReadableStatus(t *testing.T) {
 	}
 }
 
+func TestVersionPrintsBuildMetadata(t *testing.T) {
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+
+	code := Run([]string{"version"}, &stdout, &stderr)
+
+	if code != 0 {
+		t.Fatalf("expected exit code 0, got %d, stderr=%s", code, stderr.String())
+	}
+	var payload struct {
+		OK      bool   `json:"ok"`
+		Command string `json:"command"`
+		Version string `json:"version"`
+		Commit  string `json:"commit"`
+		Date    string `json:"date"`
+		Dirty   string `json:"dirty"`
+		BuiltBy string `json:"built_by"`
+	}
+	if err := json.Unmarshal(stdout.Bytes(), &payload); err != nil {
+		t.Fatalf("version output is not JSON: %v; output=%s", err, stdout.String())
+	}
+
+	if !payload.OK || payload.Command != "version" {
+		t.Fatalf("unexpected version identity fields: %#v", payload)
+	}
+	if payload.Version == "" || payload.Commit == "" || payload.Date == "" || payload.Dirty == "" || payload.BuiltBy == "" {
+		t.Fatalf("expected complete build metadata, got %#v", payload)
+	}
+	if stderr.Len() != 0 {
+		t.Fatalf("expected no stderr, got %s", stderr.String())
+	}
+}
+
 func TestDoctorReportsReadinessContract(t *testing.T) {
 	configPath := filepath.Join(t.TempDir(), "outlook-agent.json")
 	if err := os.WriteFile(configPath, []byte(`{
@@ -198,6 +231,7 @@ func TestHelpPrintsHumanReadableUsage(t *testing.T) {
 	for _, required := range []string{
 		"Outlook Agent",
 		"outlook-agent doctor",
+		"outlook-agent version",
 		"outlook-agent auth check",
 		"outlook-agent setup opencode --print",
 		"outlook-agent mcp",

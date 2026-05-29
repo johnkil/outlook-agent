@@ -98,6 +98,8 @@ func RunWithRuntime(args []string, stdout io.Writer, stderr io.Writer, runtime R
 		return writeHelp(stdout)
 	case "doctor":
 		return runDoctor(stdout, options)
+	case "version":
+		return runVersion(stdout)
 	case "policy":
 		if len(commandArgs) == 2 && commandArgs[1] == "explain" {
 			return writeJSON(stdout, map[string]any{
@@ -178,6 +180,16 @@ type doctorOutput struct {
 	Error       string                  `json:"error,omitempty"`
 }
 
+type versionOutput struct {
+	OK      bool   `json:"ok"`
+	Command string `json:"command"`
+	Version string `json:"version"`
+	Commit  string `json:"commit"`
+	Date    string `json:"date"`
+	Dirty   string `json:"dirty"`
+	BuiltBy string `json:"built_by"`
+}
+
 type setupOpencodeOutput struct {
 	Schema string                            `json:"$schema,omitempty"`
 	MCP    map[string]setupOpencodeMCPServer `json:"mcp"`
@@ -195,11 +207,12 @@ func runDoctor(stdout io.Writer, options Options) int {
 	if profile == "" {
 		profile = loaded.DefaultProfile
 	}
+	currentBuild := buildinfo.Current()
 	secretStore := doctorSecretStore(profile, loaded)
 	output := doctorOutput{
 		OK:      err == nil,
 		Command: "doctor",
-		Version: buildinfo.Version,
+		Version: currentBuild.Version,
 		Profile: profile,
 		Config: doctorConfigOutput{
 			Found: source.Found,
@@ -219,6 +232,19 @@ func runDoctor(stdout io.Writer, options Options) int {
 	}
 	output.NextSteps = doctorNextSteps(output)
 	return writeJSON(stdout, output)
+}
+
+func runVersion(stdout io.Writer) int {
+	currentBuild := buildinfo.Current()
+	return writeJSON(stdout, versionOutput{
+		OK:      true,
+		Command: "version",
+		Version: currentBuild.Version,
+		Commit:  currentBuild.Commit,
+		Date:    currentBuild.Date,
+		Dirty:   currentBuild.Dirty,
+		BuiltBy: currentBuild.BuiltBy,
+	})
 }
 
 func doctorSecretStore(profile string, loaded config.Config) doctorSecretStoreOutput {
@@ -684,6 +710,7 @@ Usage:
   outlook-agent help
   outlook-agent --help
   outlook-agent doctor
+  outlook-agent version
   outlook-agent auth check --config <path> [--profile <name>]
   outlook-agent auth graph-device-code --config <path> [--profile <name>]
   outlook-agent policy explain [--action <name>]

@@ -44,14 +44,26 @@ while IFS= read -r archive; do
   fi
 done < <(find "$dist_dir" -maxdepth 1 -type f \( -name "*.tar.gz" -o -name "*.zip" \) | sort)
 
-host_goos="$(go env GOOS)"
-host_goarch="$(go env GOARCH)"
+host_goos="$(go env GOHOSTOS)"
+host_goarch="$(go env GOHOSTARCH)"
 host_archive="${dist_dir}/outlook-agent_smoke_${host_goos}_${host_goarch}.tar.gz"
 if [[ -f "$host_archive" ]]; then
   run_dir="$(mktemp -d "${tmp_root}/outlook-agent-release-run.XXXXXX")"
   tar -xzf "$host_archive" -C "$run_dir"
-  doctor_output="$("${run_dir}/outlook-agent_smoke_${host_goos}_${host_goarch}/outlook-agent" doctor)"
+  host_binary="${run_dir}/outlook-agent_smoke_${host_goos}_${host_goarch}/outlook-agent"
+  version_output="$("$host_binary" version)"
+  doctor_output="$("$host_binary" doctor)"
   rm -rf "$run_dir"
+  if ! grep -Fq '"version": "smoke"' <<<"$version_output"; then
+    echo "host archive version output did not include embedded smoke version" >&2
+    echo "$version_output" >&2
+    exit 1
+  fi
+  if ! grep -Fq '"built_by": "release-build"' <<<"$version_output"; then
+    echo "host archive version output did not include release-build metadata" >&2
+    echo "$version_output" >&2
+    exit 1
+  fi
   if ! grep -Fq '"version": "smoke"' <<<"$doctor_output"; then
     echo "host archive doctor output did not include embedded smoke version" >&2
     echo "$doctor_output" >&2
