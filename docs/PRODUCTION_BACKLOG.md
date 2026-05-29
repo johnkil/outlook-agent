@@ -36,6 +36,14 @@ investigated with public-safe evidence.
 | --- | --- | --- |
 | FindFolder compatibility | https://github.com/johnkil/outlook-agent/issues/7 | six metadata-only candidates returned the same sanitized `ErrorInternalServerError`: paged Inbox, minimal Inbox `IdOnly`, minimal Inbox `Default`/older-version, paged `msgfolderroot`, minimal Inbox `Default` through `X-OWA-UrlPostData`, and Inbox parent wrapper with `FindFolderParentWrapper`, `ReturnParentFolder`, and `Paging`. The bounded decision is that this deployment does not expose a compatible metadata-only `FindFolder` shape through the tested OWA JSON/URLPostData routes. `FindFolder` remains classified and available through the guarded raw action transport, and this result is not evidence against the generic raw action transport. |
 
+## Deferred Implementation Choices
+
+- Native Windows Credential Manager and Linux Secret Service backends are not
+  required for the current public-core runtime because the supported
+  `external:name` command provider gives enterprise operators a portable route
+  to 1Password, Bitwarden, Vault, or native wrapper tooling. Open a dedicated
+  GitHub issue before implementing native backends for a concrete rollout.
+
 ## Tracking Policy
 
 - Every open production gate must have a GitHub issue before the draft PR is
