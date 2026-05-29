@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -209,15 +210,125 @@ func (client *Transport) Execute(ctx context.Context, request transport.ActionRe
 
 func (client *Transport) DryRun(_ context.Context, request transport.ActionRequest) transport.DryRunSummary {
 	if request.Name == "mail.move_to_deleted_items" {
-		return transport.DryRunSummary{Action: request.Name, Count: len(stringSlice(request.Payload["ids"])), Reversible: true, RequiresConfirmation: true}
+		ids := stringSlice(request.Payload["ids"])
+		review := graphMoveToDeletedItemsReview(request.Name, request.Payload, ids)
+		return transport.DryRunSummary{Action: request.Name, Count: len(ids), Reversible: true, RequiresConfirmation: true, SafetyClass: string(policy.ReversibleBulk), Review: &review}
 	}
 	if request.Name == "GraphRequest" {
-		return transport.DryRunSummary{Action: request.Name, Count: 1, Reversible: false, RequiresConfirmation: true}
+		review := graphRawRequestReview(request.Name, request.Payload)
+		return transport.DryRunSummary{Action: request.Name, Count: 1, Reversible: false, RequiresConfirmation: true, SafetyClass: string(policy.Destructive), Review: &review, Warnings: review.Limitations}
 	}
 	if request.Name == "mail.rules.set_enabled" {
-		return transport.DryRunSummary{Action: request.Name, Count: 1, Reversible: true, RequiresConfirmation: true}
+		review := graphRuleSetEnabledReview(request.Name, request.Payload)
+		return transport.DryRunSummary{Action: request.Name, Count: 1, Reversible: true, RequiresConfirmation: true, SafetyClass: string(policy.SettingsOrRules), Review: &review}
 	}
 	return transport.DryRunSummary{Action: request.Name, Count: 1, Reversible: false, RequiresConfirmation: false}
+}
+
+func graphMoveToDeletedItemsReview(actionName string, payload map[string]any, ids []string) transport.ReviewPacket {
+	targets := make([]transport.TargetRef, 0, len(ids))
+	for _, id := range ids {
+		targets = append(targets, transport.TargetRef{Kind: "message", ID: id})
+	}
+	return transport.ReviewPacket{
+		Version:            transport.ReviewPacketVersion,
+		Transport:          "graph",
+		Action:             actionName,
+		SafetyClass:        string(policy.ReversibleBulk),
+		Targets:            targets,
+		Mutation:           &transport.MutationReview{Operation: "move", To: "Deleted Items"},
+		PayloadFingerprint: transport.PayloadFingerprint(payload),
+	}
+}
+
+func graphRuleSetEnabledReview(actionName string, payload map[string]any) transport.ReviewPacket {
+	enabled, _ := boolValue(payload, "enabled")
+	return transport.ReviewPacket{
+		Version:     transport.ReviewPacketVersion,
+		Transport:   "graph",
+		Action:      actionName,
+		SafetyClass: string(policy.SettingsOrRules),
+		Targets: []transport.TargetRef{{
+			Kind: "message_rule",
+			ID:   strings.TrimSpace(stringValue(payload, "id", "")),
+		}},
+		Mutation: &transport.MutationReview{
+			Operation: "set_enabled",
+			NewState:  map[string]any{"enabled": enabled},
+		},
+		PayloadFingerprint: transport.PayloadFingerprint(payload),
+		Limitations:        []string{"old rule state was not fetched during dry-run"},
+	}
+}
+
+func graphQueryKeys(rawQuery any) []string {
+	keys := []string{}
+	switch typed := rawQuery.(type) {
+	case map[string]any:
+		for key := range typed {
+			keys = append(keys, key)
+		}
+	case map[string]string:
+		for key := range typed {
+			keys = append(keys, key)
+		}
+	case url.Values:
+		for key := range typed {
+			keys = append(keys, key)
+		}
+	case string:
+		values, err := url.ParseQuery(strings.TrimPrefix(typed, "?"))
+		if err == nil {
+			for key := range values {
+				keys = append(keys, key)
+			}
+		}
+	}
+	sort.Strings(keys)
+	return keys
+}
+
+func graphReviewBodyText(body any) string {
+	switch typed := body.(type) {
+	case nil:
+		return ""
+	case string:
+		return typed
+	default:
+		encoded, err := json.Marshal(typed)
+		if err != nil {
+			return ""
+		}
+		return string(encoded)
+	}
+}
+
+func graphRawRequestReview(actionName string, payload map[string]any) transport.ReviewPacket {
+	method := strings.ToUpper(strings.TrimSpace(stringValue(payload, "method", http.MethodGet)))
+	path := strings.TrimSpace(stringValue(payload, "path", ""))
+	raw := &transport.RawRequestReview{
+		Method:    method,
+		Path:      path,
+		QueryKeys: graphQueryKeys(payload["query"]),
+	}
+	if bodyText := graphReviewBodyText(payload["body"]); bodyText != "" {
+		raw.BodySHA256 = transport.BodySHA256(bodyText)
+		raw.BodyPreview = transport.RedactedPreview(bodyText, 500)
+	}
+	limitations := []string{"raw Graph request is advanced and high-risk; prefer high-level tools when available"}
+	normalizedPath := strings.ToLower(path)
+	if strings.Contains(normalizedPath, "/sendmail") || strings.HasSuffix(normalizedPath, "/send") {
+		limitations = append(limitations, "send-like Graph path detected; review recipients and content before approval")
+	}
+	return transport.ReviewPacket{
+		Version:            transport.ReviewPacketVersion,
+		Transport:          "graph",
+		Action:             actionName,
+		SafetyClass:        string(policy.Destructive),
+		Raw:                raw,
+		PayloadFingerprint: transport.PayloadFingerprint(payload),
+		Limitations:        limitations,
+	}
 }
 
 type mailFolder struct {

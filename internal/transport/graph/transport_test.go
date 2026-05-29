@@ -1006,6 +1006,21 @@ func TestTransportDryRunMoveToDeletedItemsRequiresConfirmation(t *testing.T) {
 	if summary.Action != "mail.move_to_deleted_items" || summary.Count != 2 || !summary.Reversible || !summary.RequiresConfirmation {
 		t.Fatalf("unexpected dry-run summary: %#v", summary)
 	}
+	if summary.Review == nil {
+		t.Fatalf("expected move dry-run review packet: %#v", summary)
+	}
+	if summary.Review.Transport != "graph" || summary.Review.Action != "mail.move_to_deleted_items" || summary.Review.SafetyClass != string(policy.ReversibleBulk) {
+		t.Fatalf("unexpected move review metadata: %#v", summary.Review)
+	}
+	if len(summary.Review.Targets) != 2 || summary.Review.Targets[0].Kind != "message" || summary.Review.Targets[0].ID != "message-1" {
+		t.Fatalf("expected exact message targets in move review: %#v", summary.Review.Targets)
+	}
+	if summary.Review.Mutation == nil || summary.Review.Mutation.Operation != "move" || summary.Review.Mutation.To != "Deleted Items" {
+		t.Fatalf("expected move mutation review: %#v", summary.Review.Mutation)
+	}
+	if summary.Review.PayloadFingerprint == "" {
+		t.Fatal("expected move review payload fingerprint")
+	}
 }
 
 func TestTransportDryRunGraphRequestRequiresConfirmation(t *testing.T) {
@@ -1021,6 +1036,57 @@ func TestTransportDryRunGraphRequestRequiresConfirmation(t *testing.T) {
 
 	if summary.Action != "GraphRequest" || summary.Count != 1 || summary.Reversible || !summary.RequiresConfirmation {
 		t.Fatalf("unexpected GraphRequest dry-run summary: %#v", summary)
+	}
+	if summary.Review == nil || summary.Review.Raw == nil {
+		t.Fatalf("expected raw GraphRequest review packet: %#v", summary)
+	}
+	if summary.Review.SafetyClass != string(policy.Destructive) {
+		t.Fatalf("expected destructive GraphRequest review: %#v", summary.Review)
+	}
+	if summary.Review.Raw.Method != "DELETE" || summary.Review.Raw.Path != "/me/messages/message-1" {
+		t.Fatalf("unexpected raw GraphRequest review: %#v", summary.Review.Raw)
+	}
+	if summary.Review.Raw.BodySHA256 != "" || summary.Review.Raw.BodyPreview != "" {
+		t.Fatalf("delete review should not invent body details: %#v", summary.Review.Raw)
+	}
+}
+
+func TestTransportDryRunGraphRequestReviewRedactsBody(t *testing.T) {
+	client := graph.NewTransport(graph.Config{
+		BaseURL:   "https://graph.example.test/v1.0",
+		SecretRef: secret.Ref("memory:graph"),
+	}, secret.NewMemoryStore(map[string]string{"memory:graph": "token-secret"}), nil)
+
+	summary := client.DryRun(context.Background(), transport.ActionRequest{
+		Name: "GraphRequest",
+		Payload: map[string]any{
+			"method": "POST",
+			"path":   "/me/sendMail",
+			"query":  map[string]any{"tracking_token": "secret", "$select": "id"},
+			"body": map[string]any{
+				"subject":      "Safe subject",
+				"access_token": "secret-token",
+				"contentBytes": "attachment-bytes",
+			},
+		},
+	})
+
+	if summary.Review == nil || summary.Review.Raw == nil {
+		t.Fatalf("expected raw GraphRequest review packet: %#v", summary)
+	}
+	if summary.Review.Raw.Method != "POST" || summary.Review.Raw.Path != "/me/sendMail" {
+		t.Fatalf("unexpected raw request review: %#v", summary.Review.Raw)
+	}
+	if strings.Join(summary.Review.Raw.QueryKeys, ",") != "$select,tracking_token" {
+		t.Fatalf("expected sorted query keys without values, got %#v", summary.Review.Raw.QueryKeys)
+	}
+	if summary.Review.Raw.BodySHA256 == "" || !strings.Contains(summary.Review.Raw.BodyPreview, "Safe subject") {
+		t.Fatalf("expected body hash and safe preview, got %#v", summary.Review.Raw)
+	}
+	for _, leaked := range []string{"access_token", "secret-token", "contentBytes", "attachment-bytes"} {
+		if strings.Contains(summary.Review.Raw.BodyPreview, leaked) {
+			t.Fatalf("expected raw body preview to redact %q, got %q", leaked, summary.Review.Raw.BodyPreview)
+		}
 	}
 }
 
@@ -1040,6 +1106,22 @@ func TestTransportDryRunMailRulesSetEnabledRequiresConfirmation(t *testing.T) {
 
 	if summary.Action != "mail.rules.set_enabled" || summary.Count != 1 || !summary.Reversible || !summary.RequiresConfirmation {
 		t.Fatalf("unexpected mail.rules.set_enabled dry-run summary: %#v", summary)
+	}
+	if summary.Review == nil {
+		t.Fatalf("expected rule dry-run review packet: %#v", summary)
+	}
+	if len(summary.Review.Targets) != 1 || summary.Review.Targets[0].Kind != "message_rule" || summary.Review.Targets[0].ID != "rule-1" {
+		t.Fatalf("expected exact rule target in review: %#v", summary.Review.Targets)
+	}
+	if summary.Review.Mutation == nil || summary.Review.Mutation.Operation != "set_enabled" {
+		t.Fatalf("expected set_enabled mutation review: %#v", summary.Review.Mutation)
+	}
+	newState, _ := summary.Review.Mutation.NewState.(map[string]any)
+	if newState["enabled"] != false {
+		t.Fatalf("expected enabled=false new state, got %#v", summary.Review.Mutation.NewState)
+	}
+	if len(summary.Review.Limitations) == 0 || !strings.Contains(summary.Review.Limitations[0], "old rule state") {
+		t.Fatalf("expected old-state limitation, got %#v", summary.Review.Limitations)
 	}
 }
 
