@@ -110,6 +110,9 @@ func TestGitHubWorkflowActionsArePinnedByCommitSHA(t *testing.T) {
 			if !ok || !isFullCommitSHA(ref) {
 				t.Fatalf("workflow %s:%d uses mutable or unpinned action reference %q; pin %s to a full commit SHA", path, lineNumber+1, reference, name)
 			}
+			if !hasSpecificVersionComment(line) {
+				t.Fatalf("workflow %s:%d pins %s to a SHA without a specific semver release comment; use %s@<sha> # vX.Y.Z", path, lineNumber+1, name, name)
+			}
 		}
 	}
 }
@@ -123,6 +126,31 @@ func isFullCommitSHA(value string) bool {
 			continue
 		}
 		return false
+	}
+	return true
+}
+
+func hasSpecificVersionComment(line string) bool {
+	commentIndex := strings.Index(line, "#")
+	if commentIndex == -1 {
+		return false
+	}
+	comment := strings.TrimSpace(line[commentIndex+1:])
+	parts := strings.Split(comment, ".")
+	if len(parts) != 3 || !strings.HasPrefix(parts[0], "v") {
+		return false
+	}
+	return len(parts[0]) > 1 && isDecimal(parts[0][1:]) && isDecimal(parts[1]) && isDecimal(parts[2])
+}
+
+func isDecimal(value string) bool {
+	if value == "" {
+		return false
+	}
+	for _, char := range value {
+		if char < '0' || char > '9' {
+			return false
+		}
 	}
 	return true
 }
