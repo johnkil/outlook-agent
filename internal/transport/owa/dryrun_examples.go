@@ -48,6 +48,8 @@ func DryRunPayloadExample(actionName string) (map[string]any, bool) {
 		return bodyPayload("ItemChanges", []any{map[string]any{"ItemId": exampleItemID("dry-run-item")}}), true
 	case "UpdateUserConfiguration":
 		return bodyPayload("UserConfiguration", map[string]any{"UserConfigurationName": "OWA.UserOptions"}), true
+	case "NotificationSubscribe":
+		return bodyPayload("SubscriptionId", "dry-run-subscription"), true
 	default:
 		return nil, false
 	}
@@ -83,6 +85,7 @@ func DryRunPayloadExampleActions() []string {
 		"UpdateFolder",
 		"UpdateItem",
 		"UpdateUserConfiguration",
+		"NotificationSubscribe",
 	}
 	output := make([]string, len(actions))
 	copy(output, actions)

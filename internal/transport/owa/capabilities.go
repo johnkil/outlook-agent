@@ -46,10 +46,10 @@ func rawServiceCapabilities() []action.Definition {
 		rawRead("ResolveNames"),
 		rawRead("SyncFolderHierarchy"),
 		rawRead("SyncFolderItems"),
-		rawRead("NotificationSubscribe"),
 
 		raw("GetAttachment", policy.ReadAttachmentExplicit),
 		raw("GetItem", policy.ReadBodyExplicit),
+		raw("NotificationSubscribe", policy.SettingsOrRules),
 		raw("SearchMailboxes", policy.Unknown),
 
 		raw("ArchiveItem", policy.ReversibleBulk),

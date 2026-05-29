@@ -255,7 +255,7 @@ func TestTransportCapabilitiesIncludeClassifiedOWAServiceActions(t *testing.T) {
 	assertClass(t, byName, "CreateSweepRuleForSender", policy.SettingsOrRules)
 	assertClass(t, byName, "UpdateUserConfiguration", policy.SettingsOrRules)
 	assertClass(t, byName, "SearchMailboxes", policy.Unknown)
-	assertClass(t, byName, "NotificationSubscribe", policy.ReadMetadata)
+	assertClass(t, byName, "NotificationSubscribe", policy.SettingsOrRules)
 
 	assertMissing(t, capabilities.Actions, "UpdateInboxRules")
 }
@@ -309,6 +309,73 @@ func TestTransportDryRunDoesNotCallNetwork(t *testing.T) {
 	}
 	if !summary.Reversible || !summary.RequiresConfirmation {
 		t.Fatalf("unexpected dry-run summary: %#v", summary)
+	}
+	if summary.Review == nil {
+		t.Fatalf("expected OWA dry-run review packet: %#v", summary)
+	}
+	if summary.Review.SafetyClass != string(policy.ReversibleBulk) {
+		t.Fatalf("expected MoveToDeletedItems review to be reversible bulk, got %#v", summary.Review)
+	}
+	if len(summary.Review.Targets) != 2 || summary.Review.Targets[0].Kind != "item" || summary.Review.Targets[0].ID != "a" {
+		t.Fatalf("expected item targets in OWA review, got %#v", summary.Review.Targets)
+	}
+	if summary.Review.Mutation == nil || summary.Review.Mutation.Operation != "delete" || summary.Review.Mutation.To != "Deleted Items" {
+		t.Fatalf("expected DeleteItem mutation review, got %#v", summary.Review.Mutation)
+	}
+}
+
+func TestTransportDryRunDeleteItemHardDeleteReviewIsDestructive(t *testing.T) {
+	client := owa.NewTransport(owa.Config{
+		BaseURL:   "https://example.test",
+		Username:  "DOMAIN\\user",
+		SecretRef: secret.Ref("memory:owa"),
+	}, secret.NewMemoryStore(map[string]string{"memory:owa": "password"}), nil)
+
+	summary := client.DryRun(context.Background(), transport.ActionRequest{
+		Name:    "DeleteItem",
+		Payload: map[string]any{"Body": map[string]any{"ItemIds": []any{map[string]any{"Id": "msg-1"}}, "DeleteType": "HardDelete"}},
+	})
+
+	if summary.Review == nil || summary.Review.SafetyClass != string(policy.Destructive) {
+		t.Fatalf("expected destructive hard-delete review, got %#v", summary.Review)
+	}
+	if summary.Review.Mutation == nil || summary.Review.Mutation.Operation != "hard_delete" {
+		t.Fatalf("expected hard_delete mutation, got %#v", summary.Review.Mutation)
+	}
+}
+
+func TestTransportDryRunCreateItemReviewExtractsMailFields(t *testing.T) {
+	client := owa.NewTransport(owa.Config{
+		BaseURL:   "https://example.test",
+		Username:  "DOMAIN\\user",
+		SecretRef: secret.Ref("memory:owa"),
+	}, secret.NewMemoryStore(map[string]string{"memory:owa": "password"}), nil)
+
+	summary := client.DryRun(context.Background(), transport.ActionRequest{
+		Name: "CreateItem",
+		Payload: map[string]any{"Body": map[string]any{"Items": []any{map[string]any{
+			"Subject": "Hello",
+			"Body":    map[string]any{"Value": "body text with access_token=secret"},
+			"ToRecipients": []any{
+				map[string]any{"EmailAddress": map[string]any{"EmailAddress": "person@example.test"}},
+			},
+		}}}},
+	})
+
+	if summary.Review == nil || summary.Review.Mail == nil {
+		t.Fatalf("expected CreateItem mail review, got %#v", summary.Review)
+	}
+	if summary.Review.SafetyClass != string(policy.SendLike) || summary.Review.Mail.Subject != "Hello" {
+		t.Fatalf("unexpected CreateItem review: %#v", summary.Review)
+	}
+	if len(summary.Review.Mail.To) != 1 || summary.Review.Mail.To[0] != "person@example.test" {
+		t.Fatalf("expected recipient in CreateItem review, got %#v", summary.Review.Mail.To)
+	}
+	if summary.Review.Mail.BodySHA256 == "" || !strings.Contains(summary.Review.Mail.BodyPreview, "body text") {
+		t.Fatalf("expected body hash and preview, got %#v", summary.Review.Mail)
+	}
+	if strings.Contains(summary.Review.Mail.BodyPreview, "secret") {
+		t.Fatalf("expected body preview redaction, got %q", summary.Review.Mail.BodyPreview)
 	}
 }
 
@@ -419,8 +486,8 @@ func TestTransportDryRunPayloadExamplesCoverEveryMutatingRawAction(t *testing.T)
 			t.Fatalf("expected non-zero dry-run count for %s example payload %#v", definition.Name, payload)
 		}
 	}
-	if mutatingCount != 26 {
-		t.Fatalf("expected 26 mutating raw OWA actions, got %d", mutatingCount)
+	if mutatingCount != 27 {
+		t.Fatalf("expected 27 mutating raw OWA actions, got %d", mutatingCount)
 	}
 }
 
