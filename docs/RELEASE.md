@@ -93,8 +93,31 @@ The release workflow runs `scripts/release-build.sh`, uploads the archives,
 
 ## Install From Archive
 
-Download the archive for the target platform, verify it against
-`SHA256SUMS.txt`, unpack it, and place `outlook-agent` on `PATH`.
+Use the release installer for supported macOS/Linux targets:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/johnkil/outlook-agent/main/install.sh | sh
+```
+
+The installer resolves the latest GitHub release unless
+`OUTLOOK_AGENT_VERSION` or `--version v0.1.0` is provided. It downloads the
+matching `outlook-agent_<version>_<GOOS>_<GOARCH>.tar.gz` archive and
+`SHA256SUMS.txt`, verifies the archive with `sha256sum` or `shasum -a 256`,
+then installs `outlook-agent` into `OUTLOOK_AGENT_INSTALL_DIR`, `--dir`, the
+first writable directory on `PATH`, or `$HOME/.local/bin`.
+
+The installer refuses to overwrite an existing symlink at the destination.
+Release operators should smoke the published install path on at least one
+macOS and one Linux host, then run:
+
+```bash
+outlook-agent help
+outlook-agent doctor
+outlook-agent policy explain
+```
+
+For manual installation, download the archive for the target platform, verify
+it against `SHA256SUMS.txt`, unpack it, and place `outlook-agent` on `PATH`.
 
 Example for macOS arm64:
 

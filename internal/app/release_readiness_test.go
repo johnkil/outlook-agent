@@ -87,6 +87,40 @@ func TestReleaseReadinessArtifactsExist(t *testing.T) {
 	}
 }
 
+func TestInstallScriptReadinessMarkers(t *testing.T) {
+	path := filepath.Join("..", "..", "install.sh")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read install script %s: %v", path, err)
+	}
+	text := string(data)
+	for _, marker := range []string{
+		`REPO="johnkil/outlook-agent"`,
+		`BIN_NAME="outlook-agent"`,
+		"OUTLOOK_AGENT_VERSION",
+		"OUTLOOK_AGENT_INSTALL_DIR",
+		"SHA256SUMS.txt",
+		"refusing to overwrite symlink",
+		"shasum -a 256",
+		"validate_tar_members",
+		"validate_tar_binary_type",
+		"tar -tzf",
+		"tar -tvzf",
+		"expected binary archive member is not a regular file",
+		"unsafe archive member",
+		"unexpected archive member",
+		`tar -xzf "$archive_name" "$expected_binary_member"`,
+		`[ -f "$binary_path" ] && [ ! -L "$binary_path" ]`,
+		`install_tmp="$(mktemp "${install_dir}/.${BIN_NAME}.tmp.XXXXXX")"`,
+		`mv "$install_tmp" "$target_path"`,
+		"outlook-agent help",
+	} {
+		if !strings.Contains(text, marker) {
+			t.Fatalf("expected %s to contain %q", path, marker)
+		}
+	}
+}
+
 func TestGitHubWorkflowActionsArePinnedByCommitSHA(t *testing.T) {
 	workflowFiles, err := githubWorkflowFiles(filepath.Join("..", ".."))
 	if err != nil {
