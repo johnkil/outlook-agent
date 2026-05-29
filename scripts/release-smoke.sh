@@ -49,11 +49,13 @@ host_goarch="$(go env GOHOSTARCH)"
 host_archive="${dist_dir}/outlook-agent_smoke_${host_goos}_${host_goarch}.tar.gz"
 if [[ -f "$host_archive" ]]; then
   run_dir="$(mktemp -d "${tmp_root}/outlook-agent-release-run.XXXXXX")"
+  project_dir="$(mktemp -d "${tmp_root}/outlook-agent-release-project.XXXXXX")"
   tar -xzf "$host_archive" -C "$run_dir"
   host_binary="${run_dir}/outlook-agent_smoke_${host_goos}_${host_goarch}/outlook-agent"
   version_output="$("$host_binary" version)"
   doctor_output="$("$host_binary" doctor)"
-  rm -rf "$run_dir"
+  setup_output="$(cd "$project_dir" && "$host_binary" setup opencode plan --config .local/outlook-agent.json)"
+  rm -rf "$run_dir" "$project_dir"
   if ! grep -Fq '"version": "smoke"' <<<"$version_output"; then
     echo "host archive version output did not include embedded smoke version" >&2
     echo "$version_output" >&2
@@ -67,6 +69,11 @@ if [[ -f "$host_archive" ]]; then
   if ! grep -Fq '"version": "smoke"' <<<"$doctor_output"; then
     echo "host archive doctor output did not include embedded smoke version" >&2
     echo "$doctor_output" >&2
+    exit 1
+  fi
+  if ! grep -Fq ".opencode/skills/outlook-mail/SKILL.md" <<<"$setup_output"; then
+    echo "host archive setup opencode plan did not include bundled skills" >&2
+    echo "$setup_output" >&2
     exit 1
   fi
 fi

@@ -92,20 +92,26 @@ When you're ready, point at a config and start the MCP server:
 
 ```bash
 outlook-agent --config .local/outlook-agent.json auth check
-outlook-agent setup opencode --print --binary outlook-agent --config .local/outlook-agent.json
+outlook-agent setup opencode plan --binary outlook-agent --config .local/outlook-agent.json
+outlook-agent setup opencode diff --binary outlook-agent --config .local/outlook-agent.json
+outlook-agent setup opencode apply --binary outlook-agent --config .local/outlook-agent.json --yes --backup
 outlook-agent --config .local/outlook-agent.json mcp
 ```
 
-Wire the printed MCP config into your agent, then let the bundled
+This writes public OpenCode project config and skills without reading secrets.
+Then let the bundled
 [`skills/`](./skills) drive ordinary requests:
+
+For scripts that only need the MCP JSON snippet, the compatibility command
+`outlook-agent setup opencode --print` still prints the local server block.
 
 - [`outlook-mail`](./skills/outlook-mail) — metadata-first inspection & draft prep
 - [`outlook-mail-inbox-triage`](./skills/outlook-mail-inbox-triage) — inbox buckets & follow-ups
 - [`outlook-calendar`](./skills/outlook-calendar) — schedule & availability
 - [`outlook-calendar-daily-brief`](./skills/outlook-calendar-daily-brief) — today/tomorrow at a glance
 
-OpenCode users can also copy these workflows under `.opencode/skills` when
-they want client-local skill discovery.
+OpenCode users can also keep these workflows synced under `.opencode/skills`
+when they want client-local skill discovery.
 
 ---
 

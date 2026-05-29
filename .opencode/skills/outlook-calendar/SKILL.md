@@ -5,38 +5,26 @@ description: Work with Outlook Calendar through Outlook Agent MCP tools. Use for
 
 # Outlook Calendar
 
-This skill is workflow guidance for OpenCode agents. It is not a security boundary.
-Outlook Agent MCP tools and the runtime enforce access, policy, and confirmation
-rules.
+Use exact dates, times, attendees, and calendar evidence. Normalize relative
+phrases such as "tomorrow" into explicit date ranges before calling tools.
 
-## When To Use
+## Workflow
 
-Use this for calendar review, availability checks, meeting prep, conflict
-inspection, and planned calendar changes.
-
-## Tool Path
-
-1. Resolve timezone, calendar scope, attendees, and exact date ranges before
-   calling tools.
+1. Resolve timezone and calendar scope.
 2. Call `outlook.capabilities` before raw, gated, or unfamiliar calendar
    actions.
-3. Use `outlook.calendar_list` for bounded event windows.
-4. Use `outlook.calendar_availability` for bounded free/busy questions.
-5. Surface conflicts and dense transitions before suggesting changes.
-6. Use `outlook.action_dry_run` and `outlook.action_confirm` for move, cancel,
-   recurrence, attendee, reminder, or broad calendar mutations, with exact
-   confirmation of the payload before execution.
-   Treat this as exact confirmation, not general approval.
-7. Use `outlook.raw_action` only when capabilities show no high-level tool for
-   the requested action.
+3. Use `outlook.calendar_list` for bounded time windows.
+4. Use `outlook.calendar_availability` for free/busy questions.
+5. Surface conflicts before suggesting changes.
+6. Use `outlook.raw_action` only for a capability-discovered transport action
+   that does not have a high-level tool.
+7. Create, reschedule, or cancel only after exact confirmation.
 
-## Output
+## Safety
 
-Use exact date and timezone. Include the calendar evidence used, conflicts,
-dense transitions, and free windows only when supported by returned data.
+Preserve title, attendees, location, online meeting details, body, reminders,
+and recurrence scope unless the user asks to change them.
 
-## Fallback
-
-For fallback behavior, if a shared calendar, mailbox, or transport scope is
-unavailable, say which scope failed and continue with available calendar
-evidence. Do not infer private event details from free/busy data.
+Use `outlook.action_dry_run` and `outlook.action_confirm` for move, cancel,
+recurrence, attendee, reminder, or broad calendar mutations. Execute only the
+reviewed payload after exact confirmation.

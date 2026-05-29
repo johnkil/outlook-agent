@@ -64,6 +64,25 @@ outlook-agent setup opencode --print --config .local/outlook-agent.json
 
 Use `--binary <path>` when the binary is not installed as `outlook-agent`.
 
+For project setup, use the planner/apply flow:
+
+```bash
+outlook-agent setup opencode plan --config .local/outlook-agent.json
+outlook-agent setup opencode diff --config .local/outlook-agent.json
+outlook-agent setup opencode apply --config .local/outlook-agent.json --yes --backup
+```
+
+The planner writes only public project OpenCode files:
+
+- the existing `opencode.json`, `opencode.jsonc`, `.opencode/opencode.json`, or
+  `.opencode/opencode.jsonc` when one is present; otherwise a new
+  `opencode.json` with the local `outlook-agent` MCP server entry.
+- `.opencode/skills/*/SKILL.md` written from the public skills bundled in the
+  `outlook-agent` binary.
+
+It does not read or write secrets, token files, or `.local` config values. The
+`--config` value is used only as a path in the generated MCP command.
+
 To run against a local OWA-like profile, pass an ignored local config path:
 
 ```json
