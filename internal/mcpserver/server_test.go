@@ -31,6 +31,7 @@ func TestCatalogContainsInitialTools(t *testing.T) {
 		"outlook.mail_list_attachments",
 		"outlook.mail_fetch_attachment",
 		"outlook.mail_create_draft",
+		"outlook.mail_send_draft",
 		"outlook.mail_move_to_deleted_items",
 		"outlook.mail_rules_list",
 		"outlook.mail_rule_set_enabled",
@@ -71,6 +72,11 @@ func TestToolDescriptionsGuideAgentWorkflow(t *testing.T) {
 		"outlook.mail_create_draft": {
 			"save-only",
 			"does not send",
+		},
+		"outlook.mail_send_draft": {
+			"exact draft",
+			"dry-run",
+			"approval",
 		},
 		"outlook.mail_rule_set_enabled": {
 			"dry-run",

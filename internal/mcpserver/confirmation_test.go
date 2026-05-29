@@ -287,6 +287,69 @@ func TestMailMoveToDeletedItemsRequiresPayloadBoundApprovalInRequiredMode(t *tes
 	}
 }
 
+func TestMailSendDraftRequiresPayloadBoundApprovalInRequiredMode(t *testing.T) {
+	client := newRecordingTransport(action.Definition{Name: "mail.send_draft", Transport: "test", Class: policy.SendLike, Level: action.LevelHighLevelMCPTool})
+	runtime := NewRuntime(client)
+	runtime.approvalPolicy = approval.Policy{Mode: approval.ModeRequired, Secret: "approval-secret"}
+	runtime.approval = approval.NewStore(time.Now)
+	payload := map[string]any{"draft_id": "draft-1"}
+
+	_, dryRun, err := dryRunHandler(runtime)(context.Background(), nil, DryRunInput{
+		Action:  "mail.send_draft",
+		Payload: payload,
+	})
+	if err != nil {
+		t.Fatalf("dry-run handler: %v", err)
+	}
+	approvalToken, err := approval.SignChallenge("approval-secret", *dryRun.ApprovalChallenge)
+	if err != nil {
+		t.Fatalf("sign approval challenge: %v", err)
+	}
+
+	_, missingApproval, err := mailSendDraftHandler(runtime)(context.Background(), nil, MailSendDraftInput{
+		DraftID:      "draft-1",
+		ConfirmToken: dryRun.ConfirmationToken,
+	})
+	if err != nil {
+		t.Fatalf("send draft handler: %v", err)
+	}
+	if missingApproval.OK || !strings.Contains(missingApproval.Error, "payload-bound external approval") {
+		t.Fatalf("expected missing approval to be rejected, got %#v", missingApproval)
+	}
+
+	_, output, err := mailSendDraftHandler(runtime)(context.Background(), nil, MailSendDraftInput{
+		DraftID:             "draft-1",
+		ConfirmToken:        dryRun.ConfirmationToken,
+		ApprovalChallengeID: dryRun.ApprovalChallenge.ID,
+		ApprovalToken:       approvalToken,
+	})
+	if err != nil {
+		t.Fatalf("send draft handler: %v", err)
+	}
+	if !output.OK {
+		t.Fatalf("expected approved send draft to execute: %#v", output)
+	}
+}
+
+func TestMailSendDraftRequiresDraftID(t *testing.T) {
+	client := newRecordingTransport(action.Definition{Name: "mail.send_draft", Transport: "test", Class: policy.SendLike, Level: action.LevelHighLevelMCPTool})
+	runtime := NewRuntime(client)
+
+	_, output, err := mailSendDraftHandler(runtime)(context.Background(), nil, MailSendDraftInput{
+		DraftID:      "",
+		ConfirmToken: "confirm-token",
+	})
+	if err != nil {
+		t.Fatalf("send draft handler: %v", err)
+	}
+	if output.OK || !strings.Contains(output.Error, "draft_id required") {
+		t.Fatalf("expected missing draft_id to be rejected, got %#v", output)
+	}
+	if client.executed {
+		t.Fatal("send draft must not execute without a draft id")
+	}
+}
+
 func TestMailRuleSetEnabledRejectsApprovalForDifferentRule(t *testing.T) {
 	client := newRecordingTransport(action.Definition{Name: "mail.rules.set_enabled", Transport: "test", Class: policy.SettingsOrRules, Level: action.LevelHighLevelMCPTool})
 	runtime := NewRuntime(client)

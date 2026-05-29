@@ -602,13 +602,3 @@ func intValue(values map[string]any, key string, fallback int) int {
 	}
 	return fallback
 }
-
-func selectedEWSResponseHeaders(headers http.Header) map[string]any {
-	output := map[string]any{}
-	for _, key := range []string{"request-id", "client-request-id", "retry-after", "location", "content-type"} {
-		if value := headers.Get(key); value != "" {
-			output[key] = value
-		}
-	}
-	return output
-}

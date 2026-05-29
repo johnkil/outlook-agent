@@ -92,11 +92,13 @@ Initial public tool names:
 outlook.auth_check
 outlook.capabilities
 outlook.mail_search
+outlook.mail_search_next
 outlook.mail_fetch_metadata
 outlook.mail_fetch_body
 outlook.mail_list_attachments
 outlook.mail_fetch_attachment
 outlook.mail_create_draft
+outlook.mail_send_draft
 outlook.mail_move_to_deleted_items
 outlook.mail_rules_list
 outlook.mail_rule_set_enabled
@@ -142,6 +144,12 @@ Key tool inputs:
 - `outlook.mail_fetch_attachment`: `message_id` and `attachment_id`. The tool
   is explicit-target only and returns normalized attachment metadata plus
   base64 content when the transport provides it.
+- `outlook.mail_send_draft`: `draft_id`, `confirm_token`, optional
+  `approval_challenge_id`, optional `approval_token`, and optional `mailbox`.
+  The action maps to `mail.send_draft`, is classified as `send_like`, and
+  requires a matching `outlook.action_dry_run` review before execution. In
+  required approval mode, the host must approve the exact review packet before
+  the send can proceed.
 - `outlook.mail_rules_list`: optional `folder_id` and optional `mailbox`.
   Returns read-only mailbox rule metadata when the selected transport supports
   `mail.rules.list`.

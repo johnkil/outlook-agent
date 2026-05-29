@@ -99,6 +99,7 @@ func TestTransportGraphCapabilitiesIncludeBodyDraftMove(t *testing.T) {
 		{name: "mail.list_attachments", class: policy.ReadAttachmentExplicit, level: action.LevelHighLevelMCPTool},
 		{name: "mail.fetch_attachment", class: policy.ReadAttachmentExplicit, level: action.LevelHighLevelMCPTool},
 		{name: "mail.create_draft", class: policy.DraftOnly, level: action.LevelHighLevelMCPTool},
+		{name: "mail.send_draft", class: policy.SendLike, level: action.LevelHighLevelMCPTool},
 		{name: "mail.move_to_deleted_items", class: policy.ReversibleBulk, level: action.LevelHighLevelMCPTool},
 		{name: "mail.rules.list", class: policy.ReadMetadata, level: action.LevelHighLevelMCPTool},
 		{name: "mail.rules.set_enabled", class: policy.SettingsOrRules, level: action.LevelHighLevelMCPTool},
@@ -793,6 +794,81 @@ func TestTransportExecutesMailCreateDraft(t *testing.T) {
 	draft := result.Data["draft"].(map[string]any)
 	if draft["id"] != "draft-1" || draft["subject"] != "Draft subject" || draft["status"] != "saved" {
 		t.Fatalf("unexpected draft response: %#v", draft)
+	}
+}
+
+func TestTransportDryRunMailSendDraftBuildsReview(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		if request.Method != http.MethodGet || request.URL.Path != "/v1.0/me/messages/draft-1" {
+			t.Fatalf("unexpected request: %s %s", request.Method, request.URL.String())
+		}
+		response.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(response).Encode(map[string]any{
+			"id":             "draft-1",
+			"subject":        "Draft subject",
+			"hasAttachments": true,
+			"body":           map[string]any{"contentType": "Text", "content": "Draft body with access_token=secret"},
+			"toRecipients": []any{
+				map[string]any{"emailAddress": map[string]any{"name": "Alex", "address": "alex@example.com"}},
+			},
+		})
+	}))
+	defer server.Close()
+
+	client := graph.NewTransport(graph.Config{
+		BaseURL:   server.URL + "/v1.0",
+		SecretRef: secret.Ref("memory:graph"),
+	}, secret.NewMemoryStore(map[string]string{"memory:graph": "token-secret"}), server.Client())
+
+	summary := client.DryRun(context.Background(), transport.ActionRequest{
+		Name:    "mail.send_draft",
+		Payload: map[string]any{"draft_id": "draft-1"},
+	})
+
+	if summary.Action != "mail.send_draft" || summary.Count != 1 || summary.Reversible || !summary.RequiresConfirmation {
+		t.Fatalf("unexpected send draft dry-run summary: %#v", summary)
+	}
+	if summary.Review == nil || summary.Review.Mail == nil || summary.Review.Mutation == nil {
+		t.Fatalf("expected send draft review packet: %#v", summary.Review)
+	}
+	if summary.Review.SafetyClass != string(policy.SendLike) || summary.Review.Mail.Subject != "Draft subject" {
+		t.Fatalf("unexpected send draft review: %#v", summary.Review)
+	}
+	if len(summary.Review.Mail.To) != 1 || summary.Review.Mail.To[0] != "Alex <alex@example.com>" {
+		t.Fatalf("expected draft recipients in review: %#v", summary.Review.Mail.To)
+	}
+	if strings.Contains(summary.Review.Mail.BodyPreview, "secret") || summary.Review.Mail.BodySHA256 == "" {
+		t.Fatalf("expected redacted body preview and hash, got %#v", summary.Review.Mail)
+	}
+}
+
+func TestTransportExecutesMailSendDraft(t *testing.T) {
+	var sawSend bool
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		if request.Method != http.MethodPost || request.URL.Path != "/v1.0/me/messages/draft-1/send" {
+			t.Fatalf("unexpected request: %s %s", request.Method, request.URL.String())
+		}
+		sawSend = true
+		response.WriteHeader(http.StatusAccepted)
+	}))
+	defer server.Close()
+
+	client := graph.NewTransport(graph.Config{
+		BaseURL:   server.URL + "/v1.0",
+		SecretRef: secret.Ref("memory:graph"),
+	}, secret.NewMemoryStore(map[string]string{"memory:graph": "token-secret"}), server.Client())
+
+	result := client.Execute(context.Background(), transport.ActionRequest{
+		Name:    "mail.send_draft",
+		Payload: map[string]any{"draft_id": "draft-1"},
+	})
+
+	if !result.OK || !sawSend {
+		t.Fatalf("expected mail.send_draft ok, got %#v", result)
+	}
+	sent := result.Data["sent"].(map[string]any)
+	if sent["id"] != "draft-1" || sent["status"] != "sent" {
+		t.Fatalf("unexpected sent metadata: %#v", sent)
 	}
 }
 

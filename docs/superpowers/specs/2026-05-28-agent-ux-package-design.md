@@ -50,6 +50,8 @@ Rewrite public tool descriptions so the model can infer the intended workflow:
 - `outlook.mail_list_attachments`: attachment metadata only for one message.
 - `outlook.mail_fetch_attachment`: one explicit message and attachment id.
 - `outlook.mail_create_draft`: save-only draft; does not send.
+- `outlook.mail_send_draft`: send one exact draft only after dry-run,
+  confirmation, and required approval.
 - `outlook.mail_move_to_deleted_items`: reversible move after exact target and
   confirmation token where required.
 - `outlook.mail_rule_set_enabled`: settings/rules write; dry-run token

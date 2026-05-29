@@ -115,6 +115,14 @@ type MailCreateDraftOutput struct {
 	Draft any `json:"draft"`
 }
 
+type MailSendDraftInput struct {
+	DraftID             string `json:"draft_id" jsonschema:"draft message id to send"`
+	ConfirmToken        string `json:"confirm_token" jsonschema:"confirmation token from outlook.action_dry_run"`
+	ApprovalChallengeID string `json:"approval_challenge_id,omitempty" jsonschema:"payload-bound external approval challenge id"`
+	ApprovalToken       string `json:"approval_token,omitempty" jsonschema:"external approval token supplied by the host after user approval"`
+	Mailbox             string `json:"mailbox,omitempty" jsonschema:"optional mailbox user id or user principal name"`
+}
+
 type MailMoveToDeletedItemsInput struct {
 	IDs                 []string `json:"ids" jsonschema:"message ids to move"`
 	ConfirmToken        string   `json:"confirm_token" jsonschema:"confirmation token from outlook.action_dry_run"`
@@ -265,6 +273,9 @@ var toolRegistrations = []toolRegistration{
 	{name: "outlook.mail_create_draft", add: func(server *mcp.Server, runtime *Runtime, name string) {
 		mcp.AddTool(server, mcpTool(name), mailCreateDraftHandler(runtime.client))
 	}},
+	{name: "outlook.mail_send_draft", add: func(server *mcp.Server, runtime *Runtime, name string) {
+		mcp.AddTool(server, mcpTool(name), mailSendDraftHandler(runtime))
+	}},
 	{name: "outlook.mail_move_to_deleted_items", add: func(server *mcp.Server, runtime *Runtime, name string) {
 		mcp.AddTool(server, mcpTool(name), mailMoveToDeletedItemsHandler(runtime))
 	}},
@@ -304,6 +315,7 @@ var toolDescriptionByName = map[string]string{
 	"outlook.mail_list_attachments":      "List attachment metadata for one explicit message; does not fetch attachment content.",
 	"outlook.mail_fetch_attachment":      "Fetch one explicit attachment by message id and attachment id.",
 	"outlook.mail_create_draft":          "Create a save-only draft; does not send mail.",
+	"outlook.mail_send_draft":            "Send one exact draft only after dry-run review, confirmation, and required approval.",
 	"outlook.mail_move_to_deleted_items": "Move exact message ids to Deleted Items after the required dry-run confirmation token.",
 	"outlook.mail_rules_list":            "List read-only mailbox rule metadata before any rule change.",
 	"outlook.mail_rule_set_enabled":      "Enable or disable one settings/rules item only with a dry-run confirmation token.",
@@ -599,6 +611,35 @@ func mailCreateDraftHandler(client transport.Transport) func(context.Context, *m
 		}
 		redacted := redact.Value(response.Data).(map[string]any)
 		return nil, MailCreateDraftOutput{Draft: redacted["draft"]}, nil
+	}
+}
+
+func mailSendDraftHandler(runtime *Runtime) func(context.Context, *mcp.CallToolRequest, MailSendDraftInput) (*mcp.CallToolResult, ActionResultOutput, error) {
+	return func(ctx context.Context, _ *mcp.CallToolRequest, input MailSendDraftInput) (*mcp.CallToolResult, ActionResultOutput, error) {
+		if strings.TrimSpace(input.DraftID) == "" {
+			return nil, ActionResultOutput{OK: false, Error: "draft_id required"}, nil
+		}
+		if input.ConfirmToken == "" {
+			return nil, ActionResultOutput{OK: false, Error: "confirm_token required"}, nil
+		}
+		payload := withMailbox(map[string]any{"draft_id": input.DraftID}, input.Mailbox)
+		_, class, review := dryRunReviewFor(ctx, runtime.client, "mail.send_draft", payload, false)
+		pendingApproval, err := runtime.validateExternalApproval(input.ApprovalChallengeID, input.ApprovalToken, "mail.send_draft", payload, false, runtime.profile, review, class)
+		if err != nil {
+			return nil, ActionResultOutput{OK: false, Error: err.Error()}, nil
+		}
+		if !runtime.confirm.Consume(input.ConfirmToken, confirmationBindingFor(runtime.client, runtime.profile, "mail.send_draft", payload, false, review, class)) {
+			return nil, ActionResultOutput{OK: false, Error: "confirmation token is invalid"}, nil
+		}
+		if err := runtime.consumeExternalApproval(pendingApproval); err != nil {
+			return nil, ActionResultOutput{OK: false, Error: err.Error()}, nil
+		}
+		decision := confirmedActionDecision(runtime.client, "mail.send_draft", payload, false)
+		if !decision.Allowed {
+			return nil, ActionResultOutput{OK: false, Error: decision.Reason}, nil
+		}
+		response := runtime.client.Execute(ctx, transport.ActionRequest{Name: "mail.send_draft", Payload: payload})
+		return nil, actionResultFromResponse(response), nil
 	}
 }
 

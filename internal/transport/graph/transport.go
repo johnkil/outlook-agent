@@ -56,6 +56,7 @@ func (client *Transport) Capabilities(context.Context) transport.CapabilitySet {
 		{Name: "mail.list_attachments", Transport: "graph", Class: policy.ReadAttachmentExplicit, Level: action.LevelHighLevelMCPTool},
 		{Name: "mail.fetch_attachment", Transport: "graph", Class: policy.ReadAttachmentExplicit, Level: action.LevelHighLevelMCPTool},
 		{Name: "mail.create_draft", Transport: "graph", Class: policy.DraftOnly, Level: action.LevelHighLevelMCPTool},
+		{Name: "mail.send_draft", Transport: "graph", Class: policy.SendLike, Level: action.LevelHighLevelMCPTool},
 		{Name: "mail.move_to_deleted_items", Transport: "graph", Class: policy.ReversibleBulk, Level: action.LevelHighLevelMCPTool},
 		{Name: "mail.rules.list", Transport: "graph", Class: policy.ReadMetadata, Level: action.LevelHighLevelMCPTool},
 		{Name: "mail.rules.set_enabled", Transport: "graph", Class: policy.SettingsOrRules, Level: action.LevelHighLevelMCPTool},
@@ -178,6 +179,15 @@ func (client *Transport) Execute(ctx context.Context, request transport.ActionRe
 			return transport.ActionResponse{OK: false, Error: err.Error()}
 		}
 		return transport.ActionResponse{OK: true, Data: map[string]any{"draft": normalizeGraphDraft(draft)}}
+	case "mail.send_draft":
+		draftID := strings.TrimSpace(stringValue(request.Payload, "draft_id", ""))
+		if err := client.sendDraft(ctx, mailbox, draftID); err != nil {
+			return transport.ActionResponse{OK: false, Error: err.Error()}
+		}
+		return transport.ActionResponse{OK: true, Data: map[string]any{"sent": map[string]any{
+			"id":     draftID,
+			"status": "sent",
+		}}}
 	case "mail.move_to_deleted_items":
 		ids := stringSlice(request.Payload["ids"])
 		if len(ids) == 0 {
@@ -229,11 +239,15 @@ func (client *Transport) Execute(ctx context.Context, request transport.ActionRe
 	}
 }
 
-func (client *Transport) DryRun(_ context.Context, request transport.ActionRequest) transport.DryRunSummary {
+func (client *Transport) DryRun(ctx context.Context, request transport.ActionRequest) transport.DryRunSummary {
 	if request.Name == "mail.move_to_deleted_items" {
 		ids := stringSlice(request.Payload["ids"])
 		review := graphMoveToDeletedItemsReview(request.Name, request.Payload, ids)
 		return transport.DryRunSummary{Action: request.Name, Count: len(ids), Reversible: true, RequiresConfirmation: true, SafetyClass: string(policy.ReversibleBulk), Review: &review}
+	}
+	if request.Name == "mail.send_draft" {
+		review := client.graphSendDraftReview(ctx, mailboxTarget(request.Payload), request.Name, request.Payload)
+		return transport.DryRunSummary{Action: request.Name, Count: 1, Reversible: false, RequiresConfirmation: true, SafetyClass: string(policy.SendLike), Review: &review, Warnings: review.Limitations}
 	}
 	if request.Name == "GraphRequest" {
 		review := graphRawRequestReview(request.Name, request.Payload)
@@ -280,6 +294,41 @@ func graphRuleSetEnabledReview(actionName string, payload map[string]any) transp
 		PayloadFingerprint: transport.PayloadFingerprint(payload),
 		Limitations:        []string{"old rule state was not fetched during dry-run"},
 	}
+}
+
+func (client *Transport) graphSendDraftReview(ctx context.Context, mailbox string, actionName string, payload map[string]any) transport.ReviewPacket {
+	draftID := strings.TrimSpace(stringValue(payload, "draft_id", ""))
+	targets := []transport.TargetRef{}
+	if draftID != "" {
+		targets = append(targets, transport.TargetRef{Kind: "draft", ID: draftID})
+	}
+	review := transport.ReviewPacket{
+		Version:            transport.ReviewPacketVersion,
+		Transport:          "graph",
+		Action:             actionName,
+		SafetyClass:        string(policy.SendLike),
+		Targets:            targets,
+		Mutation:           &transport.MutationReview{Operation: "send"},
+		Mail:               &transport.MailReview{},
+		PayloadFingerprint: transport.PayloadFingerprint(payload),
+	}
+	draft, err := client.getDraftForSendReview(ctx, mailbox, draftID)
+	if err != nil {
+		review.Limitations = append(review.Limitations, "draft metadata could not be fetched during dry-run: "+err.Error())
+		return review
+	}
+	review.Mail.Subject = draft.Subject
+	review.Mail.To = recipientStrings(draft.ToRecipients)
+	review.Mail.CC = recipientStrings(draft.CCRecipients)
+	review.Mail.BCC = recipientStrings(draft.BCCRecipients)
+	if draft.Body.Content != "" {
+		review.Mail.BodyPreview = transport.RedactedPreview(draft.Body.Content, 500)
+		review.Mail.BodySHA256 = transport.BodySHA256(draft.Body.Content)
+	}
+	if draft.HasAttachments {
+		review.Limitations = append(review.Limitations, "draft has attachments; attachment names were not fetched during dry-run")
+	}
+	return review
 }
 
 func graphQueryKeys(rawQuery any) []string {
@@ -376,14 +425,17 @@ type bulkMoveResult struct {
 }
 
 type message struct {
-	ID             string    `json:"id"`
-	Subject        string    `json:"subject"`
-	From           recipient `json:"from"`
-	ReceivedAt     string    `json:"receivedDateTime"`
-	Importance     string    `json:"importance"`
-	IsRead         bool      `json:"isRead"`
-	HasAttachments bool      `json:"hasAttachments"`
-	Body           itemBody  `json:"body"`
+	ID             string      `json:"id"`
+	Subject        string      `json:"subject"`
+	From           recipient   `json:"from"`
+	ToRecipients   []recipient `json:"toRecipients"`
+	CCRecipients   []recipient `json:"ccRecipients"`
+	BCCRecipients  []recipient `json:"bccRecipients"`
+	ReceivedAt     string      `json:"receivedDateTime"`
+	Importance     string      `json:"importance"`
+	IsRead         bool        `json:"isRead"`
+	HasAttachments bool        `json:"hasAttachments"`
+	Body           itemBody    `json:"body"`
 }
 
 type messageRuleList struct {
@@ -491,6 +543,7 @@ type tokenRefreshResponse struct {
 
 const messageMetadataSelect = "id,subject,from,receivedDateTime,importance,isRead,hasAttachments"
 const messageBodySelect = "id,body"
+const draftSendReviewSelect = "id,subject,body,toRecipients,ccRecipients,bccRecipients,hasAttachments"
 const eventMetadataSelect = "id,subject,start,end,location"
 
 func (client *Transport) getMailFolder(ctx context.Context, mailbox string, folderID string) (mailFolder, error) {
@@ -579,6 +632,24 @@ func (client *Transport) getMessageBody(ctx context.Context, mailbox string, id 
 	return item, nil
 }
 
+func (client *Transport) getDraftForSendReview(ctx context.Context, mailbox string, id string) (message, error) {
+	if strings.TrimSpace(id) == "" {
+		return message{}, fmt.Errorf("mail.send_draft requires draft_id")
+	}
+	requestURL, err := client.draftSendReviewURL(mailbox, id)
+	if err != nil {
+		return message{}, err
+	}
+	var item message
+	if err := client.doJSONWithHeaders(ctx, http.MethodGet, requestURL, nil, map[string]string{"Prefer": `outlook.body-content-type="text"`}, &item); err != nil {
+		return message{}, err
+	}
+	if item.ID == "" {
+		return message{}, fmt.Errorf("missing Graph draft response")
+	}
+	return item, nil
+}
+
 func (client *Transport) executeRawGraphRequest(ctx context.Context, payload map[string]any) (map[string]any, error) {
 	method := strings.ToUpper(strings.TrimSpace(stringValue(payload, "method", http.MethodGet)))
 	if method == "" {
@@ -663,6 +734,50 @@ func (client *Transport) createDraft(ctx context.Context, mailbox string, payloa
 		return message{}, fmt.Errorf("missing Graph draft response")
 	}
 	return draft, nil
+}
+
+func (client *Transport) sendDraft(ctx context.Context, mailbox string, draftID string) error {
+	if strings.TrimSpace(draftID) == "" {
+		return fmt.Errorf("mail.send_draft requires draft_id")
+	}
+	requestURL, err := client.messageSendURL(mailbox, draftID)
+	if err != nil {
+		return err
+	}
+	if err := client.config.Validate(); err != nil {
+		return err
+	}
+	token, err := client.bearerToken(ctx)
+	if err != nil {
+		return err
+	}
+	request, err := http.NewRequestWithContext(ctx, http.MethodPost, requestURL, nil)
+	if err != nil {
+		return err
+	}
+	request.Header.Set("Authorization", "Bearer "+token)
+	request.Header.Set("Accept", "application/json")
+	request.Header.Set("User-Agent", "outlook-agent")
+
+	response, err := client.client.Do(request)
+	if err != nil {
+		return err
+	}
+	defer response.Body.Close()
+
+	rawBody, err := transport.ReadLimited(response.Body, transport.MaxResponseBytes)
+	if err != nil {
+		return err
+	}
+	if response.StatusCode < 200 || response.StatusCode >= 300 {
+		var errorPayload graphErrorResponse
+		_ = json.Unmarshal(rawBody, &errorPayload)
+		if errorPayload.Error.Code != "" {
+			return fmt.Errorf("graph returned HTTP %d: %s", response.StatusCode, errorPayload.Error.Code)
+		}
+		return fmt.Errorf("graph returned HTTP %d", response.StatusCode)
+	}
+	return nil
 }
 
 func (client *Transport) moveMessagesToDeletedItems(ctx context.Context, mailbox string, ids []string) bulkMoveResult {
@@ -1137,6 +1252,16 @@ func (client *Transport) messageBodyURL(mailbox string, id string) (string, erro
 	return base + graphOwnerPath(mailbox) + "/messages/" + url.PathEscape(id) + "?" + values.Encode(), nil
 }
 
+func (client *Transport) draftSendReviewURL(mailbox string, id string) (string, error) {
+	base, err := client.config.normalizedBaseURL()
+	if err != nil {
+		return "", err
+	}
+	values := url.Values{}
+	values.Set("$select", draftSendReviewSelect)
+	return base + graphOwnerPath(mailbox) + "/messages/" + url.PathEscape(id) + "?" + values.Encode(), nil
+}
+
 func (client *Transport) messageAttachmentURL(mailbox string, messageID string, attachmentID string) (string, error) {
 	base, err := client.config.normalizedBaseURL()
 	if err != nil {
@@ -1194,6 +1319,14 @@ func (client *Transport) messageMoveURL(mailbox string, id string) (string, erro
 		return "", err
 	}
 	return base + graphOwnerPath(mailbox) + "/messages/" + url.PathEscape(id) + "/move", nil
+}
+
+func (client *Transport) messageSendURL(mailbox string, id string) (string, error) {
+	base, err := client.config.normalizedBaseURL()
+	if err != nil {
+		return "", err
+	}
+	return base + graphOwnerPath(mailbox) + "/messages/" + url.PathEscape(id) + "/send", nil
 }
 
 func (client *Transport) messageRulesURL(mailbox string, folderID string) (string, error) {
@@ -1346,6 +1479,20 @@ func formatAddress(address emailAddress) string {
 		return name
 	}
 	return name + " <" + value + ">"
+}
+
+func recipientStrings(recipients []recipient) []string {
+	output := make([]string, 0, len(recipients))
+	for _, recipient := range recipients {
+		value := formatAddress(recipient.EmailAddress)
+		if strings.TrimSpace(value) != "" {
+			output = append(output, value)
+		}
+	}
+	if output == nil {
+		return []string{}
+	}
+	return output
 }
 
 func matchesQuery(message map[string]any, query string) bool {
@@ -1517,14 +1664,4 @@ func allowedMailboxSetting(setting string) bool {
 	default:
 		return false
 	}
-}
-
-func selectedResponseHeaders(headers http.Header) map[string]any {
-	output := map[string]any{}
-	for _, key := range []string{"request-id", "client-request-id", "retry-after", "location", "content-type"} {
-		if value := headers.Get(key); value != "" {
-			output[key] = value
-		}
-	}
-	return output
 }

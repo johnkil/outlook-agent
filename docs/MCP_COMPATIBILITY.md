@@ -20,8 +20,10 @@ Compatibility version `0.1` includes these tool names:
 - `outlook.mail_list_attachments`
 - `outlook.mail_fetch_attachment`
 - `outlook.mail_create_draft`
+- `outlook.mail_send_draft`
 - `outlook.mail_move_to_deleted_items`
 - `outlook.mail_rules_list`
+- `outlook.mail_rule_set_enabled`
 - `outlook.mailbox_settings_get`
 - `outlook.calendar_list`
 - `outlook.calendar_availability`
@@ -61,6 +63,12 @@ mailbox settings: read-metadata `outlook.mail_rules_list`,
 dry-run-confirmed settings/rules `outlook.mail_rule_set_enabled`, and
 read-metadata `outlook.mailbox_settings_get`. The set-enabled helper exposes a
 narrow existing-rule toggle without opening arbitrary rule/settings writes.
+
+Compatibility version `0.1` also includes `outlook.mail_send_draft` for sending
+one existing draft through the typed high-risk path. Clients must first call
+`outlook.action_dry_run` for action `mail.send_draft`, review the returned
+packet, and then call `outlook.mail_send_draft` with the exact confirmation
+token plus host approval fields when approval mode requires them.
 
 Clients must ignore unknown output fields and unknown capability detail fields.
 Servers must keep existing fields present with compatible meanings.

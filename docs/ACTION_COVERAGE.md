@@ -25,11 +25,13 @@ level 5: workflow skill guidance
 | Auth | `outlook.auth_check` | 4 |
 | Capabilities | `outlook.capabilities` | 4 |
 | Mail | `outlook.mail_search` | 4 |
+| Mail | `outlook.mail_search_next` | 4 |
 | Mail | `outlook.mail_fetch_metadata` | 4 |
 | Mail | `outlook.mail_fetch_body` | 4 |
 | Mail | `outlook.mail_list_attachments` | 4 |
 | Mail | `outlook.mail_fetch_attachment` | 4 |
 | Mail | `outlook.mail_create_draft` | 4 |
+| Mail | `outlook.mail_send_draft` | 4 |
 | Mail | `outlook.mail_move_to_deleted_items` | 4 |
 | Mail | `outlook.mail_rules_list` | 4 |
 | Mail | `outlook.mail_rule_set_enabled` | 4 |

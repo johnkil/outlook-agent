@@ -21,17 +21,22 @@ specific message or thread.
 5. List attachment metadata with `outlook.mail_list_attachments` before using
    `outlook.mail_fetch_attachment` for one explicit attachment id.
 6. Create drafts with `outlook.mail_create_draft` before any send-like flow.
-7. Inspect rule and mailbox-setting metadata with `outlook.mail_rules_list`
+7. Send an existing draft only through `outlook.action_dry_run` for
+   `mail.send_draft`, exact confirmation, required host approval, and
+   `outlook.mail_send_draft`.
+8. Inspect rule and mailbox-setting metadata with `outlook.mail_rules_list`
    and `outlook.mailbox_settings_get` before considering any raw rule or
    settings action.
-8. Treat send, delete, move, folder, category, rule, settings, and broad
+9. Treat send, delete, move, folder, category, rule, settings, and broad
    cleanup actions as separate explicit operations.
-9. Use `outlook.raw_action` only for a capability-discovered transport action
+10. Use `outlook.raw_action` only for a capability-discovered transport action
    that does not have a high-level tool.
 
 ## Write Safety
 
-- Do not send unless the user confirms exact recipients and content.
+- Do not send unless the user confirms exact recipients and content; prefer
+  `outlook.mail_send_draft` over raw send actions when an existing draft is the
+  target.
 - Do not delete or move broad sets without `outlook.action_dry_run` and
   `outlook.action_confirm` on the exact payload.
 - Do not use raw guarded actions unless the capability metadata and user intent

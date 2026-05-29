@@ -63,6 +63,7 @@ func TestFakeTransportExecutesInitialHighLevelActions(t *testing.T) {
 		{name: "mail.list_attachments", key: "attachments"},
 		{name: "mail.fetch_attachment", key: "attachment"},
 		{name: "mail.create_draft", key: "draft"},
+		{name: "mail.send_draft", key: "sent"},
 		{name: "mail.move_to_deleted_items", key: "moved_count"},
 		{name: "calendar.list", key: "events"},
 		{name: "calendar.availability", key: "windows"},
@@ -99,6 +100,25 @@ func TestFakeTransportRejectsUnknownAction(t *testing.T) {
 	}
 	if response.Error == "" {
 		t.Fatal("expected error for unknown action")
+	}
+}
+
+func TestFakeTransportDryRunSendDraftReview(t *testing.T) {
+	client := fake.New()
+
+	summary := client.DryRun(context.Background(), transport.ActionRequest{
+		Name:    "mail.send_draft",
+		Payload: map[string]any{"draft_id": "draft-1"},
+	})
+
+	if summary.Action != "mail.send_draft" || summary.Count != 1 || summary.Reversible {
+		t.Fatalf("unexpected send draft dry-run summary: %#v", summary)
+	}
+	if summary.Review == nil || summary.Review.Mail == nil {
+		t.Fatalf("expected send draft review packet: %#v", summary)
+	}
+	if summary.Review.SafetyClass != "send_like" || summary.Review.Mail.Subject == "" || summary.Review.Mail.BodySHA256 == "" {
+		t.Fatalf("unexpected send draft review: %#v", summary.Review)
 	}
 }
 

@@ -22,6 +22,7 @@ func New() *Transport {
 			{Name: "mail.list_attachments", Transport: "fake", Class: policy.ReadAttachmentExplicit, Level: action.LevelHighLevelMCPTool},
 			{Name: "mail.fetch_attachment", Transport: "fake", Class: policy.ReadAttachmentExplicit, Level: action.LevelHighLevelMCPTool},
 			{Name: "mail.create_draft", Transport: "fake", Class: policy.DraftOnly, Level: action.LevelHighLevelMCPTool},
+			{Name: "mail.send_draft", Transport: "fake", Class: policy.SendLike, Level: action.LevelHighLevelMCPTool},
 			{Name: "mail.move_to_deleted_items", Transport: "fake", Class: policy.ReversibleBulk, Level: action.LevelHighLevelMCPTool},
 			{Name: "mail.rules.list", Transport: "fake", Class: policy.ReadMetadata, Level: action.LevelHighLevelMCPTool},
 			{Name: "mail.rules.set_enabled", Transport: "fake", Class: policy.SettingsOrRules, Level: action.LevelHighLevelMCPTool},
@@ -121,6 +122,16 @@ func (client *Transport) Execute(_ context.Context, request transport.ActionRequ
 				},
 			},
 		}
+	case "mail.send_draft":
+		return transport.ActionResponse{
+			OK: true,
+			Data: map[string]any{
+				"sent": map[string]any{
+					"id":     valueOrDefault(request.Payload, "draft_id", "draft-1"),
+					"status": "sent",
+				},
+			},
+		}
 	case "mail.move_to_deleted_items":
 		return transport.ActionResponse{
 			OK: true,
@@ -211,7 +222,28 @@ func valueOrDefault(payload map[string]any, key string, fallback any) any {
 	return value
 }
 
+func stringValue(payload map[string]any, key string, fallback string) string {
+	value, _ := valueOrDefault(payload, key, fallback).(string)
+	if value == "" {
+		return fallback
+	}
+	return value
+}
+
 func (client *Transport) DryRun(_ context.Context, request transport.ActionRequest) transport.DryRunSummary {
+	if request.Name == "mail.send_draft" {
+		review := transport.ReviewPacket{
+			Version:            transport.ReviewPacketVersion,
+			Transport:          "fake",
+			Action:             request.Name,
+			SafetyClass:        string(policy.SendLike),
+			Targets:            []transport.TargetRef{{Kind: "draft", ID: stringValue(request.Payload, "draft_id", "draft-1")}},
+			Mutation:           &transport.MutationReview{Operation: "send"},
+			Mail:               &transport.MailReview{To: []string{"alex@example.com"}, Subject: "Fake draft", BodyPreview: "Fake draft body", BodySHA256: transport.BodySHA256("Fake draft body")},
+			PayloadFingerprint: transport.PayloadFingerprint(request.Payload),
+		}
+		return transport.DryRunSummary{Action: request.Name, Count: 1, Reversible: false, RequiresConfirmation: true, SafetyClass: string(policy.SendLike), Review: &review}
+	}
 	return transport.DryRunSummary{
 		Action:               request.Name,
 		Count:                dryRunCount(request),
