@@ -251,11 +251,16 @@ func (client *Transport) DryRun(_ context.Context, request transport.ActionReque
 }
 
 func dryRunSafetyClass(request transport.ActionRequest) policy.SafetyClass {
+	class := dryRunCapabilityClass(request.Name)
+	if class == policy.Destructive && isMoveToDeletedItemsDelete(request) {
+		return policy.ReversibleBulk
+	}
+	return class
+}
+
+func dryRunCapabilityClass(actionName string) policy.SafetyClass {
 	for _, definition := range append(highLevelCapabilities(), rawServiceCapabilities()...) {
-		if definition.Name == request.Name {
-			if definition.Class == policy.Destructive && isReversible(request) {
-				return policy.ReversibleBulk
-			}
+		if definition.Name == actionName {
 			return definition.Class
 		}
 	}
@@ -501,12 +506,20 @@ func countValue(value any) int {
 }
 
 func isReversible(request transport.ActionRequest) bool {
-	body, _ := request.Payload["Body"].(map[string]any)
-	deleteType, _ := body["DeleteType"].(string)
-	if request.Name == "DeleteItem" || request.Name == "DeleteFolder" {
-		return deleteType == "MoveToDeletedItems"
+	class := dryRunCapabilityClass(request.Name)
+	if class == policy.Destructive {
+		return isMoveToDeletedItemsDelete(request)
 	}
 	return true
+}
+
+func isMoveToDeletedItemsDelete(request transport.ActionRequest) bool {
+	if request.Name != "DeleteItem" && request.Name != "DeleteFolder" {
+		return false
+	}
+	body, _ := request.Payload["Body"].(map[string]any)
+	deleteType, _ := body["DeleteType"].(string)
+	return deleteType == "MoveToDeletedItems"
 }
 
 func (client *Transport) String() string {

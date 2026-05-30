@@ -367,6 +367,31 @@ func TestTransportDryRunDeleteItemHardDeleteReviewIsDestructive(t *testing.T) {
 	}
 }
 
+func TestTransportDryRunDestructiveRawActionReviewStaysDestructive(t *testing.T) {
+	client := owa.NewTransport(owa.Config{
+		BaseURL:   "https://example.test",
+		Username:  "DOMAIN\\user",
+		SecretRef: secret.Ref("memory:owa"),
+	}, secret.NewMemoryStore(map[string]string{"memory:owa": "password"}), nil)
+
+	summary := client.DryRun(context.Background(), transport.ActionRequest{
+		Name: "DeleteAttachment",
+		Payload: map[string]any{"Body": map[string]any{
+			"AttachmentId": map[string]any{"Id": "attachment-1"},
+		}},
+	})
+
+	if summary.Reversible {
+		t.Fatalf("expected destructive raw action to be irreversible, got %#v", summary)
+	}
+	if summary.SafetyClass != string(policy.Destructive) {
+		t.Fatalf("expected destructive safety class, got %#v", summary)
+	}
+	if summary.Review == nil || summary.Review.SafetyClass != string(policy.Destructive) {
+		t.Fatalf("expected destructive review, got %#v", summary.Review)
+	}
+}
+
 func TestTransportDryRunCreateItemReviewExtractsMailFields(t *testing.T) {
 	client := owa.NewTransport(owa.Config{
 		BaseURL:   "https://example.test",
