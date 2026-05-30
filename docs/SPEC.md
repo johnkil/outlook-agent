@@ -73,12 +73,15 @@ or `refresh_token`.
 
 Supported secret references are `keychain:service/account` for macOS Keychain,
 explicit `file:/absolute/path` for cross-platform local or CI/dev use, and
-`external:name` for operator-managed command providers. File secrets must be
-user-only readable/writable (`0600` on Unix-like systems). External secret
-commands are defined in config under `secrets.external.<name>` as an absolute
-`command` path plus an `args` array. The runtime invokes the command directly
-without a shell, applies a timeout and bounded stdout read, trims trailing
-newlines, and must not include command stdout or stderr in returned errors.
+`external:name` for operator-managed command providers. macOS Keychain writes
+require a `darwin+cgo` build so the runtime can use Security.framework without
+putting secret values in argv; `darwin&&!cgo` builds fail Keychain writes
+closed. File secrets must be user-only readable/writable (`0600` on Unix-like
+systems). External secret commands are defined in config under
+`secrets.external.<name>` as an absolute `command` path plus an `args` array.
+The runtime invokes the command directly without a shell, applies a timeout and
+bounded stdout read, trims trailing newlines, and must not include command
+stdout or stderr in returned errors.
 
 `policy explain` without arguments returns the stable safety-class list.
 `policy explain --action <name>` returns all built-in transport capability
