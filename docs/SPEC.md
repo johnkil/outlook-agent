@@ -162,6 +162,10 @@ Key tool inputs:
   `returned`, `limit`, and `truncated`. When the selected transport supports
   continuation, it returns an opaque `next_cursor`; agents continue with
   `outlook.mail_search_next` instead of storing provider continuation URLs.
+  Cursors are scoped to the transport/profile/search action, single-use, and
+  leased while the next page is being fetched. Concurrent reuse of the same
+  cursor fails with a cursor error before replaying the provider continuation.
+  Provider failures roll the lease back so the same cursor can be retried.
 - `outlook.calendar_availability`: `start`, `end`, and optional `email`.
   When `email` is omitted, OWA profiles use `settings.mailbox_email` if
   configured.

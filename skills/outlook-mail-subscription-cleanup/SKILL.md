@@ -10,7 +10,8 @@ Separate analysis from mailbox changes.
 ## Workflow
 
 1. Search for candidate automated or subscription messages. Continue paginated
-   results with `outlook.mail_search_next` when `next_cursor` is present.
+   results with `outlook.mail_search_next` when `next_cursor` is present; do
+   not call the same cursor concurrently.
 2. Group by sender and pattern.
 3. Propose unsubscribe, archive, move, or delete actions.
 4. Use `outlook.action_dry_run` before any broad move or delete.
