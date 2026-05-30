@@ -12,6 +12,7 @@ type Binding struct {
 	Profile   string
 	Action    string
 	Mailbox   string
+	Query     string
 	QueryHash string
 }
 

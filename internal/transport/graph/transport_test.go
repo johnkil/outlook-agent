@@ -505,6 +505,43 @@ func TestTransportExecutesMailSearchNext(t *testing.T) {
 	}
 }
 
+func TestTransportExecutesMailSearchNextFiltersByQuery(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		if request.Method != http.MethodGet || request.URL.Path != "/v1.0/me/mailFolders/inbox/messages" {
+			t.Fatalf("unexpected request: %s %s", request.Method, request.URL.String())
+		}
+		response.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(response).Encode(map[string]any{
+			"value": []any{
+				graphMessageResponse("message-2", "Next with Alice", "Alice", "alice@example.com"),
+				graphMessageResponse("message-3", "Budget", "Bob", "bob@example.com"),
+			},
+		})
+	}))
+	defer server.Close()
+
+	client := graph.NewTransport(graph.Config{
+		BaseURL:   server.URL + "/v1.0",
+		SecretRef: secret.Ref("memory:graph"),
+	}, secret.NewMemoryStore(map[string]string{"memory:graph": "token-secret"}), server.Client())
+
+	result := client.Execute(context.Background(), transport.ActionRequest{
+		Name: "mail.search_next",
+		Payload: map[string]any{
+			"next_link": server.URL + "/v1.0/me/mailFolders/inbox/messages?$skiptoken=next",
+			"query":     "alice",
+		},
+	})
+
+	if !result.OK {
+		t.Fatalf("expected mail.search_next ok, got %#v", result)
+	}
+	messages := result.Data["messages"].([]any)
+	if len(messages) != 1 || messages[0].(map[string]any)["id"] != "message-2" {
+		t.Fatalf("expected query to keep only Alice next-page message, got %#v", messages)
+	}
+}
+
 func TestTransportRejectsMailSearchNextForUnexpectedHost(t *testing.T) {
 	client := graph.NewTransport(graph.Config{
 		BaseURL:   "https://graph.example.test/v1.0",

@@ -601,6 +601,7 @@ func mailSearchNextHandler(runtime *Runtime) func(context.Context, *mcp.CallTool
 			Name: "mail.search_next",
 			Payload: map[string]any{
 				"next_link": record.NextLink,
+				"query":     record.Binding.Query,
 			},
 		})
 		if err := transportResponseError(response); err != nil {
@@ -638,6 +639,7 @@ func (runtime *Runtime) issueSearchCursor(input MailSearchInput, nextLink string
 		Profile:   runtime.profile,
 		Action:    "mail.search",
 		Mailbox:   strings.TrimSpace(input.Mailbox),
+		Query:     input.Query,
 		QueryHash: transport.PayloadFingerprint(map[string]any{"query": input.Query}),
 	}
 	return runtime.issueSearchCursorFromBinding(binding, nextLink)

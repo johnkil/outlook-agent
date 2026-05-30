@@ -60,7 +60,7 @@ func TestMailSearchHandlerPreservesPaginationMetadata(t *testing.T) {
 	}
 }
 
-func TestMailSearchNextConsumesCursorAndFetchesNextPage(t *testing.T) {
+func TestMailSearchNextConsumesCursorAndPreservesQueryFilter(t *testing.T) {
 	client := &paginatedSearchNextTransport{}
 	runtime := NewRuntime(client)
 
@@ -81,6 +81,9 @@ func TestMailSearchNextConsumesCursorAndFetchesNextPage(t *testing.T) {
 	}
 	if client.nextLinkUsed != "https://graph.example.test/v1.0/me/messages?$skiptoken=next" {
 		t.Fatalf("expected provider nextLink to stay inside transport payload, got %q", client.nextLinkUsed)
+	}
+	if client.queryUsed != "planning" {
+		t.Fatalf("expected original query to be preserved for next page, got %q", client.queryUsed)
 	}
 
 	_, _, err = mailSearchNextHandler(runtime)(context.Background(), nil, MailSearchNextInput{Cursor: firstPage.NextCursor})
@@ -155,6 +158,7 @@ func (paginatedSearchTransport) DryRun(context.Context, transport.ActionRequest)
 
 type paginatedSearchNextTransport struct {
 	nextLinkUsed string
+	queryUsed    string
 }
 
 func (client *paginatedSearchNextTransport) Name() string {
@@ -181,6 +185,7 @@ func (client *paginatedSearchNextTransport) Execute(_ context.Context, request t
 		}}
 	case "mail.search_next":
 		client.nextLinkUsed, _ = request.Payload["next_link"].(string)
+		client.queryUsed, _ = request.Payload["query"].(string)
 		return transport.ActionResponse{OK: true, Data: map[string]any{
 			"messages":  []any{map[string]any{"subject": "Second"}},
 			"returned":  1,

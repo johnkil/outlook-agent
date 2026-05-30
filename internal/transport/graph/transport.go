@@ -128,7 +128,7 @@ func (client *Transport) Execute(ctx context.Context, request transport.ActionRe
 		}
 		return transport.ActionResponse{OK: true, Data: data}
 	case "mail.search_next":
-		result, err := client.listMessagesNext(ctx, stringValue(request.Payload, "next_link", ""))
+		result, err := client.listMessagesNext(ctx, stringValue(request.Payload, "next_link", ""), stringValue(request.Payload, "query", ""))
 		if err != nil {
 			return transport.ActionResponse{OK: false, Error: err.Error()}
 		}
@@ -754,7 +754,7 @@ func (client *Transport) listMessages(ctx context.Context, mailbox string, folde
 	return messageSearchResult{Messages: messages, NextLink: response.NextLink}, nil
 }
 
-func (client *Transport) listMessagesNext(ctx context.Context, nextLink string) (messageSearchResult, error) {
+func (client *Transport) listMessagesNext(ctx context.Context, nextLink string, query string) (messageSearchResult, error) {
 	requestURL, err := client.validMessagesNextLink(nextLink)
 	if err != nil {
 		return messageSearchResult{}, err
@@ -765,7 +765,10 @@ func (client *Transport) listMessagesNext(ctx context.Context, nextLink string) 
 	}
 	messages := make([]any, 0, len(response.Value))
 	for _, item := range response.Value {
-		messages = append(messages, normalizeGraphMessage(item))
+		normalized := normalizeGraphMessage(item)
+		if matchesQuery(normalized, query) {
+			messages = append(messages, normalized)
+		}
 	}
 	if messages == nil {
 		messages = []any{}
