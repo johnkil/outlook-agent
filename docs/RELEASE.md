@@ -32,6 +32,17 @@ version into `outlook-agent doctor` / MCP server metadata:
 
 Every archive is listed in `dist/SHA256SUMS.txt`.
 
+Verify a completed release directory without network access:
+
+```bash
+scripts/release-verify.sh dist
+```
+
+The verifier checks that every listed archive exists, every archive checksum
+matches `SHA256SUMS.txt`, no extra `.tar.gz` or `.zip` archive is missing from
+the checksum file, and `SHA256SUMS.txt.asc` verifies when a detached signature
+exists and `gpg` is installed.
+
 Release archives are built with `CGO_ENABLED=0` for reproducible cross-platform
 packaging from the hosted workflow. On macOS this means Keychain reads can use
 the `/usr/bin/security` read path, but Keychain writes intentionally fail
@@ -46,10 +57,10 @@ stores for write-capable credential storage.
 Release operators must decide whether the release channel requires a Software
 Bill of Materials (SBOM) before publishing public or enterprise artifacts. If
 SBOM generation is required, generate it from the exact tagged source and
-published archives, publish it alongside `SHA256SUMS.txt`, and keep the tool
-choice and signing/provenance policy documented with the release channel. Do
-not claim SBOM coverage for archives that were not built from the same tagged
-commit.
+published archives, publish it alongside `SHA256SUMS.txt`, record the result in
+`docs/RELEASE_EVIDENCE.md`, and keep the tool choice and signing/provenance
+policy documented with the release channel. Do not claim SBOM coverage for
+archives that were not built from the same tagged commit.
 
 To build into another directory, set:
 
@@ -65,9 +76,10 @@ GOPATH=$PWD/.cache/go GOCACHE=$PWD/.cache/go-build GOMODCACHE=$PWD/.cache/go-mod
 ```
 
 The smoke builds into a portable temporary dist directory, verifies six
-platform archives, verifies `SHA256SUMS.txt`, starts the host-platform archive
-when one is runnable, checks the embedded `doctor` version, and removes the
-temporary output unless `OUTLOOK_AGENT_KEEP_RELEASE_SMOKE=1` is set.
+platform archives, verifies `SHA256SUMS.txt`, runs `scripts/release-verify.sh`,
+starts the host-platform archive when one is runnable, checks the embedded
+`doctor` version, and removes the temporary output unless
+`OUTLOOK_AGENT_KEEP_RELEASE_SMOKE=1` is set.
 
 ## Signed Checksums
 
@@ -109,6 +121,10 @@ git push origin v0.1.0
 
 The release workflow runs `scripts/release-build.sh`, uploads the archives,
 `SHA256SUMS.txt`, and the optional signature to a GitHub release.
+
+Before publishing release notes, fill out `docs/RELEASE_EVIDENCE.md` for the
+tag. Keep private live-smoke details out of the repository; use pass/fail or
+skipped status plus public-safe run links and limitations.
 
 ## Install From Archive
 

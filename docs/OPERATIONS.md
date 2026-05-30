@@ -21,7 +21,7 @@ Before publishing a release:
 GOPATH=$PWD/.cache/go GOCACHE=$PWD/.cache/go-build GOMODCACHE=$PWD/.cache/go-mod go test -count=1 ./...
 GOPATH=$PWD/.cache/go GOCACHE=$PWD/.cache/go-build GOMODCACHE=$PWD/.cache/go-mod go build -o /private/tmp/outlook-agent-build-check ./cmd/outlook-agent
 rm -f /private/tmp/outlook-agent-build-check
-bash -n scripts/release-build.sh scripts/public-safety-check.sh
+bash -n scripts/release-build.sh scripts/release-verify.sh scripts/public-safety-check.sh
 scripts/public-safety-check.sh
 git diff --check
 ```
@@ -33,10 +33,12 @@ git diff --check
 scripts/release-build.sh v0.1.0
 ```
 
-5. Verify `dist/SHA256SUMS.txt` exists and contains every archive.
+5. Run `scripts/release-verify.sh dist`.
 6. If signing is enabled, verify `dist/SHA256SUMS.txt.asc`.
-7. Push the tag only after the local artifacts and safety gates are clean.
-8. Confirm the GitHub release contains the same archive set and checksums.
+7. Fill out `docs/RELEASE_EVIDENCE.md` for the tag without committing private
+   live-smoke details.
+8. Push the tag only after the local artifacts and safety gates are clean.
+9. Confirm the GitHub release contains the same archive set and checksums.
 
 ## Signing Key Publication And Rotation
 

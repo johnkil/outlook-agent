@@ -44,6 +44,8 @@ while IFS= read -r archive; do
   fi
 done < <(find "$dist_dir" -maxdepth 1 -type f \( -name "*.tar.gz" -o -name "*.zip" \) | sort)
 
+scripts/release-verify.sh "$dist_dir"
+
 host_goos="$(go env GOHOSTOS)"
 host_goarch="$(go env GOHOSTARCH)"
 host_archive="${dist_dir}/outlook-agent_smoke_${host_goos}_${host_goarch}.tar.gz"
