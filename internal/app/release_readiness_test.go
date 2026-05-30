@@ -50,6 +50,8 @@ func TestReleaseReadinessArtifactsExist(t *testing.T) {
 			"GOHOSTARCH",
 			"\"version\": \"smoke\"",
 			"\"built_by\": \"release-build\"",
+			"OUTLOOK_AGENT_BINARY_UNDER_TEST",
+			"TestBinaryMCPStdioUsesConfiguredDefaultProfile",
 			"scripts/release-verify.sh",
 		},
 		filepath.Join("..", "..", "scripts", "release-verify.sh"): {
