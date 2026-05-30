@@ -77,7 +77,9 @@ Compatibility version `0.1` also includes `outlook.mail_send_draft` for sending
 one existing draft through the typed high-risk path. Clients must first call
 `outlook.action_dry_run` for action `mail.send_draft`, review the returned
 packet, and then call `outlook.mail_send_draft` with the exact confirmation
-token plus host approval fields when approval mode requires them.
+token plus host approval fields when approval mode requires them. Review
+packets may include bounded attachment metadata; they must not include
+attachment bytes.
 
 Compatibility version `0.1` also includes additive approval readiness metadata.
 `outlook.capabilities.approval` exposes approval mode, host-integration
@@ -101,11 +103,19 @@ when the request contains the exact id and new state. Bulk changes require
 returned packet, and exact confirmation fields when calling the high-level
 tool.
 
+Compatibility version `0.1` also includes additive review-packet metadata:
+`completeness`, `warning_codes`, `omitted_target_count`, bounded attachment
+metadata, and enriched calendar/rule review fields. Clients must ignore unknown
+review fields. Raw reviews can be `minimal` when the runtime cannot fully
+understand action semantics.
+
 Compatibility version `0.1` also includes `outlook.calendar_respond` for
 responding accept, decline, or tentative to one exact event. The underlying
 action is `calendar.respond`, is classified as `send_like`, and requires
 dry-run review, exact confirmation, and host approval when approval mode
-requires it.
+requires it. Graph review packets include metadata-only meeting context such as
+subject, time, location, organizer, attendees, and current response status when
+available, never event body content.
 
 Clients must ignore unknown output fields and unknown capability detail fields.
 Servers must keep existing fields present with compatible meanings.

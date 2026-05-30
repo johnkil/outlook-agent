@@ -1377,6 +1377,8 @@ func reviewPacketFor(client transport.Transport, actionName string, payload map[
 		Transport:          client.Name(),
 		Action:             actionName,
 		SafetyClass:        string(class),
+		Completeness:       transport.ReviewCompletenessMinimal,
+		WarningCodes:       []string{transport.ReviewWarningRichReviewUnavailable},
 		PayloadFingerprint: transport.PayloadFingerprint(payload),
 		Limitations:        []string{"transport did not provide a rich dry-run review packet"},
 	}

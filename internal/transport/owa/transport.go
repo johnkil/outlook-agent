@@ -272,12 +272,15 @@ func dryRunCapabilityClass(actionName string) policy.SafetyClass {
 
 func dryRunReview(request transport.ActionRequest, class policy.SafetyClass) transport.ReviewPacket {
 	body, _ := request.Payload["Body"].(map[string]any)
+	targets := owaTargetRefs(body)
+	targets, omittedTargetCount := transport.ClampTargetRefs(targets, transport.DefaultReviewTargetLimit)
 	review := transport.ReviewPacket{
 		Version:            transport.ReviewPacketVersion,
 		Transport:          "owa",
 		Action:             request.Name,
 		SafetyClass:        string(class),
-		Targets:            owaTargetRefs(body),
+		Targets:            targets,
+		OmittedTargetCount: omittedTargetCount,
 		Mutation:           owaMutationReview(request.Name, body),
 		Mail:               owaMailReview(request.Name, body),
 		PayloadFingerprint: transport.PayloadFingerprint(request.Payload),
@@ -286,7 +289,32 @@ func dryRunReview(request transport.ActionRequest, class policy.SafetyClass) tra
 	if len(review.Targets) == 0 && review.Mutation == nil && review.Mail == nil {
 		review.Limitations = append(review.Limitations, "payload target details could not be extracted during dry-run")
 	}
+	review.Completeness = transport.ReviewCompletenessComplete
+	if len(review.Limitations) > 0 || omittedTargetCount > 0 {
+		review.Completeness = transport.ReviewCompletenessPartial
+	}
+	if omittedTargetCount > 0 {
+		review.WarningCodes = append(review.WarningCodes, transport.ReviewWarningTargetsOmitted)
+		review.Limitations = append(review.Limitations, fmt.Sprintf("%d additional targets omitted from review output", omittedTargetCount))
+	}
+	if review.Mutation == nil && review.Mail == nil {
+		review.Completeness = transport.ReviewCompletenessMinimal
+		review.WarningCodes = append(review.WarningCodes, transport.ReviewWarningRawSemanticsNotFullyUnderstood)
+	}
+	if class == policy.Unknown {
+		review.Completeness = transport.ReviewCompletenessMinimal
+		review.WarningCodes = appendWarningCode(review.WarningCodes, transport.ReviewWarningRawSemanticsNotFullyUnderstood)
+	}
 	return review
+}
+
+func appendWarningCode(values []string, value string) []string {
+	for _, existing := range values {
+		if existing == value {
+			return values
+		}
+	}
+	return append(values, value)
 }
 
 func dryRunReviewError(actionName string, review transport.ReviewPacket) string {

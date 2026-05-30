@@ -390,6 +390,9 @@ func TestTransportDryRunDestructiveRawActionReviewStaysDestructive(t *testing.T)
 	if summary.Review == nil || summary.Review.SafetyClass != string(policy.Destructive) {
 		t.Fatalf("expected destructive review, got %#v", summary.Review)
 	}
+	if summary.Review.Completeness != "minimal" || !stringSliceContains(summary.Review.WarningCodes, "raw_semantics_not_fully_understood") {
+		t.Fatalf("expected minimal raw OWA review warning, got %#v", summary.Review)
+	}
 }
 
 func TestTransportDryRunCreateItemReviewExtractsMailFields(t *testing.T) {
@@ -449,6 +452,9 @@ func TestTransportDryRunUnknownRawActionIsIrreversible(t *testing.T) {
 	}
 	if summary.SafetyClass != string(policy.Unknown) {
 		t.Fatalf("expected unknown safety class, got %#v", summary)
+	}
+	if summary.Review == nil || summary.Review.Completeness != "minimal" || !stringSliceContains(summary.Review.WarningCodes, "raw_semantics_not_fully_understood") {
+		t.Fatalf("expected minimal unknown OWA review warning, got %#v", summary.Review)
 	}
 }
 
@@ -660,4 +666,13 @@ func TestTransportExecuteReportsHTTPStatusError(t *testing.T) {
 	if response.Error != "owa service returned HTTP 500" {
 		t.Fatalf("expected status error, got %#v", response)
 	}
+}
+
+func stringSliceContains(values []string, expected string) bool {
+	for _, value := range values {
+		if value == expected {
+			return true
+		}
+	}
+	return false
 }

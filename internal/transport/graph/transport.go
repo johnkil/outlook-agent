@@ -350,8 +350,12 @@ func (client *Transport) DryRun(ctx context.Context, request transport.ActionReq
 		return transport.DryRunSummary{Action: request.Name, Count: 1, Reversible: false, RequiresConfirmation: true, SafetyClass: string(policy.Destructive), Review: &review, Warnings: review.Limitations}
 	}
 	if request.Name == "mail.rules.set_enabled" {
-		review := graphRuleSetEnabledReview(request.Name, request.Payload)
-		return transport.DryRunSummary{Action: request.Name, Count: 1, Reversible: true, RequiresConfirmation: true, SafetyClass: string(policy.SettingsOrRules), Review: &review}
+		review, err := client.graphRuleSetEnabledReview(ctx, mailboxTarget(request.Payload), request.Name, request.Payload)
+		summary := transport.DryRunSummary{Action: request.Name, Count: 1, Reversible: true, RequiresConfirmation: true, SafetyClass: string(policy.SettingsOrRules), Review: &review, Warnings: review.Limitations}
+		if err != nil {
+			summary.Error = err.Error()
+		}
+		return summary
 	}
 	return transport.DryRunSummary{Action: request.Name, Count: 1, Reversible: false, RequiresConfirmation: false}
 }
@@ -361,35 +365,57 @@ func graphMoveToDeletedItemsReview(actionName string, payload map[string]any, id
 	for _, id := range ids {
 		targets = append(targets, transport.TargetRef{Kind: "message", ID: id})
 	}
-	return transport.ReviewPacket{
+	targets, omittedTargetCount := transport.ClampTargetRefs(targets, transport.DefaultReviewTargetLimit)
+	review := transport.ReviewPacket{
 		Version:            transport.ReviewPacketVersion,
 		Transport:          "graph",
 		Action:             actionName,
 		SafetyClass:        string(policy.ReversibleBulk),
+		Completeness:       transport.ReviewCompletenessComplete,
 		Targets:            targets,
+		OmittedTargetCount: omittedTargetCount,
 		Mutation:           &transport.MutationReview{Operation: "move", To: "Deleted Items"},
 		PayloadFingerprint: transport.PayloadFingerprint(payload),
 	}
+	if omittedTargetCount > 0 {
+		review.Completeness = transport.ReviewCompletenessPartial
+		review.WarningCodes = append(review.WarningCodes, transport.ReviewWarningTargetsOmitted)
+		review.Limitations = append(review.Limitations, fmt.Sprintf("%d additional targets omitted from review output", omittedTargetCount))
+	}
+	return review
 }
 
-func graphRuleSetEnabledReview(actionName string, payload map[string]any) transport.ReviewPacket {
+func (client *Transport) graphRuleSetEnabledReview(ctx context.Context, mailbox string, actionName string, payload map[string]any) (transport.ReviewPacket, error) {
 	enabled, _ := boolValue(payload, "enabled")
-	return transport.ReviewPacket{
+	ruleID := strings.TrimSpace(stringValue(payload, "id", ""))
+	review := transport.ReviewPacket{
 		Version:     transport.ReviewPacketVersion,
 		Transport:   "graph",
 		Action:      actionName,
 		SafetyClass: string(policy.SettingsOrRules),
 		Targets: []transport.TargetRef{{
 			Kind: "message_rule",
-			ID:   strings.TrimSpace(stringValue(payload, "id", "")),
+			ID:   ruleID,
 		}},
 		Mutation: &transport.MutationReview{
 			Operation: "set_enabled",
 			NewState:  map[string]any{"enabled": enabled},
 		},
 		PayloadFingerprint: transport.PayloadFingerprint(payload),
-		Limitations:        []string{"old rule state was not fetched during dry-run"},
 	}
+	rule, err := client.getMessageRuleForReview(ctx, mailbox, stringValue(payload, "folder_id", "inbox"), ruleID)
+	if err != nil {
+		message := "rule metadata could not be reviewed: " + err.Error()
+		review.Completeness = transport.ReviewCompletenessPartial
+		review.Limitations = append(review.Limitations, message)
+		return review, fmt.Errorf("%s", message)
+	}
+	review.Completeness = transport.ReviewCompletenessComplete
+	if rule.DisplayName != "" {
+		review.Targets[0].Name = rule.DisplayName
+	}
+	review.Mutation.OldState = map[string]any{"enabled": rule.IsEnabled}
+	return review, nil
 }
 
 func (client *Transport) graphSendDraftReview(ctx context.Context, mailbox string, actionName string, payload map[string]any) (transport.ReviewPacket, error) {
@@ -403,6 +429,7 @@ func (client *Transport) graphSendDraftReview(ctx context.Context, mailbox strin
 		Transport:          "graph",
 		Action:             actionName,
 		SafetyClass:        string(policy.SendLike),
+		Completeness:       transport.ReviewCompletenessPartial,
 		Targets:            targets,
 		Mutation:           &transport.MutationReview{Operation: "send"},
 		Mail:               &transport.MailReview{},
@@ -422,9 +449,15 @@ func (client *Transport) graphSendDraftReview(ctx context.Context, mailbox strin
 		review.Mail.BodyPreview = transport.RedactedPreview(draft.Body.Content, 500)
 		review.Mail.BodySHA256 = transport.BodySHA256(draft.Body.Content)
 	}
-	if draft.HasAttachments {
-		review.Limitations = append(review.Limitations, "draft has attachments; attachment names were not fetched during dry-run")
+	attachments, err := client.listAttachmentMetadataForReview(ctx, mailbox, draftID)
+	if err != nil {
+		message := "draft attachment metadata could not be fetched during dry-run: " + err.Error()
+		review.Limitations = append(review.Limitations, message)
+		return review, fmt.Errorf("%s", message)
 	}
+	review.Mail.Attachments = attachmentReviews(attachments)
+	review.Mail.AttachmentNames = attachmentNames(attachments)
+	review.Completeness = transport.ReviewCompletenessComplete
 	return review, nil
 }
 
@@ -433,6 +466,7 @@ func graphReversibleMutationReview(actionName string, payload map[string]any, id
 	for _, id := range ids {
 		targets = append(targets, transport.TargetRef{Kind: "message", ID: id})
 	}
+	targets, omittedTargetCount := transport.ClampTargetRefs(targets, transport.DefaultReviewTargetLimit)
 	mutation := &transport.MutationReview{Operation: actionName}
 	switch actionName {
 	case "mail.move_to_folder":
@@ -455,15 +489,23 @@ func graphReversibleMutationReview(actionName string, payload map[string]any, id
 			mutation.NewState = map[string]any{"is_read": isRead}
 		}
 	}
-	return transport.ReviewPacket{
+	review := transport.ReviewPacket{
 		Version:            transport.ReviewPacketVersion,
 		Transport:          "graph",
 		Action:             actionName,
 		SafetyClass:        string(class),
+		Completeness:       transport.ReviewCompletenessComplete,
 		Targets:            targets,
+		OmittedTargetCount: omittedTargetCount,
 		Mutation:           mutation,
 		PayloadFingerprint: transport.PayloadFingerprint(payload),
 	}
+	if omittedTargetCount > 0 {
+		review.Completeness = transport.ReviewCompletenessPartial
+		review.WarningCodes = append(review.WarningCodes, transport.ReviewWarningTargetsOmitted)
+		review.Limitations = append(review.Limitations, fmt.Sprintf("%d additional targets omitted from review output", omittedTargetCount))
+	}
+	return review
 }
 
 func (client *Transport) graphCalendarRespondReview(ctx context.Context, mailbox string, actionName string, payload map[string]any) (transport.ReviewPacket, error) {
@@ -484,6 +526,7 @@ func (client *Transport) graphCalendarRespondReview(ctx context.Context, mailbox
 		Transport:          "graph",
 		Action:             actionName,
 		SafetyClass:        string(policy.SendLike),
+		Completeness:       transport.ReviewCompletenessPartial,
 		Targets:            []transport.TargetRef{{Kind: "event", ID: eventID}},
 		Mutation:           &transport.MutationReview{Operation: "calendar_response", NewState: newState},
 		Calendar:           &transport.CalendarReview{EventID: eventID, Response: responseName, SendsResponse: sendResponse},
@@ -493,7 +536,7 @@ func (client *Transport) graphCalendarRespondReview(ctx context.Context, mailbox
 		review.Limitations = append(review.Limitations, "event id was not provided")
 		return review, nil
 	}
-	requestURL, err := client.calendarEventURL(mailbox, eventID)
+	requestURL, err := client.calendarEventMetadataURL(mailbox, eventID)
 	if err != nil {
 		message := "event metadata could not be reviewed: " + err.Error()
 		review.Limitations = append(review.Limitations, message)
@@ -508,8 +551,14 @@ func (client *Transport) graphCalendarRespondReview(ctx context.Context, mailbox
 	if event.Subject != "" {
 		review.Targets[0].Name = event.Subject
 	}
+	review.Calendar.Subject = event.Subject
 	review.Calendar.Start = event.Start.DateTime
 	review.Calendar.End = event.End.DateTime
+	review.Calendar.Location = event.Location.DisplayName
+	review.Calendar.Organizer = formatAddress(event.Organizer.EmailAddress)
+	review.Calendar.Attendees = recipientStrings(event.Attendees)
+	review.Calendar.CurrentStatus = event.ResponseStatus.Response
+	review.Completeness = transport.ReviewCompletenessComplete
 	return review, nil
 }
 
@@ -577,6 +626,8 @@ func graphRawRequestReview(actionName string, payload map[string]any) transport.
 		Transport:          "graph",
 		Action:             actionName,
 		SafetyClass:        string(policy.Destructive),
+		Completeness:       transport.ReviewCompletenessMinimal,
+		WarningCodes:       []string{transport.ReviewWarningRawSemanticsNotFullyUnderstood},
 		Raw:                raw,
 		PayloadFingerprint: transport.PayloadFingerprint(payload),
 		Limitations:        limitations,
@@ -646,7 +697,8 @@ type attachment struct {
 }
 
 type attachmentList struct {
-	Value []attachment `json:"value"`
+	NextLink string       `json:"@odata.nextLink"`
+	Value    []attachment `json:"value"`
 }
 
 type recipient struct {
@@ -668,11 +720,14 @@ type eventList struct {
 }
 
 type calendarEvent struct {
-	ID       string           `json:"id"`
-	Subject  string           `json:"subject"`
-	Start    dateTimeTimeZone `json:"start"`
-	End      dateTimeTimeZone `json:"end"`
-	Location eventLocation    `json:"location"`
+	ID             string           `json:"id"`
+	Subject        string           `json:"subject"`
+	Start          dateTimeTimeZone `json:"start"`
+	End            dateTimeTimeZone `json:"end"`
+	Location       eventLocation    `json:"location"`
+	Organizer      recipient        `json:"organizer"`
+	Attendees      []recipient      `json:"attendees"`
+	ResponseStatus eventResponse    `json:"responseStatus"`
 }
 
 type dateTimeTimeZone struct {
@@ -682,6 +737,10 @@ type dateTimeTimeZone struct {
 
 type eventLocation struct {
 	DisplayName string `json:"displayName"`
+}
+
+type eventResponse struct {
+	Response string `json:"response"`
 }
 
 type getScheduleResponse struct {
@@ -726,7 +785,8 @@ type tokenRefreshResponse struct {
 const messageMetadataSelect = "id,subject,from,receivedDateTime,importance,isRead,hasAttachments"
 const messageBodySelect = "id,body"
 const draftSendReviewSelect = "id,subject,body,toRecipients,ccRecipients,bccRecipients,hasAttachments"
-const eventMetadataSelect = "id,subject,start,end,location"
+const eventMetadataSelect = "id,subject,start,end,location,organizer,attendees,responseStatus"
+const maxReviewAttachmentPages = 10
 
 func (client *Transport) getMailFolder(ctx context.Context, mailbox string, folderID string) (mailFolder, error) {
 	requestURL, err := client.mailFolderURL(mailbox, folderID)
@@ -833,6 +893,44 @@ func (client *Transport) getDraftForSendReview(ctx context.Context, mailbox stri
 		return message{}, fmt.Errorf("missing Graph draft response")
 	}
 	return item, nil
+}
+
+func (client *Transport) listAttachmentMetadataForReview(ctx context.Context, mailbox string, messageID string) ([]attachment, error) {
+	requestURL, err := client.messageAttachmentsURL(mailbox, messageID)
+	if err != nil {
+		return nil, err
+	}
+	attachments := []attachment{}
+	for page := 0; page < maxReviewAttachmentPages; page++ {
+		var response attachmentList
+		if err := client.getJSON(ctx, requestURL, &response); err != nil {
+			return nil, err
+		}
+		attachments = append(attachments, response.Value...)
+		if strings.TrimSpace(response.NextLink) == "" {
+			return attachments, nil
+		}
+		requestURL, err = client.validAttachmentsNextLink(response.NextLink)
+		if err != nil {
+			return nil, err
+		}
+	}
+	return nil, fmt.Errorf("draft attachment metadata has more than %d pages", maxReviewAttachmentPages)
+}
+
+func (client *Transport) getMessageRuleForReview(ctx context.Context, mailbox string, folderID string, ruleID string) (messageRule, error) {
+	requestURL, err := client.messageRuleURL(mailbox, folderID, ruleID)
+	if err != nil {
+		return messageRule{}, err
+	}
+	var rule messageRule
+	if err := client.getJSON(ctx, requestURL, &rule); err != nil {
+		return messageRule{}, err
+	}
+	if rule.ID == "" {
+		return messageRule{}, fmt.Errorf("missing Graph messageRule response")
+	}
+	return rule, nil
 }
 
 func (client *Transport) executeRawGraphRequest(ctx context.Context, payload map[string]any) (map[string]any, error) {
@@ -1564,6 +1662,54 @@ func isAllowedMessagesNextPath(relativePath string) bool {
 	return false
 }
 
+func (client *Transport) validAttachmentsNextLink(nextLink string) (string, error) {
+	return client.validGraphNextLink(nextLink, isAllowedAttachmentsNextPath, "attachment next_link")
+}
+
+func (client *Transport) validGraphNextLink(nextLink string, allowedPath func(string) bool, label string) (string, error) {
+	raw := strings.TrimSpace(nextLink)
+	if raw == "" {
+		return "", fmt.Errorf("%s is empty", label)
+	}
+	parsed, err := url.Parse(raw)
+	if err != nil || !parsed.IsAbs() {
+		return "", fmt.Errorf("invalid %s", label)
+	}
+	if parsed.User != nil {
+		return "", fmt.Errorf("invalid %s userinfo", label)
+	}
+	baseRaw, err := client.config.normalizedBaseURL()
+	if err != nil {
+		return "", err
+	}
+	base, err := url.Parse(baseRaw)
+	if err != nil {
+		return "", err
+	}
+	if parsed.Scheme != base.Scheme || parsed.Host != base.Host {
+		return "", fmt.Errorf("%s host is not allowed", label)
+	}
+	basePath := strings.TrimRight(base.EscapedPath(), "/")
+	relativePath := strings.TrimPrefix(parsed.EscapedPath(), basePath)
+	if !strings.HasPrefix(relativePath, "/") {
+		return "", fmt.Errorf("%s path is outside Graph base", label)
+	}
+	if !allowedPath(relativePath) {
+		return "", fmt.Errorf("%s path is not allowed", label)
+	}
+	return parsed.String(), nil
+}
+
+func isAllowedAttachmentsNextPath(relativePath string) bool {
+	if strings.HasPrefix(relativePath, "/me/messages/") && strings.Contains(relativePath, "/attachments") {
+		return true
+	}
+	if strings.HasPrefix(relativePath, "/users/") && strings.Contains(relativePath, "/messages/") && strings.Contains(relativePath, "/attachments") {
+		return true
+	}
+	return false
+}
+
 func (client *Transport) messageURL(mailbox string, id string) (string, error) {
 	base, err := client.config.normalizedBaseURL()
 	if err != nil {
@@ -1607,7 +1753,9 @@ func (client *Transport) messageAttachmentsURL(mailbox string, messageID string)
 	if err != nil {
 		return "", err
 	}
-	return base + graphOwnerPath(mailbox) + "/messages/" + url.PathEscape(messageID) + "/attachments", nil
+	values := url.Values{}
+	values.Set("$select", "id,name,contentType,size,isInline")
+	return base + graphOwnerPath(mailbox) + "/messages/" + url.PathEscape(messageID) + "/attachments?" + values.Encode(), nil
 }
 
 func (client *Transport) rawGraphRequestURL(path string, rawQuery any) (string, error) {
@@ -1750,6 +1898,16 @@ func (client *Transport) calendarEventURL(mailbox string, eventID string) (strin
 	return base + graphOwnerPath(mailbox) + "/events/" + url.PathEscape(eventID), nil
 }
 
+func (client *Transport) calendarEventMetadataURL(mailbox string, eventID string) (string, error) {
+	base, err := client.calendarEventURL(mailbox, eventID)
+	if err != nil {
+		return "", err
+	}
+	values := url.Values{}
+	values.Set("$select", eventMetadataSelect)
+	return base + "?" + values.Encode(), nil
+}
+
 func (client *Transport) calendarEventRespondURL(mailbox string, eventID string, graphAction string) (string, error) {
 	base, err := client.calendarEventURL(mailbox, eventID)
 	if err != nil {
@@ -1864,6 +2022,34 @@ func recipientStrings(recipients []recipient) []string {
 		value := formatAddress(recipient.EmailAddress)
 		if strings.TrimSpace(value) != "" {
 			output = append(output, value)
+		}
+	}
+	if output == nil {
+		return []string{}
+	}
+	return output
+}
+
+func attachmentReviews(attachments []attachment) []transport.AttachmentReview {
+	output := make([]transport.AttachmentReview, 0, len(attachments))
+	for _, item := range attachments {
+		output = append(output, transport.AttachmentReview{
+			Name:        item.Name,
+			SizeBytes:   int64(item.Size),
+			ContentType: item.ContentType,
+		})
+	}
+	if output == nil {
+		return []transport.AttachmentReview{}
+	}
+	return output
+}
+
+func attachmentNames(attachments []attachment) []string {
+	output := make([]string, 0, len(attachments))
+	for _, item := range attachments {
+		if strings.TrimSpace(item.Name) != "" {
+			output = append(output, item.Name)
 		}
 	}
 	if output == nil {

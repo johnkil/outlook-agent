@@ -189,7 +189,9 @@ Key tool inputs:
   The action maps to `mail.send_draft`, is classified as `send_like`, and
   requires a matching `outlook.action_dry_run` review before execution. In
   required approval mode, the host must approve the exact review packet before
-  the send can proceed.
+  the send can proceed. Graph dry-runs fetch draft metadata and, when present,
+  bounded attachment metadata such as names, sizes, and content types without
+  fetching attachment bytes.
 - `outlook.mail_move_to_folder`: `ids`, `folder_id`, optional
   `confirm_token`, optional `approval_challenge_id`, optional
   `approval_token`, and optional `mailbox`. The action maps to
@@ -219,6 +221,8 @@ Key tool inputs:
   `folder_id`, and optional `mailbox`. The action maps to
   `mail.rules.set_enabled`, is classified as `settings_or_rules`, and requires
   a matching `outlook.action_dry_run` confirmation token before execution.
+  Graph dry-runs fetch the current rule metadata so the review can show the
+  old enabled state, new enabled state, and rule display name.
 - `outlook.mail_move_to_deleted_items`: `ids`, `confirm_token`, optional
   `approval_challenge_id`, optional `approval_token`, and optional `mailbox`.
   Responses include `succeeded` and `failed` partial-result fields in addition
@@ -255,6 +259,14 @@ Key tool inputs:
   `destructive`, so MCP callers must use unsafe dry-run plus exact confirmation
   before execution. Responses use the same bounded raw envelope as Graph raw
   requests.
+
+Review packets are human-approval artifacts. They include additive
+`completeness` metadata (`complete`, `partial`, or `minimal`) and optional
+`warning_codes`. Raw Graph/EWS/OWA reviews are marked `minimal` with
+`raw_semantics_not_fully_understood` unless a typed recognizer extracts exact
+semantics. Large target lists may be clamped in the review output, but the
+dry-run count remains exact and `omitted_target_count` reports how many targets
+were left out of the display packet.
 
 ## Safety Classes
 

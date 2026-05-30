@@ -26,6 +26,13 @@
   arbitrary Microsoft Graph method can send, mutate, or delete data.
 - Generic EWS raw SOAP requests are treated as destructive by default because an
   arbitrary EWS operation can send, mutate, or delete mailbox data.
+- High-risk dry-run review packets report whether the review is complete,
+  partial, or minimal. Raw/unknown reviews carry explicit warning codes when
+  the runtime cannot fully understand the semantics.
+- Review packets may include bounded metadata such as attachment names/sizes,
+  rule old/new state, and calendar organizer/attendees, but must not include
+  attachment bytes or event/message body content beyond redacted previews and
+  hashes.
 - Live transports must keep session material in memory unless a secret-store
   backed cache is explicitly implemented.
 
