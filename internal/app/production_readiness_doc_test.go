@@ -147,6 +147,35 @@ func TestProductionBacklogTracksRepositoryProtectionEvidence(t *testing.T) {
 	}
 }
 
+func TestProductionBacklogTracksDirectArchivePilotDistributionEvidence(t *testing.T) {
+	path := filepath.Join("..", "..", "docs", "PRODUCTION_BACKLOG.md")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read production backlog: %v", err)
+	}
+	text := string(data)
+
+	for _, required := range []string{
+		"## Completed External Gates",
+		"Direct archive pilot distribution",
+		"https://github.com/johnkil/outlook-agent/issues/4",
+		"direct archive pilot from GitHub Releases",
+		"pilot release owner",
+		"pilot rollback owner",
+		"SHA256SUMS.txt",
+		"private config profiles stay outside public artifacts",
+	} {
+		if !strings.Contains(text, required) {
+			t.Fatalf("expected production backlog to contain %q", required)
+		}
+	}
+
+	openSection := sectionBetween(text, "## Open External Gates", "## Completed External Gates")
+	if strings.Contains(openSection, "https://github.com/johnkil/outlook-agent/issues/4 |") {
+		t.Fatal("direct archive pilot distribution must not remain in the open external gates table")
+	}
+}
+
 func TestDocsTrackGraphOAuthTokenCacheEvidence(t *testing.T) {
 	documents := map[string][]string{
 		filepath.Join("..", "..", "README.md"): {
