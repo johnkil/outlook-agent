@@ -227,8 +227,10 @@ Key tool inputs:
   then applies confirmed-action policy again before transport execution. In
   required approval mode, high-risk actions also require
   `approval_challenge_id` and an HMAC `approval_token` for the exact dry-run
-  challenge. `OUTLOOK_AGENT_APPROVAL_TOKEN` is retained only as optional legacy
-  static-token compatibility and is not production-grade approval.
+  challenge. Hosts must sign `approval_challenge.signing_payload` exactly as
+  returned; see `docs/APPROVAL_HOST_INTEGRATION.md` for the canonical v1
+  payload format. `OUTLOOK_AGENT_APPROVAL_TOKEN` is retained only as optional
+  legacy static-token compatibility and is not production-grade approval.
 - Raw `GraphRequest`: transport action for a relative Microsoft Graph path
   with `method`, `path`, optional `query`, optional safe custom `headers`, and
   optional JSON `body`. It is intentionally classified as `destructive`, so MCP

@@ -167,8 +167,9 @@ OUTLOOK_AGENT_APPROVAL_SECRET="host-held-hmac-secret"
 ```
 
 In required mode, high-risk actions return `requires_approval=true` plus an
-`approval_challenge` from dry-run. The host signs that exact challenge only
-after showing the review packet to a human, then passes
+`approval_challenge` from dry-run. The host signs
+`approval_challenge.signing_payload` only after showing the review packet to a
+human, then passes
 `approval_challenge_id` and `approval_token` back at confirmation. In a properly
 wired host, the **agent never sees the secret**. Save-only draft creation
 (`mail.create_draft`, reply/reply-all/forward draft helpers) does not send mail
@@ -179,6 +180,9 @@ confirmation, and required host approval. 🔒
 `OUTLOOK_AGENT_APPROVAL_TOKEN` remains as a legacy static token for optional
 mode compatibility. It is not considered production-grade because it is not
 bound to the dry-run payload or review.
+
+See [Approval Host Integration](docs/APPROVAL_HOST_INTEGRATION.md) for the
+canonical signing payload, HMAC token format, TTL, and replay rules.
 
 Optional redacted audit logging can be enabled by the host/operator:
 
