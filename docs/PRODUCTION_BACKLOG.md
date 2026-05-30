@@ -21,6 +21,8 @@ investigated with public-safe evidence.
 | enterprise distribution channel | https://github.com/johnkil/outlook-agent/issues/4 | Approved package or installer channel verifies release checksums, preserves the private config boundary, and names release/rollback owners. |
 | Graph OAuth and live smoke enablement | https://github.com/johnkil/outlook-agent/issues/5 | Approved Graph app/permissions, secret-store token handling, `auth check`, and controlled read-only smoke evidence. |
 | EWS enablement and live smoke validation | https://github.com/johnkil/outlook-agent/issues/6 | Approved endpoint/auth method, secret-store credential handling, `auth check`, and controlled read-metadata smoke evidence. |
+| OWA-compatible live validation and fixture recovery | https://github.com/johnkil/outlook-agent/issues/42 | Controlled private profile passes auth/session readiness, read-metadata smoke, dry-run smoke for guarded mutation classes, payload-bound approval mutation smoke, and recovery cleanup for interrupted synthetic fixtures. |
+| macOS Keychain prompt UX for release binaries | https://github.com/johnkil/outlook-agent/issues/41 | Distribution-owned signing or trust setup gives release binaries stable Keychain access without storing secrets in argv, shell history, config, logs, or public docs. |
 
 ## Partially Completed External Gates
 
@@ -43,6 +45,11 @@ investigated with public-safe evidence.
   `external:name` command provider gives enterprise operators a portable route
   to 1Password, Bitwarden, Vault, or native wrapper tooling. Open a dedicated
   GitHub issue before implementing native backends for a concrete rollout.
+- Installed OpenCode smoke is tracked separately in
+  https://github.com/johnkil/outlook-agent/issues/40. The installer, checksum,
+  setup, and MCP connection path are proven by release smoke, but the
+  model-facing smoke should become deterministic before it is treated as a
+  release gate.
 
 ## Tracking Policy
 
