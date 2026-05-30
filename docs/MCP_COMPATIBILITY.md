@@ -79,6 +79,13 @@ one existing draft through the typed high-risk path. Clients must first call
 packet, and then call `outlook.mail_send_draft` with the exact confirmation
 token plus host approval fields when approval mode requires them.
 
+Compatibility version `0.1` also includes additive approval readiness metadata.
+`outlook.capabilities.approval` exposes approval mode, host-integration
+requirement, secret/token presence booleans, challenge TTL, and signing payload
+version. `outlook.action_dry_run.approval` reports whether approval is required
+for the exact action and whether a challenge was issued. Clients must ignore
+unknown approval fields.
+
 Compatibility version `0.1` also includes save-only related draft helpers:
 `outlook.mail_create_reply_draft`, `outlook.mail_create_reply_all_draft`, and
 `outlook.mail_create_forward_draft`. These create drafts only and never send;

@@ -46,6 +46,7 @@ type EmptyInput struct{}
 type CapabilityDetailOutput = capability.Detail
 
 const CompatibilityVersion = "0.1"
+const approvalChallengeTTL = 10 * time.Minute
 
 type CapabilitiesOutput struct {
 	CompatibilityVersion string                   `json:"compatibility_version"`
@@ -57,6 +58,11 @@ type CapabilitiesOutput struct {
 type ApprovalInfoOutput struct {
 	Mode                     string `json:"mode"`
 	HighRiskRequiresApproval bool   `json:"high_risk_requires_approval"`
+	SecretConfigured         bool   `json:"secret_configured"`
+	LegacyTokenConfigured    bool   `json:"legacy_token_configured,omitempty"`
+	ChallengeTTLSeconds      int    `json:"challenge_ttl_seconds"`
+	SigningPayloadVersion    string `json:"signing_payload_version"`
+	HostIntegrationRequired  bool   `json:"host_integration_required"`
 }
 
 type MailSearchInput struct {
@@ -266,9 +272,20 @@ type DryRunOutput struct {
 	RequiresApproval     bool                    `json:"requires_approval,omitempty"`
 	ConfirmationToken    string                  `json:"confirmation_token,omitempty"`
 	ApprovalChallenge    *approval.Challenge     `json:"approval_challenge,omitempty"`
+	Approval             DryRunApprovalOutput    `json:"approval,omitempty"`
 	Review               *transport.ReviewPacket `json:"review,omitempty"`
 	Warnings             []string                `json:"warnings,omitempty"`
 	Error                string                  `json:"error,omitempty"`
+}
+
+type DryRunApprovalOutput struct {
+	Mode                    string `json:"mode"`
+	RequiredForThisAction   bool   `json:"required_for_this_action"`
+	ChallengeIssued         bool   `json:"challenge_issued"`
+	ChallengeTTLSeconds     int    `json:"challenge_ttl_seconds,omitempty"`
+	SigningPayloadVersion   string `json:"signing_payload_version,omitempty"`
+	LegacyTokenAccepted     bool   `json:"legacy_token_accepted,omitempty"`
+	HostIntegrationRequired bool   `json:"host_integration_required,omitempty"`
 }
 
 type ActionConfirmInput struct {
@@ -546,12 +563,39 @@ func capabilitiesHandler(runtime *Runtime) func(context.Context, *mcp.CallToolRe
 			CompatibilityVersion: CompatibilityVersion,
 			Actions:              actions,
 			Details:              details,
-			Approval: ApprovalInfoOutput{
-				Mode:                     string(runtime.approvalPolicy.Mode),
-				HighRiskRequiresApproval: runtime.approvalPolicy.Mode == approval.ModeRequired,
-			},
+			Approval:             runtime.approvalInfo(),
 		}, nil
 	}
+}
+
+func (runtime *Runtime) approvalInfo() ApprovalInfoOutput {
+	policy := runtime.approvalPolicy
+	highRiskRequiresApproval := policy.Mode == approval.ModeRequired
+	return ApprovalInfoOutput{
+		Mode:                     string(policy.Mode),
+		HighRiskRequiresApproval: highRiskRequiresApproval,
+		SecretConfigured:         strings.TrimSpace(policy.Secret) != "",
+		LegacyTokenConfigured:    strings.TrimSpace(policy.LegacyToken) != "",
+		ChallengeTTLSeconds:      int(approvalChallengeTTL.Seconds()),
+		SigningPayloadVersion:    approval.SigningPayloadVersion,
+		HostIntegrationRequired:  highRiskRequiresApproval,
+	}
+}
+
+func (runtime *Runtime) dryRunApprovalInfo(requiredForAction bool, challenge *approval.Challenge) DryRunApprovalOutput {
+	policy := runtime.approvalPolicy
+	output := DryRunApprovalOutput{
+		Mode:                    string(policy.Mode),
+		RequiredForThisAction:   requiredForAction,
+		ChallengeIssued:         challenge != nil,
+		LegacyTokenAccepted:     policy.Mode == approval.ModeOptional && strings.TrimSpace(policy.LegacyToken) != "",
+		HostIntegrationRequired: requiredForAction && policy.Mode == approval.ModeRequired,
+	}
+	if challenge != nil {
+		output.ChallengeTTLSeconds = int(approvalChallengeTTL.Seconds())
+		output.SigningPayloadVersion = approval.SigningPayloadVersion
+	}
+	return output
 }
 
 func mailSearchHandler(runtime *Runtime) func(context.Context, *mcp.CallToolRequest, MailSearchInput) (*mcp.CallToolResult, MailSearchOutput, error) {
@@ -1114,6 +1158,7 @@ func dryRunHandler(runtime *Runtime) func(context.Context, *mcp.CallToolRequest,
 				Reversible:           summary.Reversible,
 				RequiresConfirmation: summary.RequiresConfirmation,
 				RequiresApproval:     requiresApproval,
+				Approval:             runtime.dryRunApprovalInfo(requiresApproval, nil),
 				Review:               &review,
 				Warnings:             summary.Warnings,
 				Error:                message,
@@ -1130,18 +1175,19 @@ func dryRunHandler(runtime *Runtime) func(context.Context, *mcp.CallToolRequest,
 				RequiresConfirmation: true,
 				RequiresUnsafe:       decision.RequiresUnsafe,
 				RequiresApproval:     requiresApproval,
+				Approval:             runtime.dryRunApprovalInfo(requiresApproval, nil),
 				Review:               &review,
 				Warnings:             summary.Warnings,
 				Error:                decision.Reason,
 			}, nil
 		}
-		token, err := runtime.confirm.Generate(confirmationBindingFor(runtime.client, runtime.profileOrDefault(input.Profile), input.Action, input.Payload, input.UnsafeMode, review, class), 10*time.Minute)
+		token, err := runtime.confirm.Generate(confirmationBindingFor(runtime.client, runtime.profileOrDefault(input.Profile), input.Action, input.Payload, input.UnsafeMode, review, class), approvalChallengeTTL)
 		if err != nil {
 			return nil, DryRunOutput{}, err
 		}
 		var challenge *approval.Challenge
 		if requiresApproval {
-			issued, err := runtime.approval.Issue(approvalBindingFor(runtime.client, runtime.profileOrDefault(input.Profile), input.Action, input.Payload, input.UnsafeMode, review, class), 10*time.Minute)
+			issued, err := runtime.approval.Issue(approvalBindingFor(runtime.client, runtime.profileOrDefault(input.Profile), input.Action, input.Payload, input.UnsafeMode, review, class), approvalChallengeTTL)
 			if err != nil {
 				return nil, DryRunOutput{}, err
 			}
@@ -1158,6 +1204,7 @@ func dryRunHandler(runtime *Runtime) func(context.Context, *mcp.CallToolRequest,
 			RequiresApproval:     requiresApproval,
 			ConfirmationToken:    token,
 			ApprovalChallenge:    challenge,
+			Approval:             runtime.dryRunApprovalInfo(requiresApproval, challenge),
 			Review:               &review,
 			Warnings:             summary.Warnings,
 		}, nil

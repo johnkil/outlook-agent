@@ -179,6 +179,103 @@ func TestDoctorReportsFileSecretStoreReadiness(t *testing.T) {
 	}
 }
 
+func TestDoctorReportsApprovalReadiness(t *testing.T) {
+	t.Setenv("OUTLOOK_AGENT_APPROVAL_MODE", "required")
+	t.Setenv("OUTLOOK_AGENT_APPROVAL_SECRET", "host-secret")
+	t.Setenv("OUTLOOK_AGENT_APPROVAL_TOKEN", "")
+	configPath := filepath.Join(t.TempDir(), "outlook-agent.json")
+	if err := os.WriteFile(configPath, []byte(`{
+		"default_profile": "work",
+		"profiles": {
+			"work": {
+				"transport": "graph",
+				"secret_ref": "file:/tmp/outlook-agent-token"
+			}
+		}
+	}`), 0o600); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+
+	code := Run([]string{"--config", configPath, "doctor"}, &stdout, &stderr)
+
+	if code != 0 {
+		t.Fatalf("expected exit code 0, got %d, stderr=%s", code, stderr.String())
+	}
+	var payload struct {
+		Approval struct {
+			Mode                    string `json:"mode"`
+			RequiredByDefault       bool   `json:"required_by_default"`
+			SecretConfigured        bool   `json:"secret_configured"`
+			LegacyTokenConfigured   bool   `json:"legacy_token_configured,omitempty"`
+			HostIntegrationRequired bool   `json:"host_integration_required"`
+			Warning                 string `json:"warning,omitempty"`
+		} `json:"approval"`
+	}
+	if err := json.Unmarshal(stdout.Bytes(), &payload); err != nil {
+		t.Fatalf("doctor output is not JSON: %v; output=%s", err, stdout.String())
+	}
+	if payload.Approval.Mode != "required" || !payload.Approval.RequiredByDefault {
+		t.Fatalf("expected required approval mode for graph profile: %#v", payload.Approval)
+	}
+	if !payload.Approval.SecretConfigured || payload.Approval.LegacyTokenConfigured {
+		t.Fatalf("expected host secret readiness without legacy token: %#v", payload.Approval)
+	}
+	if !payload.Approval.HostIntegrationRequired || payload.Approval.Warning != "" {
+		t.Fatalf("unexpected approval readiness warning: %#v", payload.Approval)
+	}
+	if strings.Contains(stdout.String(), "host-secret") {
+		t.Fatalf("doctor output leaked approval secret: %s", stdout.String())
+	}
+}
+
+func TestDoctorWarnsWhenRequiredApprovalSecretMissing(t *testing.T) {
+	t.Setenv("OUTLOOK_AGENT_APPROVAL_MODE", "required")
+	t.Setenv("OUTLOOK_AGENT_APPROVAL_SECRET", "")
+	configPath := filepath.Join(t.TempDir(), "outlook-agent.json")
+	if err := os.WriteFile(configPath, []byte(`{
+		"default_profile": "work",
+		"profiles": {
+			"work": {
+				"transport": "graph",
+				"secret_ref": "file:/tmp/outlook-agent-token"
+			}
+		}
+	}`), 0o600); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+
+	code := Run([]string{"--config", configPath, "doctor"}, &stdout, &stderr)
+
+	if code != 0 {
+		t.Fatalf("expected exit code 0, got %d, stderr=%s", code, stderr.String())
+	}
+	var payload struct {
+		Approval struct {
+			Mode                    string `json:"mode"`
+			SecretConfigured        bool   `json:"secret_configured"`
+			HostIntegrationRequired bool   `json:"host_integration_required"`
+			Warning                 string `json:"warning,omitempty"`
+		} `json:"approval"`
+		NextSteps []string `json:"next_steps"`
+	}
+	if err := json.Unmarshal(stdout.Bytes(), &payload); err != nil {
+		t.Fatalf("doctor output is not JSON: %v; output=%s", err, stdout.String())
+	}
+	if payload.Approval.Mode != "required" || payload.Approval.SecretConfigured {
+		t.Fatalf("expected missing required approval secret: %#v", payload.Approval)
+	}
+	if !payload.Approval.HostIntegrationRequired || !strings.Contains(payload.Approval.Warning, "OUTLOOK_AGENT_APPROVAL_SECRET") {
+		t.Fatalf("expected approval secret warning: %#v", payload.Approval)
+	}
+	if !stringSliceContains(payload.NextSteps, "Configure OUTLOOK_AGENT_APPROVAL_SECRET in the trusted host/operator environment before high-risk live actions.") {
+		t.Fatalf("expected approval next step, got %#v", payload.NextSteps)
+	}
+}
+
 func TestDoctorReportsMissingExplicitConfig(t *testing.T) {
 	missingConfig := filepath.Join(t.TempDir(), "missing.json")
 	var stdout bytes.Buffer

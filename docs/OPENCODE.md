@@ -207,19 +207,24 @@ with `name`, `transport`, `safety_class`, and numeric coverage `level` plus
 `requires_unsafe` policy gates. Details may also include `requires_approval`,
 `approval_mode`, `requires_explicit_target`, or `requires_explicit_intent` so
 agents can ask for or preserve the missing condition before attempting
-execution. The top-level `approval` section names the current approval mode and
-whether high-risk actions require host approval. The `execution_route` field
-summarizes the route as `direct`,
-`direct_explicit_target`, `direct_explicit_intent`, `dry_run_confirm`,
-or `unsafe_dry_run_confirm`. For gated actions, the expected flow is:
+execution. The top-level `approval` section names the current approval mode,
+whether high-risk actions require host approval, whether host approval secrets
+are configured, the challenge TTL, the signing payload version, and whether
+host integration is required. The `execution_route` field summarizes the route
+as `direct`, `direct_explicit_target`, `direct_explicit_intent`,
+`dry_run_confirm`, or `unsafe_dry_run_confirm`. For gated actions, the expected
+flow is:
 
 1. Read `outlook.capabilities.details`.
 2. If direct execution is not allowed, call `outlook.action_dry_run`.
 3. Show or reason over the dry-run review packet.
-4. If `requires_approval=true`, wait for the host to sign the returned
+4. If `approval.host_integration_required=true`, make sure the surrounding
+   OpenCode host has an approval integration before attempting high-risk live
+   confirmation.
+5. If `requires_approval=true`, wait for the host to sign the returned
    `approval_challenge.signing_payload`; do not ask the user for the approval
    secret.
-5. Execute only the exact payload with `outlook.action_confirm`, passing
+6. Execute only the exact payload with `outlook.action_confirm`, passing
    `approval_challenge_id` and `approval_token` only when the host supplies
    them.
 

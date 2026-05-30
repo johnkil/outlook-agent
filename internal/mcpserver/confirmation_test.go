@@ -1177,9 +1177,47 @@ func TestCapabilitiesHandlerReturnsApprovalMetadata(t *testing.T) {
 	if output.Approval.Mode != string(approval.ModeRequired) || !output.Approval.HighRiskRequiresApproval {
 		t.Fatalf("expected global approval metadata: %#v", output.Approval)
 	}
+	if !output.Approval.SecretConfigured || output.Approval.LegacyTokenConfigured {
+		t.Fatalf("expected secret readiness without legacy token: %#v", output.Approval)
+	}
+	if output.Approval.ChallengeTTLSeconds != 600 || output.Approval.SigningPayloadVersion != approval.SigningPayloadVersion {
+		t.Fatalf("expected challenge ttl and signing payload metadata: %#v", output.Approval)
+	}
+	if !output.Approval.HostIntegrationRequired {
+		t.Fatalf("expected host integration requirement in capabilities: %#v", output.Approval)
+	}
 	detail := output.Details[0]
 	if !detail.RequiresApproval || detail.ApprovalMode != string(approval.ModeRequired) {
 		t.Fatalf("expected high-risk capability to expose approval requirement: %#v", detail)
+	}
+}
+
+func TestDryRunHandlerReturnsApprovalReadinessMetadata(t *testing.T) {
+	runtime := NewRuntime(fake.New())
+	runtime.approvalPolicy = approval.Policy{Mode: approval.ModeRequired, Secret: "approval-secret"}
+	runtime.approval = approval.NewStore(time.Now)
+
+	_, output, err := dryRunHandler(runtime)(context.Background(), nil, DryRunInput{
+		Action:  "mail.move_to_deleted_items",
+		Payload: map[string]any{"ids": []any{"msg-1", "msg-2"}},
+	})
+	if err != nil {
+		t.Fatalf("dry-run handler: %v", err)
+	}
+	if !output.OK || !output.RequiresApproval || output.ApprovalChallenge == nil {
+		t.Fatalf("expected approval challenge in dry-run output: %#v", output)
+	}
+	if output.Approval.Mode != string(approval.ModeRequired) || !output.Approval.RequiredForThisAction {
+		t.Fatalf("expected required approval metadata: %#v", output.Approval)
+	}
+	if !output.Approval.ChallengeIssued || output.Approval.ChallengeTTLSeconds != 600 {
+		t.Fatalf("expected issued challenge ttl metadata: %#v", output.Approval)
+	}
+	if output.Approval.SigningPayloadVersion != approval.SigningPayloadVersion || !output.Approval.HostIntegrationRequired {
+		t.Fatalf("expected signing payload and host metadata: %#v", output.Approval)
+	}
+	if output.Approval.LegacyTokenAccepted {
+		t.Fatalf("required mode must not advertise legacy token acceptance: %#v", output.Approval)
 	}
 }
 
