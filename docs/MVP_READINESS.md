@@ -20,8 +20,9 @@ artifacts and local verification commands:
   subscription cleanup, calendar daily brief, meeting prep, and freeing time.
 - The fake transport covers the public MCP tool contract for local development
   and CI.
-- The OWA-like transport exposes all discovered OWA actions through the action
-  registry and policy metadata.
+- The OWA compatibility transport exposes all discovered OWA actions through
+  the action registry and policy metadata while preferring typed tools for
+  supported mail/calendar workflows.
 - High-level mail and calendar workflows cover search, metadata fetch, explicit
   body fetch, explicit attachment listing/fetch, draft creation, move to
   Deleted Items, read-only rules/settings metadata, bounded calendar listing,
@@ -29,8 +30,10 @@ artifacts and local verification commands:
 - Lower-level breadth is preserved with raw guarded execution for all discovered
   OWA actions, raw GraphRequest, and raw EWSRequest.
 - Mutating, destructive, send-like, settings, and broad reversible work is
-  guarded by dry-run summaries and exact confirmation tokens, with an optional
-  host-side approval token gate for user-mediated confirmations.
+  guarded by dry-run summaries and exact confirmation tokens. In production
+  approval mode, high-risk actions also require payload/review-bound host
+  approval; the legacy static token is compatibility-only and not
+  production-grade approval.
 - Unsafe mode is required for destructive or unknown raw action paths, but it
   does not bypass exact confirmation.
 - Search responses expose bounded-window metadata (`returned`, `limit`,

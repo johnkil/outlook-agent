@@ -28,6 +28,22 @@ if [[ "$failed" -ne 0 ]]; then
   exit 1
 fi
 
+for stale_pattern in \
+  "unsafe_direct" \
+  "host-side approval token gate" \
+  "initial Microsoft Graph REST transport" \
+  "feat/owa-adapter"; do
+  if command -v rg >/dev/null 2>&1; then
+    if rg --hidden -n --fixed-strings "$stale_pattern" README.md docs skills .opencode internal; then
+      echo "stale public documentation phrase found: ${stale_pattern}" >&2
+      exit 1
+    fi
+  elif grep -RIn --fixed-strings "$stale_pattern" README.md docs skills .opencode internal; then
+    echo "stale public documentation phrase found: ${stale_pattern}" >&2
+    exit 1
+  fi
+done
+
 pattern="${OUTLOOK_AGENT_PUBLIC_SAFETY_PATTERN:-}"
 if [[ -n "$pattern" ]]; then
   if command -v rg >/dev/null 2>&1; then
