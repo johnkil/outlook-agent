@@ -338,8 +338,12 @@ func (client *Transport) DryRun(ctx context.Context, request transport.ActionReq
 		return transport.DryRunSummary{Action: request.Name, Count: len(ids), Reversible: true, RequiresConfirmation: len(ids) > 1, SafetyClass: string(class), Review: &review, Warnings: review.Limitations}
 	}
 	if request.Name == "calendar.respond" {
-		review := client.graphCalendarRespondReview(ctx, mailboxTarget(request.Payload), request.Name, request.Payload)
-		return transport.DryRunSummary{Action: request.Name, Count: 1, Reversible: false, RequiresConfirmation: true, SafetyClass: string(policy.SendLike), Review: &review, Warnings: review.Limitations}
+		review, err := client.graphCalendarRespondReview(ctx, mailboxTarget(request.Payload), request.Name, request.Payload)
+		summary := transport.DryRunSummary{Action: request.Name, Count: 1, Reversible: false, RequiresConfirmation: true, SafetyClass: string(policy.SendLike), Review: &review, Warnings: review.Limitations}
+		if err != nil {
+			summary.Error = err.Error()
+		}
+		return summary
 	}
 	if request.Name == "GraphRequest" {
 		review := graphRawRequestReview(request.Name, request.Payload)
@@ -462,7 +466,7 @@ func graphReversibleMutationReview(actionName string, payload map[string]any, id
 	}
 }
 
-func (client *Transport) graphCalendarRespondReview(ctx context.Context, mailbox string, actionName string, payload map[string]any) transport.ReviewPacket {
+func (client *Transport) graphCalendarRespondReview(ctx context.Context, mailbox string, actionName string, payload map[string]any) (transport.ReviewPacket, error) {
 	eventID := strings.TrimSpace(stringValue(payload, "event_id", ""))
 	responseName, _, err := normalizeCalendarResponse(stringValue(payload, "response", ""))
 	if err != nil {
@@ -487,24 +491,26 @@ func (client *Transport) graphCalendarRespondReview(ctx context.Context, mailbox
 	}
 	if eventID == "" {
 		review.Limitations = append(review.Limitations, "event id was not provided")
-		return review
+		return review, nil
 	}
 	requestURL, err := client.calendarEventURL(mailbox, eventID)
 	if err != nil {
-		review.Limitations = append(review.Limitations, "event metadata could not be reviewed: "+err.Error())
-		return review
+		message := "event metadata could not be reviewed: " + err.Error()
+		review.Limitations = append(review.Limitations, message)
+		return review, fmt.Errorf("%s", message)
 	}
 	var event calendarEvent
 	if err := client.getJSON(ctx, requestURL, &event); err != nil {
-		review.Limitations = append(review.Limitations, "event metadata could not be reviewed: "+err.Error())
-		return review
+		message := "event metadata could not be reviewed: " + err.Error()
+		review.Limitations = append(review.Limitations, message)
+		return review, fmt.Errorf("%s", message)
 	}
 	if event.Subject != "" {
 		review.Targets[0].Name = event.Subject
 	}
 	review.Calendar.Start = event.Start.DateTime
 	review.Calendar.End = event.End.DateTime
-	return review
+	return review, nil
 }
 
 func graphQueryKeys(rawQuery any) []string {

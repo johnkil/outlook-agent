@@ -763,6 +763,59 @@ func TestDryRunDoesNotIssueTokenWhenGraphSendDraftReviewFails(t *testing.T) {
 	}
 }
 
+func TestDryRunRejectsCursorBoundSearchNext(t *testing.T) {
+	client := newRecordingTransport(action.Definition{Name: "mail.search_next", Transport: "test", Class: policy.ReadMetadata, Level: action.LevelHighLevelMCPTool})
+	runtime := NewRuntime(client)
+
+	_, output, err := dryRunHandler(runtime)(context.Background(), nil, DryRunInput{
+		Action: "mail.search_next",
+		Payload: map[string]any{
+			"next_link": "https://graph.example.test/v1.0/me/messages?$skiptoken=forged",
+		},
+	})
+	if err != nil {
+		t.Fatalf("dry-run handler: %v", err)
+	}
+	if output.OK || output.ConfirmationToken != "" || !strings.Contains(output.Error, "outlook.mail_search_next") {
+		t.Fatalf("expected cursor-bound dry-run to be rejected without token, got %#v", output)
+	}
+}
+
+func TestDryRunDoesNotIssueTokenWhenGraphCalendarRespondReviewFails(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		if request.Method != http.MethodGet || request.URL.Path != "/v1.0/me/events/event-1" {
+			t.Fatalf("unexpected request: %s %s", request.Method, request.URL.String())
+		}
+		response.WriteHeader(http.StatusInternalServerError)
+		_, _ = response.Write([]byte(`{"error":{"code":"InternalServerError"}}`))
+	}))
+	defer server.Close()
+
+	client := graph.NewTransport(graph.Config{
+		BaseURL:   server.URL + "/v1.0",
+		SecretRef: secret.Ref("memory:graph"),
+	}, secret.NewMemoryStore(map[string]string{"memory:graph": "token-secret"}), server.Client())
+	runtime := NewRuntime(client)
+
+	_, output, err := dryRunHandler(runtime)(context.Background(), nil, DryRunInput{
+		Action: "calendar.respond",
+		Payload: map[string]any{
+			"event_id":      "event-1",
+			"response":      "accept",
+			"send_response": true,
+		},
+	})
+	if err != nil {
+		t.Fatalf("dry-run handler: %v", err)
+	}
+	if output.OK || output.ConfirmationToken != "" {
+		t.Fatalf("expected failed calendar review without confirmation token, got %#v", output)
+	}
+	if !strings.Contains(output.Error, "event metadata") {
+		t.Fatalf("expected event metadata error, got %#v", output)
+	}
+}
+
 func TestActionConfirmRejectsDestructiveTokenWithoutUnsafe(t *testing.T) {
 	client := newRecordingTransport(action.Definition{Name: "DeleteItem", Transport: "test", Class: policy.Destructive, Level: action.LevelRawGuardedExecution})
 	runtime := NewRuntime(client)
@@ -788,6 +841,28 @@ func TestActionConfirmRejectsDestructiveTokenWithoutUnsafe(t *testing.T) {
 	}
 	if output.Error == "" {
 		t.Fatalf("expected policy error in output: %#v", output)
+	}
+}
+
+func TestActionConfirmRejectsCursorBoundSearchNext(t *testing.T) {
+	client := newRecordingTransport(action.Definition{Name: "mail.search_next", Transport: "test", Class: policy.ReadMetadata, Level: action.LevelHighLevelMCPTool})
+	runtime := NewRuntime(client)
+
+	_, output, err := actionConfirmHandler(runtime)(context.Background(), nil, ActionConfirmInput{
+		ConfirmToken: "token",
+		Action:       "mail.search_next",
+		Payload: map[string]any{
+			"next_link": "https://graph.example.test/v1.0/me/messages?$skiptoken=forged",
+		},
+	})
+	if err != nil {
+		t.Fatalf("confirm handler: %v", err)
+	}
+	if output.OK || !strings.Contains(output.Error, "outlook.mail_search_next") {
+		t.Fatalf("expected cursor-bound confirm to be rejected, got %#v", output)
+	}
+	if client.executed {
+		t.Fatal("cursor-bound search_next must not execute through generic confirmation")
 	}
 }
 

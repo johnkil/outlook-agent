@@ -1090,6 +1090,18 @@ func actionResultFromResponse(response transport.ActionResponse) ActionResultOut
 
 func dryRunHandler(runtime *Runtime) func(context.Context, *mcp.CallToolRequest, DryRunInput) (*mcp.CallToolResult, DryRunOutput, error) {
 	return func(ctx context.Context, _ *mcp.CallToolRequest, input DryRunInput) (*mcp.CallToolResult, DryRunOutput, error) {
+		if reason := actionPreflightRejection(input.Action); reason != "" {
+			class := safetyClassForPayload(runtime.client, input.Action, input.Payload)
+			review := reviewPacketFor(runtime.client, input.Action, input.Payload, transport.DryRunSummary{Action: input.Action}, class)
+			message := redact.String(reason)
+			runtime.recordAudit(audit.TypeReject, input.Action, input.Payload, runtime.profileOrDefault(input.Profile), class, review, "blocked", 0, message)
+			return nil, DryRunOutput{
+				Action: input.Action,
+				OK:     false,
+				Review: &review,
+				Error:  message,
+			}, nil
+		}
 		summary, class, review := dryRunReviewFor(ctx, runtime.client, input.Action, input.Payload, input.UnsafeMode)
 		requiresApproval := runtime.requiresApproval(class)
 		if summary.Error != "" {
@@ -1154,6 +1166,13 @@ func dryRunHandler(runtime *Runtime) func(context.Context, *mcp.CallToolRequest,
 
 func actionConfirmHandler(runtime *Runtime) func(context.Context, *mcp.CallToolRequest, ActionConfirmInput) (*mcp.CallToolResult, ActionResultOutput, error) {
 	return func(ctx context.Context, _ *mcp.CallToolRequest, input ActionConfirmInput) (*mcp.CallToolResult, ActionResultOutput, error) {
+		if reason := actionPreflightRejection(input.Action); reason != "" {
+			class := safetyClassForPayload(runtime.client, input.Action, input.Payload)
+			review := reviewPacketFor(runtime.client, input.Action, input.Payload, transport.DryRunSummary{Action: input.Action}, class)
+			message := redact.String(reason)
+			runtime.recordAudit(audit.TypeReject, input.Action, input.Payload, runtime.profileOrDefault(input.Profile), class, review, "blocked", 0, message)
+			return nil, ActionResultOutput{OK: false, Error: message}, nil
+		}
 		summary, class, review := dryRunReviewFor(ctx, runtime.client, input.Action, input.Payload, input.UnsafeMode)
 		if summary.Error != "" {
 			message := redact.String(summary.Error)
@@ -1188,7 +1207,7 @@ func actionConfirmHandler(runtime *Runtime) func(context.Context, *mcp.CallToolR
 func rawActionHandler(runtime *Runtime) func(context.Context, *mcp.CallToolRequest, RawActionInput) (*mcp.CallToolResult, ActionResultOutput, error) {
 	return func(ctx context.Context, _ *mcp.CallToolRequest, input RawActionInput) (*mcp.CallToolResult, ActionResultOutput, error) {
 		class := safetyClassForPayload(runtime.client, input.Action, input.Payload)
-		if reason := rawActionPreflightRejection(input.Action); reason != "" {
+		if reason := actionPreflightRejection(input.Action); reason != "" {
 			review := reviewPacketFor(runtime.client, input.Action, input.Payload, transport.DryRunSummary{Action: input.Action}, class)
 			runtime.recordAudit(audit.TypeReject, input.Action, input.Payload, runtime.profileOrDefault(input.Profile), class, review, "blocked", 0, reason)
 			return nil, ActionResultOutput{OK: false, Error: reason}, nil
@@ -1211,7 +1230,7 @@ func rawActionHandler(runtime *Runtime) func(context.Context, *mcp.CallToolReque
 	}
 }
 
-func rawActionPreflightRejection(actionName string) string {
+func actionPreflightRejection(actionName string) string {
 	if actionName == "mail.search_next" {
 		return "mail.search_next requires an opaque cursor; use outlook.mail_search_next"
 	}
