@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/johnkil/outlook-agent/internal/approval"
 	"github.com/johnkil/outlook-agent/internal/transport/owa"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
@@ -483,6 +484,7 @@ func TestLiveBinaryMCPStdioDraftCreateAndReversibleCleanupSmoke(t *testing.T) {
 	if os.Getenv("OUTLOOK_AGENT_LIVE_MUTATION_SMOKE") != "1" {
 		t.Skip("OUTLOOK_AGENT_LIVE_MUTATION_SMOKE=1 is not set")
 	}
+	requireLiveApprovalSecret(t)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
@@ -551,6 +553,7 @@ func TestLiveBinaryMCPStdioDraftBodyFetchAndCleanupSmoke(t *testing.T) {
 	if os.Getenv("OUTLOOK_AGENT_LIVE_MUTATION_SMOKE") != "1" {
 		t.Skip("OUTLOOK_AGENT_LIVE_MUTATION_SMOKE=1 is not set")
 	}
+	requireLiveApprovalSecret(t)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
@@ -646,6 +649,7 @@ func TestLiveBinaryMCPStdioAttachmentFixtureSmoke(t *testing.T) {
 	if os.Getenv("OUTLOOK_AGENT_LIVE_MUTATION_SMOKE") != "1" {
 		t.Skip("OUTLOOK_AGENT_LIVE_MUTATION_SMOKE=1 is not set")
 	}
+	requireLiveApprovalSecret(t)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
 	defer cancel()
@@ -722,11 +726,11 @@ func TestLiveBinaryMCPStdioAttachmentFixtureSmoke(t *testing.T) {
 
 	confirm, err := session.CallTool(ctx, &mcp.CallToolParams{
 		Name: "outlook.action_confirm",
-		Arguments: map[string]any{
+		Arguments: withApprovalFields(t, dryRun, map[string]any{
 			"action":        "CreateAttachment",
 			"payload":       createAttachmentPayload,
 			"confirm_token": dryRun.ConfirmationToken,
-		},
+		}),
 	})
 	if err != nil {
 		t.Fatalf("call CreateAttachment action_confirm: %v", err)
@@ -797,6 +801,7 @@ func TestLiveBinaryMCPStdioRawReversibleConfirmCleanupSmoke(t *testing.T) {
 	if os.Getenv("OUTLOOK_AGENT_LIVE_MUTATION_SMOKE") != "1" {
 		t.Skip("OUTLOOK_AGENT_LIVE_MUTATION_SMOKE=1 is not set")
 	}
+	requireLiveApprovalSecret(t)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
@@ -880,11 +885,12 @@ func TestBinaryMCPStdioRejectsMissingExplicitConfig(t *testing.T) {
 }
 
 type dryRunOutput struct {
-	OK                bool   `json:"ok"`
-	Count             int    `json:"count"`
-	Reversible        bool   `json:"reversible"`
-	RequiresUnsafe    bool   `json:"requires_unsafe"`
-	ConfirmationToken string `json:"confirmation_token"`
+	OK                bool                `json:"ok"`
+	Count             int                 `json:"count"`
+	Reversible        bool                `json:"reversible"`
+	RequiresUnsafe    bool                `json:"requires_unsafe"`
+	ConfirmationToken string              `json:"confirmation_token"`
+	ApprovalChallenge *approval.Challenge `json:"approval_challenge"`
 }
 
 func callDryRun(t *testing.T, ctx context.Context, session *mcp.ClientSession, arguments map[string]any) dryRunOutput {
@@ -902,6 +908,27 @@ func callDryRun(t *testing.T, ctx context.Context, session *mcp.ClientSession, a
 	var output dryRunOutput
 	decodeStructuredContent(t, result, &output)
 	return output
+}
+
+func requireLiveApprovalSecret(t *testing.T) {
+	t.Helper()
+	if strings.TrimSpace(os.Getenv(approval.SecretEnv)) == "" {
+		t.Skip("OUTLOOK_AGENT_APPROVAL_SECRET is required for mutation smoke fixture cleanup")
+	}
+}
+
+func withApprovalFields(t *testing.T, dryRun dryRunOutput, arguments map[string]any) map[string]any {
+	t.Helper()
+	if dryRun.ApprovalChallenge == nil {
+		return arguments
+	}
+	token, err := approval.SignChallenge(os.Getenv(approval.SecretEnv), *dryRun.ApprovalChallenge)
+	if err != nil {
+		t.Fatalf("sign approval challenge: %v", err)
+	}
+	arguments["approval_challenge_id"] = dryRun.ApprovalChallenge.ID
+	arguments["approval_token"] = token
+	return arguments
 }
 
 type catalogDryRunCase struct {
@@ -1019,10 +1046,10 @@ func cleanupDraftFixture(t *testing.T, ctx context.Context, session *mcp.ClientS
 	}
 	move, err := session.CallTool(ctx, &mcp.CallToolParams{
 		Name: "outlook.mail_move_to_deleted_items",
-		Arguments: map[string]any{
+		Arguments: withApprovalFields(t, dryRun, map[string]any{
 			"ids":           []string{draftID},
 			"confirm_token": dryRun.ConfirmationToken,
-		},
+		}),
 	})
 	if err != nil {
 		t.Errorf("call fixture cleanup move_to_deleted_items: %v", err)
@@ -1068,11 +1095,11 @@ func cleanupDraftFixtureWithRawDeleteItem(t *testing.T, ctx context.Context, ses
 	}
 	confirm, err := session.CallTool(ctx, &mcp.CallToolParams{
 		Name: "outlook.action_confirm",
-		Arguments: map[string]any{
+		Arguments: withApprovalFields(t, dryRun, map[string]any{
 			"action":        "DeleteItem",
 			"payload":       payload,
 			"confirm_token": dryRun.ConfirmationToken,
-		},
+		}),
 	})
 	if err != nil {
 		t.Fatalf("call raw DeleteItem action_confirm: %v", err)
