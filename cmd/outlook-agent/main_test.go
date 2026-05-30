@@ -913,8 +913,8 @@ type catalogDryRunCase struct {
 func mutatingCatalogDryRunSmokeCases(t *testing.T) []catalogDryRunCase {
 	t.Helper()
 	actions := owa.DryRunPayloadExampleActions()
-	if len(actions) != 26 {
-		t.Fatalf("expected 26 mutating catalog actions, got %d", len(actions))
+	if len(actions) != 27 {
+		t.Fatalf("expected 27 mutating catalog actions, got %d", len(actions))
 	}
 	cases := make([]catalogDryRunCase, 0, len(actions))
 	for _, action := range actions {

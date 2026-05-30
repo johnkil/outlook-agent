@@ -6,8 +6,10 @@ package owa
 // with explicit user-approved targets before confirmation.
 func DryRunPayloadExample(actionName string) (map[string]any, bool) {
 	switch actionName {
-	case "ArchiveItem", "CopyItem", "MarkAsJunk", "MoveItem", "SendItem", "ApplyBulkItemAction", "ApplyMessageAction":
+	case "ArchiveItem", "CopyItem", "MarkAsJunk", "MoveItem", "ApplyBulkItemAction", "ApplyMessageAction":
 		return bodyPayload("ItemIds", []any{exampleItemID("dry-run-item")}), true
+	case "SendItem":
+		return bodyPayload("Items", []any{exampleMailItem("dry-run send review")}), true
 	case "MarkAllItemsAsRead":
 		return bodyPayload("FolderIds", []any{exampleFolderID("dry-run-folder")}), true
 	case "CopyFolder", "MoveFolder":
@@ -106,4 +108,14 @@ func exampleFolderID(id string) map[string]any {
 
 func exampleAttachmentID(id string) map[string]any {
 	return map[string]any{"Id": id}
+}
+
+func exampleMailItem(subject string) map[string]any {
+	return map[string]any{
+		"Subject": subject,
+		"Body":    map[string]any{"Value": "dry-run body preview"},
+		"ToRecipients": []any{
+			map[string]any{"EmailAddress": map[string]any{"EmailAddress": "recipient@example.test"}},
+		},
+	}
 }
