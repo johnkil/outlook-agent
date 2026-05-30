@@ -109,7 +109,7 @@ For manual debugging, the core fallback checks are:
 ```bash
 GOPATH=$PWD/.cache/go GOCACHE=$PWD/.cache/go-build GOMODCACHE=$PWD/.cache/go-mod go test -count=1 ./...
 GOPATH=$PWD/.cache/go GOCACHE=$PWD/.cache/go-build GOMODCACHE=$PWD/.cache/go-mod go build -o /private/tmp/outlook-agent-build-check ./cmd/outlook-agent
-bash -n scripts/release-build.sh scripts/public-safety-check.sh scripts/ci-local.sh scripts/release-smoke.sh
+bash -n scripts/release-build.sh scripts/release-verify.sh scripts/public-safety-check.sh scripts/ci-local.sh scripts/release-smoke.sh
 bash scripts/public-safety-check.sh
 git diff --check
 ```

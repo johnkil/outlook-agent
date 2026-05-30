@@ -48,6 +48,15 @@ func TestReleaseReadinessArtifactsExist(t *testing.T) {
 			"GOHOSTARCH",
 			"\"version\": \"smoke\"",
 			"\"built_by\": \"release-build\"",
+			"scripts/release-verify.sh",
+		},
+		filepath.Join("..", "..", "scripts", "release-verify.sh"): {
+			"SHA256SUMS.txt",
+			"release verify passed",
+			"checksum mismatch",
+			"OUTLOOK_AGENT_DIST_DIR",
+			"SHA256SUMS.txt.asc",
+			"gpg --verify",
 		},
 		filepath.Join("..", "..", "scripts", "release-build.sh"): {
 			"GOOS",
@@ -90,6 +99,13 @@ func TestReleaseReadinessArtifactsExist(t *testing.T) {
 			"gh release",
 			"contents: write",
 		},
+		filepath.Join("..", "..", "docs", "RELEASE_EVIDENCE.md"): {
+			"# Release Evidence",
+			"CI run URL",
+			"macOS keychain integration",
+			"live Graph read-only smoke",
+			"Known limitations",
+		},
 	}
 
 	for path, markers := range requiredFiles {
@@ -103,6 +119,102 @@ func TestReleaseReadinessArtifactsExist(t *testing.T) {
 				t.Fatalf("expected %s to contain %q", path, marker)
 			}
 		}
+	}
+}
+
+func TestReleaseVerifyScriptAcceptsChecksummedArchives(t *testing.T) {
+	distDir := t.TempDir()
+	archiveName := "outlook-agent_vtest_darwin_arm64.tar.gz"
+	archiveData := []byte("fake archive bytes")
+	if err := os.WriteFile(filepath.Join(distDir, archiveName), archiveData, 0o644); err != nil {
+		t.Fatalf("write archive fixture: %v", err)
+	}
+	sum := sha256.Sum256(archiveData)
+	checksums := fmt.Sprintf("%x  %s\n", sum, archiveName)
+	if err := os.WriteFile(filepath.Join(distDir, "SHA256SUMS.txt"), []byte(checksums), 0o644); err != nil {
+		t.Fatalf("write checksums fixture: %v", err)
+	}
+
+	output, err := exec.Command("/bin/bash", filepath.Join("..", "..", "scripts", "release-verify.sh"), distDir).CombinedOutput()
+	if err != nil {
+		t.Fatalf("release verify failed unexpectedly: %v\n%s", err, string(output))
+	}
+	if !strings.Contains(string(output), "release verify passed: 1 archives") {
+		t.Fatalf("expected successful release verify output, got:\n%s", string(output))
+	}
+}
+
+func TestReleaseVerifyScriptRejectsChecksumMismatch(t *testing.T) {
+	distDir := t.TempDir()
+	archiveName := "outlook-agent_vtest_darwin_arm64.tar.gz"
+	if err := os.WriteFile(filepath.Join(distDir, archiveName), []byte("actual archive bytes"), 0o644); err != nil {
+		t.Fatalf("write archive fixture: %v", err)
+	}
+	checksums := fmt.Sprintf("%064x  %s\n", 0, archiveName)
+	if err := os.WriteFile(filepath.Join(distDir, "SHA256SUMS.txt"), []byte(checksums), 0o644); err != nil {
+		t.Fatalf("write checksums fixture: %v", err)
+	}
+
+	output, err := exec.Command("/bin/bash", filepath.Join("..", "..", "scripts", "release-verify.sh"), distDir).CombinedOutput()
+	if err == nil {
+		t.Fatalf("expected release verify to reject checksum mismatch:\n%s", string(output))
+	}
+	if !strings.Contains(string(output), "checksum mismatch") {
+		t.Fatalf("expected checksum mismatch output, got:\n%s", string(output))
+	}
+}
+
+func TestReleaseVerifyScriptRejectsChecksumOnlyNonArchives(t *testing.T) {
+	distDir := t.TempDir()
+	readmeName := "README.md"
+	readmeData := []byte("not a release archive")
+	if err := os.WriteFile(filepath.Join(distDir, readmeName), readmeData, 0o644); err != nil {
+		t.Fatalf("write non-archive fixture: %v", err)
+	}
+	sum := sha256.Sum256(readmeData)
+	checksums := fmt.Sprintf("%x  %s\n", sum, readmeName)
+	if err := os.WriteFile(filepath.Join(distDir, "SHA256SUMS.txt"), []byte(checksums), 0o644); err != nil {
+		t.Fatalf("write checksums fixture: %v", err)
+	}
+
+	output, err := exec.Command("/bin/bash", filepath.Join("..", "..", "scripts", "release-verify.sh"), distDir).CombinedOutput()
+	if err == nil {
+		t.Fatalf("expected release verify to reject non-archive-only checksums:\n%s", string(output))
+	}
+	if !strings.Contains(string(output), "not a release archive") {
+		t.Fatalf("expected non-archive rejection, got:\n%s", string(output))
+	}
+}
+
+func TestReleaseVerifyScriptRequiresExactArchiveChecksumEntry(t *testing.T) {
+	distDir := t.TempDir()
+	uncheckedArchiveName := "foo.tar.gz"
+	if err := os.WriteFile(filepath.Join(distDir, uncheckedArchiveName), []byte("unchecked archive bytes"), 0o644); err != nil {
+		t.Fatalf("write unchecked archive fixture: %v", err)
+	}
+	signatureName := uncheckedArchiveName + ".sig"
+	signatureData := []byte("signature bytes")
+	if err := os.WriteFile(filepath.Join(distDir, signatureName), signatureData, 0o644); err != nil {
+		t.Fatalf("write signature fixture: %v", err)
+	}
+	checkedArchiveName := "bar.zip"
+	checkedArchiveData := []byte("checked archive bytes")
+	if err := os.WriteFile(filepath.Join(distDir, checkedArchiveName), checkedArchiveData, 0o644); err != nil {
+		t.Fatalf("write checked archive fixture: %v", err)
+	}
+	signatureSum := sha256.Sum256(signatureData)
+	checkedArchiveSum := sha256.Sum256(checkedArchiveData)
+	checksums := fmt.Sprintf("%x  %s\n%x  %s\n", signatureSum, signatureName, checkedArchiveSum, checkedArchiveName)
+	if err := os.WriteFile(filepath.Join(distDir, "SHA256SUMS.txt"), []byte(checksums), 0o644); err != nil {
+		t.Fatalf("write checksums fixture: %v", err)
+	}
+
+	output, err := exec.Command("/bin/bash", filepath.Join("..", "..", "scripts", "release-verify.sh"), distDir).CombinedOutput()
+	if err == nil {
+		t.Fatalf("expected release verify to reject unchecked archive with prefix-like checksum entry:\n%s", string(output))
+	}
+	if !strings.Contains(string(output), "foo.tar.gz is missing from SHA256SUMS.txt") {
+		t.Fatalf("expected missing archive checksum output, got:\n%s", string(output))
 	}
 }
 
