@@ -142,11 +142,11 @@ var securityCommandFindGenericPassword = func(ctx context.Context, service strin
 }
 
 func securityFindGenericPasswordWithFallback(ctx context.Context, service string, account string) ([]byte, error) {
-	value, err := securityCommandFindGenericPassword(ctx, service, account)
+	value, err := securityFrameworkFindGenericPassword(ctx, service, account)
 	if err == nil {
 		return value, nil
 	}
-	fallbackValue, fallbackErr := securityFrameworkFindGenericPassword(ctx, service, account)
+	fallbackValue, fallbackErr := securityCommandFindGenericPassword(ctx, service, account)
 	if fallbackErr == nil {
 		return fallbackValue, nil
 	}

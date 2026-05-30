@@ -8,7 +8,7 @@ import (
 	"testing"
 )
 
-func TestKeychainStoreFallsBackToSecurityFrameworkRead(t *testing.T) {
+func TestKeychainStorePrefersSecurityFrameworkRead(t *testing.T) {
 	originalFramework := securityFrameworkFindGenericPassword
 	originalCommand := securityCommandFindGenericPassword
 	t.Cleanup(func() {
@@ -16,11 +16,9 @@ func TestKeychainStoreFallsBackToSecurityFrameworkRead(t *testing.T) {
 		securityCommandFindGenericPassword = originalCommand
 	})
 
-	securityCommandFindGenericPassword = func(_ context.Context, service string, account string) ([]byte, error) {
-		if service != "svc" || account != "account" {
-			t.Fatalf("unexpected command args: service=%q account=%q", service, account)
-		}
-		return nil, errors.New("security command unavailable")
+	securityCommandFindGenericPassword = func(context.Context, string, string) ([]byte, error) {
+		t.Fatal("security command read should not be attempted before the framework read")
+		return nil, nil
 	}
 	securityFrameworkFindGenericPassword = func(_ context.Context, service string, account string) ([]byte, error) {
 		if service != "svc" || account != "account" {
@@ -31,14 +29,14 @@ func TestKeychainStoreFallsBackToSecurityFrameworkRead(t *testing.T) {
 
 	value, err := NewKeychainStore().Get(context.Background(), Ref("keychain:svc/account"))
 	if err != nil {
-		t.Fatalf("get keychain secret through framework fallback: %v", err)
+		t.Fatalf("get keychain secret through framework read: %v", err)
 	}
 	if value != "stored-value" {
 		t.Fatalf("expected trimmed framework secret, got %q", value)
 	}
 }
 
-func TestKeychainStorePrefersSecurityCommandRead(t *testing.T) {
+func TestKeychainStoreFallsBackToSecurityCommandRead(t *testing.T) {
 	originalFramework := securityFrameworkFindGenericPassword
 	originalCommand := securityCommandFindGenericPassword
 	t.Cleanup(func() {
@@ -46,9 +44,11 @@ func TestKeychainStorePrefersSecurityCommandRead(t *testing.T) {
 		securityCommandFindGenericPassword = originalCommand
 	})
 
-	securityFrameworkFindGenericPassword = func(context.Context, string, string) ([]byte, error) {
-		t.Fatal("framework read should not be attempted before the security command read")
-		return nil, nil
+	securityFrameworkFindGenericPassword = func(_ context.Context, service string, account string) ([]byte, error) {
+		if service != "svc" || account != "account" {
+			t.Fatalf("unexpected framework args: service=%q account=%q", service, account)
+		}
+		return nil, errors.New("security framework unavailable")
 	}
 	securityCommandFindGenericPassword = func(_ context.Context, service string, account string) ([]byte, error) {
 		if service != "svc" || account != "account" {
@@ -59,7 +59,7 @@ func TestKeychainStorePrefersSecurityCommandRead(t *testing.T) {
 
 	value, err := NewKeychainStore().Get(context.Background(), Ref("keychain:svc/account"))
 	if err != nil {
-		t.Fatalf("get keychain secret through command read: %v", err)
+		t.Fatalf("get keychain secret through command fallback: %v", err)
 	}
 	if value != "stored-value" {
 		t.Fatalf("expected trimmed command secret, got %q", value)

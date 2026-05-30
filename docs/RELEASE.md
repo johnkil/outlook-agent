@@ -46,11 +46,13 @@ is covered by `SHA256SUMS.txt`, and `SHA256SUMS.txt.asc` verifies when a
 detached signature exists and `gpg` is installed.
 
 Release archives are built with `CGO_ENABLED=0` for reproducible cross-platform
-packaging from the hosted workflow. On macOS this means Keychain reads can use
-the `/usr/bin/security` read path, but Keychain writes intentionally fail
-closed. Operators who need `auth graph-device-code` or token refresh to persist
-directly into Keychain should run a local `darwin+cgo` build and verify it with
-`OUTLOOK_AGENT_KEYCHAIN_INTEGRATION=1 go test ./internal/secret -run
+packaging from the hosted workflow. On macOS this means release archives can
+read Keychain items through the `/usr/bin/security` read path, but Keychain
+writes intentionally fail closed. Local `darwin+cgo` builds use
+Security.framework for Keychain reads and writes, with `/usr/bin/security` as a
+read fallback. Operators who need `auth graph-device-code` or token refresh to
+persist directly into Keychain should run a local `darwin+cgo` build and verify
+it with `OUTLOOK_AGENT_KEYCHAIN_INTEGRATION=1 go test ./internal/secret -run
 TestKeychainStoreIntegration -count=1 -v`, or use `file:` / `external:` secret
 stores for write-capable credential storage.
 
