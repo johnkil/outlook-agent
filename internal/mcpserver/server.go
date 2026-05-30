@@ -174,7 +174,7 @@ type MailCategorizeInput struct {
 
 type MailMarkReadInput struct {
 	IDs                 []string `json:"ids" jsonschema:"message ids to update"`
-	IsRead              bool     `json:"is_read" jsonschema:"target read state"`
+	IsRead              *bool    `json:"is_read" jsonschema:"target read state"`
 	ConfirmToken        string   `json:"confirm_token,omitempty" jsonschema:"confirmation token from outlook.action_dry_run for bulk read-state changes"`
 	ApprovalChallengeID string   `json:"approval_challenge_id,omitempty" jsonschema:"payload-bound external approval challenge id"`
 	ApprovalToken       string   `json:"approval_token,omitempty" jsonschema:"external approval token supplied by the host after user approval"`
@@ -843,7 +843,10 @@ func mailCategorizeHandler(runtime *Runtime) func(context.Context, *mcp.CallTool
 
 func mailMarkReadHandler(runtime *Runtime) func(context.Context, *mcp.CallToolRequest, MailMarkReadInput) (*mcp.CallToolResult, ActionResultOutput, error) {
 	return func(ctx context.Context, _ *mcp.CallToolRequest, input MailMarkReadInput) (*mcp.CallToolResult, ActionResultOutput, error) {
-		payload := withMailbox(map[string]any{"ids": stringsToAny(input.IDs), "is_read": input.IsRead}, input.Mailbox)
+		if input.IsRead == nil {
+			return nil, ActionResultOutput{OK: false, Error: "is_read required"}, nil
+		}
+		payload := withMailbox(map[string]any{"ids": stringsToAny(input.IDs), "is_read": *input.IsRead}, input.Mailbox)
 		return executeReversibleMessageMutation(ctx, runtime, "mail.mark_read", payload, input.ConfirmToken, input.ApprovalChallengeID, input.ApprovalToken)
 	}
 }

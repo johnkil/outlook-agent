@@ -460,6 +460,16 @@ func TestReversibleMessageMutationHandlersValidateRequiredState(t *testing.T) {
 	if categorizeOutput.OK || !strings.Contains(categorizeOutput.Error, "categories required") {
 		t.Fatalf("expected missing categories to be rejected, got %#v", categorizeOutput)
 	}
+
+	_, markReadOutput, err := mailMarkReadHandler(runtime)(context.Background(), nil, MailMarkReadInput{
+		IDs: []string{"msg-1"},
+	})
+	if err != nil {
+		t.Fatalf("mark read handler: %v", err)
+	}
+	if markReadOutput.OK || !strings.Contains(markReadOutput.Error, "is_read required") {
+		t.Fatalf("expected missing is_read to be rejected, got %#v", markReadOutput)
+	}
 }
 
 func TestMailCategorizeAllowsEmptyCategoryReplacement(t *testing.T) {
@@ -488,7 +498,7 @@ func TestReversibleMessageMutationSingleExecutesAndBulkRequiresConfirmation(t *t
 
 	_, singleOutput, err := mailMarkReadHandler(runtime)(context.Background(), nil, MailMarkReadInput{
 		IDs:    []string{"msg-1"},
-		IsRead: true,
+		IsRead: boolPointer(true),
 	})
 	if err != nil {
 		t.Fatalf("mark read handler: %v", err)
@@ -500,7 +510,7 @@ func TestReversibleMessageMutationSingleExecutesAndBulkRequiresConfirmation(t *t
 	client.executed = false
 	_, missingConfirm, err := mailMarkReadHandler(runtime)(context.Background(), nil, MailMarkReadInput{
 		IDs:    []string{"msg-1", "msg-2"},
-		IsRead: true,
+		IsRead: boolPointer(true),
 	})
 	if err != nil {
 		t.Fatalf("mark read handler: %v", err)
@@ -525,7 +535,7 @@ func TestReversibleMessageMutationSingleExecutesAndBulkRequiresConfirmation(t *t
 
 	_, confirmed, err := mailMarkReadHandler(runtime)(context.Background(), nil, MailMarkReadInput{
 		IDs:          []string{"msg-1", "msg-2"},
-		IsRead:       true,
+		IsRead:       boolPointer(true),
 		ConfirmToken: dryRun.ConfirmationToken,
 	})
 	if err != nil {
@@ -1228,6 +1238,10 @@ type recordingTransport struct {
 
 func newRecordingTransport(definition action.Definition) *recordingTransport {
 	return &recordingTransport{definition: definition}
+}
+
+func boolPointer(value bool) *bool {
+	return &value
 }
 
 func (client *recordingTransport) Name() string {
