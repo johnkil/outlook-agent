@@ -1188,6 +1188,11 @@ func actionConfirmHandler(runtime *Runtime) func(context.Context, *mcp.CallToolR
 func rawActionHandler(runtime *Runtime) func(context.Context, *mcp.CallToolRequest, RawActionInput) (*mcp.CallToolResult, ActionResultOutput, error) {
 	return func(ctx context.Context, _ *mcp.CallToolRequest, input RawActionInput) (*mcp.CallToolResult, ActionResultOutput, error) {
 		class := safetyClassForPayload(runtime.client, input.Action, input.Payload)
+		if reason := rawActionPreflightRejection(input.Action); reason != "" {
+			review := reviewPacketFor(runtime.client, input.Action, input.Payload, transport.DryRunSummary{Action: input.Action}, class)
+			runtime.recordAudit(audit.TypeReject, input.Action, input.Payload, runtime.profileOrDefault(input.Profile), class, review, "blocked", 0, reason)
+			return nil, ActionResultOutput{OK: false, Error: reason}, nil
+		}
 		decision := policy.Evaluate(policy.Request{
 			Class:          class,
 			ExplicitTarget: hasExplicitTargetForAction(input.Action, input.Payload),
@@ -1204,6 +1209,13 @@ func rawActionHandler(runtime *Runtime) func(context.Context, *mcp.CallToolReque
 		runtime.recordAudit(audit.TypeExecute, input.Action, input.Payload, runtime.profileOrDefault(input.Profile), class, review, auditDecisionForResponse(response), 0, response.Error)
 		return nil, actionResultFromResponse(response), nil
 	}
+}
+
+func rawActionPreflightRejection(actionName string) string {
+	if actionName == "mail.search_next" {
+		return "mail.search_next requires an opaque cursor; use outlook.mail_search_next"
+	}
+	return ""
 }
 
 func (runtime *Runtime) recordAudit(eventType string, actionName string, payload map[string]any, profile string, class policy.SafetyClass, review transport.ReviewPacket, decision string, count int, message string) {

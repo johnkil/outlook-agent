@@ -1156,6 +1156,27 @@ func TestRawActionAllowsSafeMetadataAction(t *testing.T) {
 	}
 }
 
+func TestRawActionRejectsCursorBoundSearchNext(t *testing.T) {
+	client := newRecordingTransport(action.Definition{Name: "mail.search_next", Transport: "test", Class: policy.ReadMetadata, Level: action.LevelHighLevelMCPTool})
+	runtime := NewRuntime(client)
+
+	_, output, err := rawActionHandler(runtime)(context.Background(), nil, RawActionInput{
+		Action: "mail.search_next",
+		Payload: map[string]any{
+			"next_link": "https://graph.example.test/v1.0/me/messages?$skiptoken=forged",
+		},
+	})
+	if err != nil {
+		t.Fatalf("raw action handler: %v", err)
+	}
+	if output.OK || !strings.Contains(output.Error, "outlook.mail_search_next") {
+		t.Fatalf("expected raw search_next to be rejected with cursor-bound guidance, got %#v", output)
+	}
+	if client.executed {
+		t.Fatal("raw search_next must not execute without an issued cursor")
+	}
+}
+
 func TestRawActionDoesNotTrustCallerSuppliedExplicitTarget(t *testing.T) {
 	client := newRecordingTransport(action.Definition{Name: "SearchMailboxes", Transport: "test", Class: policy.ReadBodyExplicit, Level: action.LevelRawGuardedExecution})
 	runtime := NewRuntime(client)
