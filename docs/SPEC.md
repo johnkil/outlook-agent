@@ -336,23 +336,10 @@ user-only permissions (`0600` on Unix-like systems).
 Configured transports:
 
 - `fake`: local deterministic development data.
-- `owa`: OWA-like JSON service transport with high-level mail/calendar tools,
-  raw guarded action execution, in-memory authenticated discovery, and action
-  context diagnostics.
-- `ews`: initial Exchange Web Services SOAP transport. Profiles use
-  `settings.endpoint_url`, `settings.username`, and `secret_ref`. Supported
-  actions are read-metadata `GetFolder`, also used by `auth check`,
-  metadata-only `mail.search` through EWS `FindItem`, metadata-only
-  `mail.fetch_metadata` through EWS `GetItem`, explicit `mail.fetch_body`
-  through EWS `GetItem` with `BodyType` set to text and `item:Body` requested,
-  metadata-only `calendar.list` through EWS `FindItem` with `CalendarView`,
-  metadata-only `calendar.availability` through EWS `GetUserAvailability`, and
-  raw guarded `EWSRequest` for caller-provided SOAP XML envelopes. Deployments
-  that require NTLM, Negotiate, OAuth, or server-side EWS allow-listing need
-  additional adapter/auth work.
-- `graph`: initial Microsoft Graph REST transport. Profiles use optional
-  `settings.base_url` and `secret_ref` for either a raw bearer access token or
-  a refresh-capable JSON token credential stored outside config. Refresh uses
+- `graph`: primary and most complete Microsoft Graph REST backend. Profiles
+  use optional `settings.base_url` and `secret_ref` for either a raw bearer
+  access token or a refresh-capable JSON token credential stored outside
+  config. Refresh uses
   `settings.client_id`, optional `settings.tenant`, `settings.scopes` as a JSON
   array or space-separated string, optional `settings.token_url`, and optional
   `settings.device_code_url` for advanced operators and tests. Device-code
@@ -384,6 +371,23 @@ Configured transports:
   `/users/{id|userPrincipalName}` endpoint for delegated or shared mailboxes;
   MCP tools expose `mailbox`. App registration, admin consent, and live tenant
   policy approval remain external to the public runtime in this phase.
+- `owa`: compatibility backend for locked-down environments where Graph is not
+  available. It uses OWA-like JSON service endpoints with selected high-level
+  mail/calendar tools, raw guarded action execution, in-memory authenticated
+  discovery, and action context diagnostics. OWA service shapes are more
+  fragile than Graph and should be treated as adapter-specific compatibility
+  behavior.
+- `ews`: read-heavy initial Exchange Web Services SOAP adapter for Exchange
+  deployments where Graph is not available. Profiles use `settings.endpoint_url`,
+  `settings.username`, and `secret_ref`. Supported actions are read-metadata
+  `GetFolder`, also used by `auth check`, metadata-only `mail.search` through
+  EWS `FindItem`, metadata-only `mail.fetch_metadata` through EWS `GetItem`,
+  explicit `mail.fetch_body` through EWS `GetItem` with `BodyType` set to text
+  and `item:Body` requested, metadata-only `calendar.list` through EWS
+  `FindItem` with `CalendarView`, metadata-only `calendar.availability` through
+  EWS `GetUserAvailability`, and raw guarded `EWSRequest` for caller-provided
+  SOAP XML envelopes. Deployments that require NTLM, Negotiate, OAuth, or
+  server-side EWS allow-listing need additional adapter/auth work.
 
 ## Redaction
 
