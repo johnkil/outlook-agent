@@ -201,17 +201,15 @@ Repository-level checks are necessary but not sufficient for enterprise use.
 
 Required controls:
 
-- Enable organization-managed secret scanning for the public repository and
-  private enterprise config repositories.
-- Current repository protection evidence: Dependabot vulnerability alerts are
-  enabled, and `main` branch protection requires pull request review,
-  stale-review dismissal, and conversation resolution while force pushes and
-  branch deletion are disabled.
-- GitHub reported that secret scanning is not available for this repository;
-  production rollout still requires GitHub plan or organization policy
-  enablement for secret scanning, or an approved enterprise-equivalent scanning
-  route with alert ownership defined outside this public repository when
-  details are private.
+- Keep repository secret scanning, push protection, and Dependabot security
+  updates enabled for the public repository.
+- Current repository protection evidence: `main` branch protection requires the
+  hosted `test` status check and conversation resolution, enforces admin rules,
+  and disables force pushes and branch deletion.
+- Enable organization-managed secret scanning or an approved
+  enterprise-equivalent scanner for private enterprise config repositories, and
+  define alert-routing ownership outside this public repository when details
+  are private.
 - Treat committed Outlook endpoints, usernames, mailbox addresses, cookies,
   canary values, OAuth tokens, passwords, raw messages, HAR files, screenshots,
   raw HTML, and raw JavaScript as review blockers when they identify a private
