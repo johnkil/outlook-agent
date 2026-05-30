@@ -33,4 +33,5 @@ git diff --check
 sh -n install.sh
 sh install.sh --help >/dev/null
 scripts/public-safety-check.sh
+scripts/action-coverage-smoke.sh
 go run golang.org/x/vuln/cmd/govulncheck@v1.3.0 ./...

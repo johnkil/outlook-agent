@@ -2,6 +2,8 @@ package main
 
 import (
 	"bytes"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -38,6 +40,40 @@ func TestReadPayloadPreservesExactBytes(t *testing.T) {
 	}
 	if string(payload) != payloadWithTrailingNewline {
 		t.Fatalf("payload bytes were normalized: %q", string(payload))
+	}
+}
+
+func TestReadPayloadRejectsOversizedStdin(t *testing.T) {
+	oversizedPayload := strings.Repeat("x", 64*1024+1)
+
+	_, err := readPayload("-", strings.NewReader(oversizedPayload))
+	if err == nil {
+		t.Fatal("expected oversized stdin payload to be rejected")
+	}
+	if !strings.Contains(err.Error(), "too large") {
+		t.Fatalf("expected too-large error, got %v", err)
+	}
+	if strings.Contains(err.Error(), oversizedPayload) {
+		t.Fatal("oversized stdin error leaked payload bytes")
+	}
+}
+
+func TestReadPayloadRejectsOversizedFile(t *testing.T) {
+	oversizedPayload := strings.Repeat("x", 64*1024+1)
+	path := filepath.Join(t.TempDir(), "challenge.txt")
+	if err := os.WriteFile(path, []byte(oversizedPayload), 0o600); err != nil {
+		t.Fatalf("write oversized payload fixture: %v", err)
+	}
+
+	_, err := readPayload(path, strings.NewReader(""))
+	if err == nil {
+		t.Fatal("expected oversized file payload to be rejected")
+	}
+	if !strings.Contains(err.Error(), "too large") {
+		t.Fatalf("expected too-large error, got %v", err)
+	}
+	if strings.Contains(err.Error(), oversizedPayload) {
+		t.Fatal("oversized file error leaked payload bytes")
 	}
 }
 

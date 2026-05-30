@@ -110,7 +110,7 @@ GOPATH=$PWD/.cache/go GOCACHE=$PWD/.cache/go-build GOMODCACHE=$PWD/.cache/go-mod
 ```
 
 The script runs formatting, `go mod tidy` module tidiness, tests, build,
-whitespace, public-safety, and `govulncheck` gates.
+whitespace, public-safety, action-coverage, and `govulncheck` gates.
 
 For manual debugging, the equivalent core checks are:
 
@@ -126,9 +126,10 @@ git tag v0.1.0
 git push origin v0.1.0
 ```
 
-The release workflow runs `scripts/release-build.sh`, uploads the archives,
-the dependency manifest, `SHA256SUMS.txt`, and the optional signature to a
-GitHub release.
+The release workflow runs `scripts/release-build.sh`, verifies the completed
+`dist/` directory with `scripts/release-verify.sh dist`, then uploads the
+archives, the dependency manifest, `SHA256SUMS.txt`, and the optional signature
+to a GitHub release.
 
 Before publishing release notes, fill out `docs/RELEASE_EVIDENCE.md` for the
 tag. Keep private live-smoke details out of the repository; use pass/fail or
