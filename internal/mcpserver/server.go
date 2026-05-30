@@ -589,11 +589,12 @@ func mailSearchHandler(runtime *Runtime) func(context.Context, *mcp.CallToolRequ
 
 func mailSearchNextHandler(runtime *Runtime) func(context.Context, *mcp.CallToolRequest, MailSearchNextInput) (*mcp.CallToolResult, MailSearchOutput, error) {
 	return func(ctx context.Context, _ *mcp.CallToolRequest, input MailSearchNextInput) (*mcp.CallToolResult, MailSearchOutput, error) {
-		record, ok := runtime.cursors.ConsumeScoped(input.Cursor, cursor.Scope{
+		scope := cursor.Scope{
 			Transport: runtime.client.Name(),
 			Profile:   runtime.profile,
 			Action:    "mail.search",
-		})
+		}
+		record, ok := runtime.cursors.PeekScoped(input.Cursor, scope)
 		if !ok {
 			return nil, MailSearchOutput{}, errors.New("cursor is invalid or expired")
 		}
@@ -607,6 +608,7 @@ func mailSearchNextHandler(runtime *Runtime) func(context.Context, *mcp.CallTool
 		if err := transportResponseError(response); err != nil {
 			return nil, MailSearchOutput{}, err
 		}
+		runtime.cursors.ConsumeScoped(input.Cursor, scope)
 		rawNextLink := stringMetadata(response.Data, "next_link")
 		redacted := redact.Value(response.Data).(map[string]any)
 		messages, _ := redacted["messages"].([]any)
@@ -830,10 +832,10 @@ func mailFlagHandler(runtime *Runtime) func(context.Context, *mcp.CallToolReques
 
 func mailCategorizeHandler(runtime *Runtime) func(context.Context, *mcp.CallToolRequest, MailCategorizeInput) (*mcp.CallToolResult, ActionResultOutput, error) {
 	return func(ctx context.Context, _ *mcp.CallToolRequest, input MailCategorizeInput) (*mcp.CallToolResult, ActionResultOutput, error) {
-		categories := nonEmptyStrings(input.Categories)
-		if len(categories) == 0 {
+		if input.Categories == nil {
 			return nil, ActionResultOutput{OK: false, Error: "categories required"}, nil
 		}
+		categories := nonEmptyStrings(input.Categories)
 		payload := withMailbox(map[string]any{"ids": stringsToAny(input.IDs), "categories": stringsToAny(categories)}, input.Mailbox)
 		return executeReversibleMessageMutation(ctx, runtime, "mail.categorize", payload, input.ConfirmToken, input.ApprovalChallengeID, input.ApprovalToken)
 	}

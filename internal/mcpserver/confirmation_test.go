@@ -462,6 +462,26 @@ func TestReversibleMessageMutationHandlersValidateRequiredState(t *testing.T) {
 	}
 }
 
+func TestMailCategorizeAllowsEmptyCategoryReplacement(t *testing.T) {
+	client := newRecordingTransport(action.Definition{Name: "mail.categorize", Transport: "test", Class: policy.ReversibleBulk, Level: action.LevelHighLevelMCPTool})
+	runtime := NewRuntime(client)
+
+	_, output, err := mailCategorizeHandler(runtime)(context.Background(), nil, MailCategorizeInput{
+		IDs:        []string{"msg-1"},
+		Categories: []string{},
+	})
+	if err != nil {
+		t.Fatalf("categorize handler: %v", err)
+	}
+	if !output.OK || !client.executed {
+		t.Fatalf("expected empty category replacement to execute: %#v executed=%v", output, client.executed)
+	}
+	categories, ok := client.payload["categories"].([]any)
+	if !ok || len(categories) != 0 {
+		t.Fatalf("expected categories payload to be an empty replacement list, got %#v", client.payload["categories"])
+	}
+}
+
 func TestReversibleMessageMutationSingleExecutesAndBulkRequiresConfirmation(t *testing.T) {
 	client := newRecordingTransport(action.Definition{Name: "mail.mark_read", Transport: "test", Class: policy.ReversibleBulk, Level: action.LevelHighLevelMCPTool})
 	runtime := NewRuntime(client)
@@ -1203,6 +1223,7 @@ func TestActionResultRedactsSecretBearingError(t *testing.T) {
 type recordingTransport struct {
 	definition action.Definition
 	executed   bool
+	payload    map[string]any
 }
 
 func newRecordingTransport(definition action.Definition) *recordingTransport {
@@ -1221,8 +1242,9 @@ func (client *recordingTransport) Capabilities(context.Context) transport.Capabi
 	return transport.CapabilitySet{Actions: []action.Definition{client.definition}}
 }
 
-func (client *recordingTransport) Execute(context.Context, transport.ActionRequest) transport.ActionResponse {
+func (client *recordingTransport) Execute(_ context.Context, request transport.ActionRequest) transport.ActionResponse {
 	client.executed = true
+	client.payload = request.Payload
 	return transport.ActionResponse{OK: true, Data: map[string]any{"executed": true}}
 }
 

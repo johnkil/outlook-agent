@@ -92,6 +92,32 @@ func TestMailSearchNextConsumesCursorAndPreservesQueryFilter(t *testing.T) {
 	}
 }
 
+func TestMailSearchNextKeepsCursorWhenProviderFails(t *testing.T) {
+	client := &paginatedSearchNextTransport{failNext: true}
+	runtime := NewRuntime(client)
+
+	_, firstPage, err := mailSearchHandler(runtime)(context.Background(), nil, MailSearchInput{Query: "planning"})
+	if err != nil {
+		t.Fatalf("mail search handler: %v", err)
+	}
+	if firstPage.NextCursor == "" {
+		t.Fatalf("expected next cursor: %#v", firstPage)
+	}
+
+	_, _, err = mailSearchNextHandler(runtime)(context.Background(), nil, MailSearchNextInput{Cursor: firstPage.NextCursor})
+	if err == nil || !strings.Contains(err.Error(), "temporary provider failure") {
+		t.Fatalf("expected transient provider failure, got %v", err)
+	}
+
+	_, nextPage, err := mailSearchNextHandler(runtime)(context.Background(), nil, MailSearchNextInput{Cursor: firstPage.NextCursor})
+	if err != nil {
+		t.Fatalf("expected same cursor to retry after provider failure: %v", err)
+	}
+	if nextPage.Returned != 1 || len(nextPage.Messages) != 1 {
+		t.Fatalf("expected retry to fetch one next-page message, got %#v", nextPage)
+	}
+}
+
 type leakyTransport struct{}
 
 func (leakyTransport) Name() string {
@@ -159,6 +185,7 @@ func (paginatedSearchTransport) DryRun(context.Context, transport.ActionRequest)
 type paginatedSearchNextTransport struct {
 	nextLinkUsed string
 	queryUsed    string
+	failNext     bool
 }
 
 func (client *paginatedSearchNextTransport) Name() string {
@@ -186,6 +213,10 @@ func (client *paginatedSearchNextTransport) Execute(_ context.Context, request t
 	case "mail.search_next":
 		client.nextLinkUsed, _ = request.Payload["next_link"].(string)
 		client.queryUsed, _ = request.Payload["query"].(string)
+		if client.failNext {
+			client.failNext = false
+			return transport.ActionResponse{OK: false, Error: "temporary provider failure"}
+		}
 		return transport.ActionResponse{OK: true, Data: map[string]any{
 			"messages":  []any{map[string]any{"subject": "Second"}},
 			"returned":  1,

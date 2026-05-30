@@ -95,6 +95,23 @@ func (store *Store) ConsumeScoped(id string, scope Scope) (Record, bool) {
 	return record, true
 }
 
+func (store *Store) PeekScoped(id string, scope Scope) (Record, bool) {
+	store.mu.Lock()
+	defer store.mu.Unlock()
+	record, ok := store.records[id]
+	if !ok {
+		return Record{}, false
+	}
+	if record.Binding.Transport != scope.Transport || record.Binding.Profile != scope.Profile || record.Binding.Action != scope.Action {
+		return Record{}, false
+	}
+	if !store.now().Before(record.ExpiresAt) {
+		delete(store.records, id)
+		return Record{}, false
+	}
+	return record, true
+}
+
 func randomID() (string, error) {
 	buffer := make([]byte, 32)
 	if _, err := rand.Read(buffer); err != nil {
