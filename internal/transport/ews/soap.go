@@ -167,7 +167,10 @@ func findItemEnvelope(folderID string, maxItems int) string {
 		folderID = "inbox"
 	}
 	if maxItems <= 0 {
-		maxItems = 150
+		maxItems = coretransport.DefaultPageSize
+	}
+	if maxItems > coretransport.MaxPageSize {
+		maxItems = coretransport.MaxPageSize
 	}
 	escapedFolderID := html.EscapeString(folderID)
 	return fmt.Sprintf(`<?xml version="1.0" encoding="utf-8"?>
@@ -246,7 +249,10 @@ func getItemBodyEnvelope(itemID string) string {
 
 func findCalendarItemsEnvelope(start string, end string, maxItems int) string {
 	if maxItems <= 0 {
-		maxItems = 150
+		maxItems = coretransport.DefaultPageSize
+	}
+	if maxItems > coretransport.MaxPageSize {
+		maxItems = coretransport.MaxPageSize
 	}
 	escapedStart := html.EscapeString(strings.TrimSpace(start))
 	escapedEnd := html.EscapeString(strings.TrimSpace(end))

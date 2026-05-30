@@ -86,6 +86,32 @@ func TestTokenRejectsUnsafeModeMismatch(t *testing.T) {
 	}
 }
 
+func TestTokenRejectsReviewFingerprintMismatch(t *testing.T) {
+	now := time.Date(2026, 5, 27, 12, 0, 0, 0, time.UTC)
+	store := confirm.NewStore(func() time.Time { return now })
+
+	binding := confirm.Binding{
+		Action:            "mail.move_to_deleted_items",
+		Transport:         "graph",
+		Profile:           "default",
+		Payload:           map[string]any{"ids": []any{"a"}},
+		UnsafeMode:        false,
+		SafetyClass:       "reversible_bulk",
+		ReviewFingerprint: "review-a",
+	}
+
+	token, err := store.Generate(binding, time.Minute)
+	if err != nil {
+		t.Fatalf("generate token: %v", err)
+	}
+
+	mismatched := binding
+	mismatched.ReviewFingerprint = "review-b"
+	if store.Consume(token, mismatched) {
+		t.Fatal("expected review fingerprint mismatch to reject token")
+	}
+}
+
 func TestTokenExpires(t *testing.T) {
 	now := time.Date(2026, 5, 27, 12, 0, 0, 0, time.UTC)
 	store := confirm.NewStore(func() time.Time { return now })

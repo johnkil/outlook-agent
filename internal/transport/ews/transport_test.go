@@ -262,6 +262,39 @@ func TestTransportExecutesMailSearchWithFindItem(t *testing.T) {
 	}
 }
 
+func TestTransportMailSearchClampsHugePageSize(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		body, err := io.ReadAll(request.Body)
+		if err != nil {
+			t.Fatalf("read body: %v", err)
+		}
+		if !strings.Contains(string(body), `<m:IndexedPageItemView MaxEntriesReturned="250" Offset="0" BasePoint="Beginning"/>`) {
+			t.Fatalf("expected clamped EWS page size, got %s", string(body))
+		}
+		response.Header().Set("Content-Type", "text/xml")
+		_, _ = response.Write([]byte(successfulFindItemResponse()))
+	}))
+	defer server.Close()
+
+	client := ews.NewTransport(ews.Config{
+		EndpointURL: server.URL + "/EWS/Exchange.asmx",
+		Username:    "DOMAIN\\user",
+		SecretRef:   secret.Ref("memory:ews"),
+	}, secret.NewMemoryStore(map[string]string{"memory:ews": "password-secret"}), server.Client())
+
+	result := client.Execute(context.Background(), transport.ActionRequest{
+		Name:    "mail.search",
+		Payload: map[string]any{"folder_id": "inbox", "max": 1_000_000},
+	})
+
+	if !result.OK {
+		t.Fatalf("expected mail.search ok, got %#v", result)
+	}
+	if result.Data["limit"] != transport.MaxPageSize || result.Data["limit_clamped"] != true {
+		t.Fatalf("expected clamped limit metadata, got %#v", result.Data)
+	}
+}
+
 func TestTransportRejectsOversizedHighLevelEWSResponse(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
 		response.Header().Set("Content-Type", "text/xml")
@@ -556,6 +589,43 @@ func TestTransportExecutesCalendarListWithCalendarView(t *testing.T) {
 	}
 }
 
+func TestTransportCalendarListClampsHugePageSize(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		body, err := io.ReadAll(request.Body)
+		if err != nil {
+			t.Fatalf("read body: %v", err)
+		}
+		if !strings.Contains(string(body), `<m:CalendarView MaxEntriesReturned="250" StartDate="2026-05-28T00:00:00Z" EndDate="2026-05-29T00:00:00Z"/>`) {
+			t.Fatalf("expected clamped EWS calendar page size, got %s", string(body))
+		}
+		response.Header().Set("Content-Type", "text/xml")
+		_, _ = response.Write([]byte(successfulFindCalendarItemsResponse()))
+	}))
+	defer server.Close()
+
+	client := ews.NewTransport(ews.Config{
+		EndpointURL: server.URL + "/EWS/Exchange.asmx",
+		Username:    "DOMAIN\\user",
+		SecretRef:   secret.Ref("memory:ews"),
+	}, secret.NewMemoryStore(map[string]string{"memory:ews": "password-secret"}), server.Client())
+
+	result := client.Execute(context.Background(), transport.ActionRequest{
+		Name: "calendar.list",
+		Payload: map[string]any{
+			"start": "2026-05-28T00:00:00Z",
+			"end":   "2026-05-29T00:00:00Z",
+			"max":   "1000000",
+		},
+	})
+
+	if !result.OK {
+		t.Fatalf("expected calendar.list ok, got %#v", result)
+	}
+	if result.Data["limit"] != transport.MaxPageSize || result.Data["limit_clamped"] != true {
+		t.Fatalf("expected clamped limit metadata, got %#v", result.Data)
+	}
+}
+
 func TestTransportRejectsCalendarListWithoutRange(t *testing.T) {
 	client := ews.NewTransport(ews.Config{
 		EndpointURL: "https://example.test/EWS/Exchange.asmx",
@@ -674,7 +744,7 @@ func TestTransportRejectsCalendarAvailabilityWithoutEmailOrRange(t *testing.T) {
 
 func TestTransportExecutesRawEWSRequest(t *testing.T) {
 	const requestXML = `<soap:Envelope xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/"><soap:Body><m:GetServerTimeZones xmlns:m="http://schemas.microsoft.com/exchange/services/2006/messages"/></soap:Body></soap:Envelope>`
-	const responseXML = `<soap:Envelope><soap:Body><m:GetServerTimeZonesResponse><m:ResponseMessages/></m:GetServerTimeZonesResponse></soap:Body></soap:Envelope>`
+	const responseXML = `<soap:Envelope><soap:Body><m:GetServerTimeZonesResponse><m:ResponseMessages/><t:Token>secret-token</t:Token></m:GetServerTimeZonesResponse></soap:Body></soap:Envelope>`
 	var sawBody bool
 	var sawAuth bool
 	var sawSOAPAction bool
@@ -728,8 +798,18 @@ func TestTransportExecutesRawEWSRequest(t *testing.T) {
 	if !sawBody || !sawAuth || !sawSOAPAction {
 		t.Fatalf("expected body/auth/SOAPAction to be sent, got body=%v auth=%v soapAction=%v", sawBody, sawAuth, sawSOAPAction)
 	}
-	if result.Data["status"] != http.StatusOK || result.Data["content_type"] != "text/xml" || result.Data["xml_text"] != responseXML {
+	if result.Data["status"] != http.StatusOK || result.Data["xml_text"] != nil || result.Data["body_text"] != nil {
 		t.Fatalf("unexpected raw EWS data: %#v", result.Data)
+	}
+	preview, _ := result.Data["body_preview"].(string)
+	if !strings.Contains(preview, "GetServerTimeZonesResponse") {
+		t.Fatalf("expected EWS response preview, got %q", preview)
+	}
+	if strings.Contains(preview, "secret-token") {
+		t.Fatalf("expected EWS response preview to redact token, got %q", preview)
+	}
+	if result.Data["body_sha256"] == "" {
+		t.Fatalf("expected EWS response body hash, got %#v", result.Data)
 	}
 	headers := result.Data["headers"].(map[string]any)
 	if headers["request-id"] != "ews-request-id" || headers["content-type"] != "text/xml" {
@@ -786,13 +866,37 @@ func TestTransportDryRunEWSRequestRequiresConfirmation(t *testing.T) {
 		SecretRef:   secret.Ref("memory:ews"),
 	}, secret.NewMemoryStore(map[string]string{"memory:ews": "password-secret"}), nil)
 
+	bodyXML := `<soap:Envelope xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/" xmlns:m="http://schemas.microsoft.com/exchange/services/2006/messages"><soap:Body><m:DeleteItem><m:Password>secret</m:Password></m:DeleteItem></soap:Body></soap:Envelope>`
 	summary := client.DryRun(context.Background(), transport.ActionRequest{
-		Name:    "EWSRequest",
-		Payload: map[string]any{"body_xml": "<soap:Envelope/>"},
+		Name: "EWSRequest",
+		Payload: map[string]any{
+			"soap_action": "http://schemas.microsoft.com/exchange/services/2006/messages/DeleteItem",
+			"body_xml":    bodyXML,
+		},
 	})
 
 	if summary.Action != "EWSRequest" || summary.Count != 1 || summary.Reversible || !summary.RequiresConfirmation {
 		t.Fatalf("unexpected EWSRequest dry-run summary: %#v", summary)
+	}
+	if summary.Review == nil || summary.Review.Raw == nil {
+		t.Fatalf("expected EWSRequest review packet: %#v", summary)
+	}
+	if summary.Review.Transport != "ews" || summary.Review.SafetyClass != string(policy.Destructive) {
+		t.Fatalf("unexpected EWS review metadata: %#v", summary.Review)
+	}
+	if summary.Review.Raw.SOAPAction != "http://schemas.microsoft.com/exchange/services/2006/messages/DeleteItem" || summary.Review.Raw.Operation != "DeleteItem" {
+		t.Fatalf("unexpected EWS raw review: %#v", summary.Review.Raw)
+	}
+	if summary.Review.Raw.BodySHA256 == "" || !strings.Contains(summary.Review.Raw.BodyPreview, "DeleteItem") {
+		t.Fatalf("expected EWS body hash and preview, got %#v", summary.Review.Raw)
+	}
+	for _, leaked := range []string{"Password", "secret"} {
+		if strings.Contains(summary.Review.Raw.BodyPreview, leaked) {
+			t.Fatalf("expected EWS preview to redact %q, got %q", leaked, summary.Review.Raw.BodyPreview)
+		}
+	}
+	if len(summary.Review.Limitations) == 0 {
+		t.Fatalf("expected EWS raw review limitations, got %#v", summary.Review)
 	}
 }
 

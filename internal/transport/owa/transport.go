@@ -7,17 +7,32 @@ import (
 	"net/http"
 	"strings"
 	"sync"
+	"time"
 
+	"github.com/johnkil/outlook-agent/internal/policy"
 	"github.com/johnkil/outlook-agent/internal/secret"
 	"github.com/johnkil/outlook-agent/internal/transport"
 )
 
 type Transport struct {
-	config  Config
-	secrets secret.Store
-	client  *http.Client
-	mu      sync.Mutex
-	session *Session
+	config     Config
+	secrets    secret.Store
+	client     *http.Client
+	mu         sync.Mutex
+	session    *cachedSession
+	now        func() time.Time
+	sessionTTL time.Duration
+}
+
+const DefaultSessionTTL = 20 * time.Minute
+const owaMissingMailReviewMetadata = "send-like OWA action requires inline mail review metadata before approval"
+const owaMultipleMailItemsReviewUnsupported = "send-like OWA action has multiple mail items; split into one dry-run per item before approval"
+
+type cachedSession struct {
+	session    Session
+	createdAt  time.Time
+	lastUsedAt time.Time
+	expiresAt  time.Time
 }
 
 func NewTransport(config Config, secrets secret.Store, client *http.Client) *Transport {
@@ -25,7 +40,7 @@ func NewTransport(config Config, secrets secret.Store, client *http.Client) *Tra
 		client = defaultHTTPClient()
 	}
 	client = withOWARedirectPolicy(client)
-	return &Transport{config: config, secrets: secrets, client: client}
+	return &Transport{config: config, secrets: secrets, client: client, now: time.Now, sessionTTL: DefaultSessionTTL}
 }
 
 func defaultHTTPClient() *http.Client {
@@ -77,6 +92,35 @@ func requestHasOWASessionMaterial(request *http.Request) bool {
 	return false
 }
 
+func isOWAAuthFailureResponse(response *http.Response, body []byte) bool {
+	if response == nil {
+		return false
+	}
+	if response.StatusCode == http.StatusUnauthorized || response.StatusCode == http.StatusForbidden {
+		return true
+	}
+	if response.Request != nil && response.Request.URL != nil {
+		path := strings.ToLower(response.Request.URL.Path)
+		if strings.Contains(path, "/owa/auth/") || strings.Contains(path, "/owa/auth.owa") {
+			return true
+		}
+	}
+	lower := strings.ToLower(string(body))
+	return strings.Contains(lower, "auth/logon.aspx") || strings.Contains(lower, "/owa/auth.owa")
+}
+
+func looksLikeJSON(response *http.Response, body []byte) bool {
+	contentType := ""
+	if response != nil {
+		contentType = strings.ToLower(response.Header.Get("Content-Type"))
+	}
+	if strings.Contains(contentType, "json") {
+		return true
+	}
+	trimmed := strings.TrimSpace(string(body))
+	return strings.HasPrefix(trimmed, "{") || strings.HasPrefix(trimmed, "[")
+}
+
 func (client *Transport) Name() string {
 	return "owa"
 }
@@ -98,13 +142,23 @@ func (client *Transport) Execute(ctx context.Context, request transport.ActionRe
 	if response, ok := client.executeHighLevel(ctx, request); ok {
 		return response
 	}
-	return client.executeService(ctx, request.Name, request.Payload, false)
+	return client.executeRawService(ctx, request.Name, request.Payload, false)
 }
 
 func (client *Transport) executeService(ctx context.Context, actionName string, requestPayload any, urlPostData bool) transport.ActionResponse {
+	response, authFailure := client.executeServiceOnce(ctx, actionName, requestPayload, urlPostData)
+	if !authFailure {
+		return response
+	}
+	client.invalidateSession()
+	response, _ = client.executeServiceOnce(ctx, actionName, requestPayload, urlPostData)
+	return response
+}
+
+func (client *Transport) executeServiceOnce(ctx context.Context, actionName string, requestPayload any, urlPostData bool) (transport.ActionResponse, bool) {
 	session, err := client.login(ctx)
 	if err != nil {
-		return transport.ActionResponse{OK: false, Error: err.Error()}
+		return transport.ActionResponse{OK: false, Error: err.Error()}, false
 	}
 	var httpRequest *http.Request
 	if urlPostData {
@@ -113,44 +167,336 @@ func (client *Transport) executeService(ctx context.Context, actionName string, 
 		httpRequest, err = BuildServiceRequest(client.config, actionName, session.Canary, requestPayload)
 	}
 	if err != nil {
-		return transport.ActionResponse{OK: false, Error: err.Error()}
+		return transport.ActionResponse{OK: false, Error: err.Error()}, false
 	}
 	httpRequest = httpRequest.WithContext(ctx)
 	response, err := session.Client.Do(httpRequest)
 	if err != nil {
-		return transport.ActionResponse{OK: false, Error: err.Error()}
+		return transport.ActionResponse{OK: false, Error: err.Error()}, false
 	}
 	defer response.Body.Close()
 
 	rawBody, err := transport.ReadLimited(response.Body, transport.MaxResponseBytes)
 	if err != nil {
-		return transport.ActionResponse{OK: false, Error: err.Error()}
+		return transport.ActionResponse{OK: false, Error: err.Error()}, false
+	}
+	authFailure := isOWAAuthFailureResponse(response, rawBody)
+	if authFailure && !looksLikeJSON(response, rawBody) {
+		return transport.ActionResponse{OK: false, Error: fmt.Sprintf("owa service returned HTTP %d", response.StatusCode)}, true
 	}
 	var payload map[string]any
 	if err := json.Unmarshal(rawBody, &payload); err != nil {
-		return transport.ActionResponse{OK: false, Error: err.Error()}
+		return transport.ActionResponse{OK: false, Error: err.Error()}, authFailure
 	}
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
-		return transport.ActionResponse{OK: false, Data: payload, Error: fmt.Sprintf("owa service returned HTTP %d", response.StatusCode)}
+		return transport.ActionResponse{OK: false, Data: payload, Error: fmt.Sprintf("owa service returned HTTP %d", response.StatusCode)}, authFailure
 	}
-	return transport.ActionResponse{OK: true, Data: payload}
+	return transport.ActionResponse{OK: true, Data: payload}, false
+}
+
+func (client *Transport) executeRawService(ctx context.Context, actionName string, requestPayload any, urlPostData bool) transport.ActionResponse {
+	response, authFailure := client.executeRawServiceOnce(ctx, actionName, requestPayload, urlPostData)
+	if !authFailure {
+		return response
+	}
+	client.invalidateSession()
+	response, _ = client.executeRawServiceOnce(ctx, actionName, requestPayload, urlPostData)
+	return response
+}
+
+func (client *Transport) executeRawServiceOnce(ctx context.Context, actionName string, requestPayload any, urlPostData bool) (transport.ActionResponse, bool) {
+	session, err := client.login(ctx)
+	if err != nil {
+		return transport.ActionResponse{OK: false, Error: err.Error()}, false
+	}
+	var httpRequest *http.Request
+	if urlPostData {
+		httpRequest, err = BuildURLPostDataRequest(client.config, actionName, session.Canary, requestPayload)
+	} else {
+		httpRequest, err = BuildServiceRequest(client.config, actionName, session.Canary, requestPayload)
+	}
+	if err != nil {
+		return transport.ActionResponse{OK: false, Error: err.Error()}, false
+	}
+	httpRequest = httpRequest.WithContext(ctx)
+	response, err := session.Client.Do(httpRequest)
+	if err != nil {
+		return transport.ActionResponse{OK: false, Error: err.Error()}, false
+	}
+	defer response.Body.Close()
+
+	rawBody, err := transport.ReadLimited(response.Body, transport.MaxResponseBytes)
+	if err != nil {
+		return transport.ActionResponse{OK: false, Error: err.Error()}, false
+	}
+	authFailure := isOWAAuthFailureResponse(response, rawBody)
+	data := transport.RawResponseEnvelope(response.StatusCode, response.Header, rawBody)
+	if response.StatusCode < 200 || response.StatusCode >= 300 {
+		return transport.ActionResponse{OK: false, Data: data, Error: fmt.Sprintf("owa service returned HTTP %d", response.StatusCode)}, authFailure
+	}
+	return transport.ActionResponse{OK: true, Data: data}, false
 }
 
 func (client *Transport) DryRun(_ context.Context, request transport.ActionRequest) transport.DryRunSummary {
 	count := countRequestItems(request.Payload)
+	class := dryRunSafetyClass(request)
+	review := dryRunReview(request, class)
 	return transport.DryRunSummary{
 		Action:               request.Name,
 		Count:                count,
 		Reversible:           isReversible(request),
 		RequiresConfirmation: true,
+		SafetyClass:          string(class),
+		Review:               &review,
+		Warnings:             review.Limitations,
+		Error:                dryRunReviewError(request.Name, review),
 	}
+}
+
+func dryRunSafetyClass(request transport.ActionRequest) policy.SafetyClass {
+	class := dryRunCapabilityClass(request.Name)
+	if class == policy.Destructive && isMoveToDeletedItemsDelete(request) {
+		return policy.ReversibleBulk
+	}
+	return class
+}
+
+func dryRunCapabilityClass(actionName string) policy.SafetyClass {
+	for _, definition := range append(highLevelCapabilities(), rawServiceCapabilities()...) {
+		if definition.Name == actionName {
+			return definition.Class
+		}
+	}
+	return policy.Unknown
+}
+
+func dryRunReview(request transport.ActionRequest, class policy.SafetyClass) transport.ReviewPacket {
+	body, _ := request.Payload["Body"].(map[string]any)
+	review := transport.ReviewPacket{
+		Version:            transport.ReviewPacketVersion,
+		Transport:          "owa",
+		Action:             request.Name,
+		SafetyClass:        string(class),
+		Targets:            owaTargetRefs(body),
+		Mutation:           owaMutationReview(request.Name, body),
+		Mail:               owaMailReview(request.Name, body),
+		PayloadFingerprint: transport.PayloadFingerprint(request.Payload),
+	}
+	review.Limitations = append(review.Limitations, owaSendReviewLimitations(request.Name, body)...)
+	if len(review.Targets) == 0 && review.Mutation == nil && review.Mail == nil {
+		review.Limitations = append(review.Limitations, "payload target details could not be extracted during dry-run")
+	}
+	return review
+}
+
+func dryRunReviewError(actionName string, review transport.ReviewPacket) string {
+	if !isOWASendLikeAction(actionName) {
+		return ""
+	}
+	for _, limitation := range review.Limitations {
+		if limitation == owaMissingMailReviewMetadata || limitation == owaMultipleMailItemsReviewUnsupported {
+			return limitation
+		}
+	}
+	return ""
+}
+
+func owaSendReviewLimitations(actionName string, body map[string]any) []string {
+	if !isOWASendLikeAction(actionName) {
+		return nil
+	}
+	entryCount, reviewableCount := mailItemEntryCounts(body["Items"], body["Item"])
+	switch {
+	case entryCount > 1:
+		return []string{owaMultipleMailItemsReviewUnsupported}
+	case entryCount == 0 || reviewableCount != 1:
+		return []string{owaMissingMailReviewMetadata}
+	default:
+		return nil
+	}
+}
+
+func isOWASendLikeAction(actionName string) bool {
+	return actionName == "CreateItem" || actionName == "SendItem"
+}
+
+func owaMutationReview(actionName string, body map[string]any) *transport.MutationReview {
+	switch actionName {
+	case "DeleteItem", "DeleteFolder":
+		deleteType := strings.TrimSpace(stringValue(body, "DeleteType"))
+		if deleteType == "MoveToDeletedItems" {
+			return &transport.MutationReview{Operation: "delete", To: "Deleted Items"}
+		}
+		if strings.EqualFold(deleteType, "HardDelete") {
+			return &transport.MutationReview{Operation: "hard_delete"}
+		}
+		return &transport.MutationReview{Operation: "delete", NewState: map[string]any{"delete_type": deleteType}}
+	case "MoveItem", "MoveFolder":
+		return &transport.MutationReview{Operation: "move"}
+	case "ArchiveItem":
+		return &transport.MutationReview{Operation: "archive"}
+	case "MarkAllItemsAsRead":
+		return &transport.MutationReview{Operation: "mark_all_read"}
+	case "MarkAsJunk":
+		return &transport.MutationReview{Operation: "mark_as_junk"}
+	case "UpdateItem", "UpdateFolder", "UpdateUserConfiguration":
+		return &transport.MutationReview{Operation: "update"}
+	case "CreateFolder", "CreateFolderPath", "CreateSweepRuleForSender", "NotificationSubscribe":
+		return &transport.MutationReview{Operation: "create_or_update"}
+	default:
+		return nil
+	}
+}
+
+func owaMailReview(actionName string, body map[string]any) *transport.MailReview {
+	if actionName != "CreateItem" && actionName != "SendItem" {
+		return nil
+	}
+	item := firstPayloadMap(body["Items"])
+	if item == nil {
+		item = firstPayloadMap(body["Item"])
+	}
+	if item == nil {
+		return &transport.MailReview{}
+	}
+	bodyText := owaBodyText(item["Body"])
+	review := &transport.MailReview{
+		To:          owaRecipients(item, "ToRecipients"),
+		CC:          owaRecipients(item, "CcRecipients"),
+		BCC:         owaRecipients(item, "BccRecipients"),
+		Subject:     stringValue(item, "Subject"),
+		BodyPreview: transport.RedactedPreview(bodyText, 500),
+	}
+	if bodyText != "" {
+		review.BodySHA256 = transport.BodySHA256(bodyText)
+	}
+	return review
+}
+
+func owaTargetRefs(body map[string]any) []transport.TargetRef {
+	var targets []transport.TargetRef
+	for _, spec := range []struct {
+		key  string
+		kind string
+	}{
+		{"ItemIds", "item"},
+		{"ItemId", "item"},
+		{"FolderIds", "folder"},
+		{"FolderId", "folder"},
+		{"AttachmentIds", "attachment"},
+		{"AttachmentId", "attachment"},
+		{"ConversationIds", "conversation"},
+	} {
+		targets = append(targets, targetRefsFromValue(spec.kind, body[spec.key])...)
+	}
+	return targets
+}
+
+func targetRefsFromValue(kind string, value any) []transport.TargetRef {
+	switch typed := value.(type) {
+	case []any:
+		targets := make([]transport.TargetRef, 0, len(typed))
+		for _, child := range typed {
+			targets = append(targets, targetRefsFromValue(kind, child)...)
+		}
+		return targets
+	case map[string]any:
+		return []transport.TargetRef{{Kind: kind, ID: firstString(typed, "Id", "id"), Name: firstString(typed, "Name", "name", "DisplayName")}}
+	case string:
+		if strings.TrimSpace(typed) == "" {
+			return nil
+		}
+		return []transport.TargetRef{{Kind: kind, ID: typed}}
+	default:
+		return nil
+	}
+}
+
+func owaRecipients(item map[string]any, key string) []string {
+	values, _ := item[key].([]any)
+	recipients := make([]string, 0, len(values))
+	for _, value := range values {
+		recipient, _ := value.(map[string]any)
+		emailAddress, _ := recipient["EmailAddress"].(map[string]any)
+		if email := strings.TrimSpace(firstString(emailAddress, "EmailAddress", "Address", "Name")); email != "" {
+			recipients = append(recipients, email)
+		}
+	}
+	return recipients
+}
+
+func owaBodyText(value any) string {
+	switch typed := value.(type) {
+	case nil:
+		return ""
+	case string:
+		return typed
+	case map[string]any:
+		if text := firstString(typed, "Value", "value", "Text", "text"); text != "" {
+			return text
+		}
+	}
+	encoded, err := json.Marshal(value)
+	if err != nil {
+		return ""
+	}
+	return string(encoded)
+}
+
+func firstPayloadMap(value any) map[string]any {
+	switch typed := value.(type) {
+	case []any:
+		if len(typed) == 0 {
+			return nil
+		}
+		child, _ := typed[0].(map[string]any)
+		return child
+	case map[string]any:
+		return typed
+	default:
+		return nil
+	}
+}
+
+func mailItemEntryCounts(values ...any) (int, int) {
+	var entryCount int
+	var reviewableCount int
+	for _, value := range values {
+		switch typed := value.(type) {
+		case []any:
+			entryCount += len(typed)
+			for _, child := range typed {
+				if _, ok := child.(map[string]any); ok {
+					reviewableCount++
+				}
+			}
+		case map[string]any:
+			entryCount++
+			reviewableCount++
+		case nil:
+		default:
+			entryCount++
+		}
+	}
+	return entryCount, reviewableCount
+}
+
+func firstString(values map[string]any, keys ...string) string {
+	for _, key := range keys {
+		if value, _ := values[key].(string); strings.TrimSpace(value) != "" {
+			return value
+		}
+	}
+	return ""
 }
 
 func (client *Transport) login(ctx context.Context) (Session, error) {
 	client.mu.Lock()
 	defer client.mu.Unlock()
-	if client.session != nil {
-		return *client.session, nil
+	now := client.currentTime()
+	if client.session != nil && now.Before(client.session.expiresAt) {
+		client.session.lastUsedAt = now
+		return client.session.session, nil
 	}
 	value, err := client.secrets.Get(ctx, client.config.SecretRef)
 	if err != nil {
@@ -160,8 +506,30 @@ func (client *Transport) login(ctx context.Context) (Session, error) {
 	if err != nil {
 		return Session{}, err
 	}
-	client.session = &session
+	ttl := client.sessionTTL
+	if ttl <= 0 {
+		ttl = DefaultSessionTTL
+	}
+	client.session = &cachedSession{
+		session:    session,
+		createdAt:  now,
+		lastUsedAt: now,
+		expiresAt:  now.Add(ttl),
+	}
 	return session, nil
+}
+
+func (client *Transport) invalidateSession() {
+	client.mu.Lock()
+	defer client.mu.Unlock()
+	client.session = nil
+}
+
+func (client *Transport) currentTime() time.Time {
+	if client.now == nil {
+		return time.Now()
+	}
+	return client.now()
 }
 
 func countRequestItems(payload map[string]any) int {
@@ -175,7 +543,7 @@ func countRequestItems(payload map[string]any) int {
 		"AttachmentIds", "Attachments", "AttachmentId", "Attachment",
 		"ConversationIds", "ReminderItemActions", "ItemChanges",
 		"Rules", "Rule", "SweepRule", "SenderEmailAddress", "MailboxSmtpAddress", "Mailbox",
-		"UserConfigurations", "UserConfiguration", "FolderPath",
+		"UserConfigurations", "UserConfiguration", "FolderPath", "SubscriptionId",
 	} {
 		if count := countValue(body[key]); count > 0 {
 			return count
@@ -196,12 +564,24 @@ func countValue(value any) int {
 }
 
 func isReversible(request transport.ActionRequest) bool {
+	class := dryRunCapabilityClass(request.Name)
+	switch class {
+	case policy.Destructive:
+		return isMoveToDeletedItemsDelete(request)
+	case policy.SendLike, policy.Unknown:
+		return false
+	default:
+		return true
+	}
+}
+
+func isMoveToDeletedItemsDelete(request transport.ActionRequest) bool {
+	if request.Name != "DeleteItem" && request.Name != "DeleteFolder" {
+		return false
+	}
 	body, _ := request.Payload["Body"].(map[string]any)
 	deleteType, _ := body["DeleteType"].(string)
-	if request.Name == "DeleteItem" || request.Name == "DeleteFolder" {
-		return deleteType == "MoveToDeletedItems"
-	}
-	return true
+	return deleteType == "MoveToDeletedItems"
 }
 
 func (client *Transport) String() string {

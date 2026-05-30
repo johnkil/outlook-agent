@@ -18,6 +18,13 @@ func NewFileStore() *FileStore {
 }
 
 func NewStoreForRef(ref Ref) Store {
+	return NewStoreForRefWithExternal(ref, nil)
+}
+
+func NewStoreForRefWithExternal(ref Ref, externalCommands map[string]ExternalCommand) Store {
+	if strings.HasPrefix(string(ref), externalSecretPrefix) {
+		return NewExternalCommandStore(externalCommands, ExternalCommandOptions{})
+	}
 	if strings.HasPrefix(string(ref), fileSecretPrefix) {
 		return NewFileStore()
 	}

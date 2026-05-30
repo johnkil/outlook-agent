@@ -50,12 +50,30 @@ Rewrite public tool descriptions so the model can infer the intended workflow:
 - `outlook.mail_list_attachments`: attachment metadata only for one message.
 - `outlook.mail_fetch_attachment`: one explicit message and attachment id.
 - `outlook.mail_create_draft`: save-only draft; does not send.
+- `outlook.mail_create_reply_draft`: save-only reply draft; does not send.
+- `outlook.mail_create_reply_all_draft`: save-only reply-all draft; does not
+  send.
+- `outlook.mail_create_forward_draft`: save-only forward draft; does not send.
+- `outlook.mail_send_draft`: send one exact draft only after dry-run,
+  confirmation, and required approval.
+- `outlook.mail_move_to_folder`: move exact messages to a destination folder;
+  bulk changes require dry-run and confirmation.
+- `outlook.mail_archive`: archive exact messages; bulk changes require dry-run
+  and confirmation.
+- `outlook.mail_flag`: set flag status for exact messages; bulk changes
+  require dry-run and confirmation.
+- `outlook.mail_categorize`: replace categories for exact messages; bulk
+  changes require dry-run and confirmation.
+- `outlook.mail_mark_read`: set read/unread state for exact messages; bulk
+  changes require dry-run and confirmation.
 - `outlook.mail_move_to_deleted_items`: reversible move after exact target and
   confirmation token where required.
 - `outlook.mail_rule_set_enabled`: settings/rules write; dry-run token
   required.
 - `outlook.calendar_list`: bounded event window only.
 - `outlook.calendar_availability`: bounded free/busy window.
+- `outlook.calendar_respond`: respond to one exact event only after dry-run,
+  confirmation, and required approval.
 - `outlook.action_dry_run`: required summary step for broad, mutating, send-like,
   destructive, or unknown actions.
 - `outlook.action_confirm`: execute only the exact payload reviewed in dry-run.

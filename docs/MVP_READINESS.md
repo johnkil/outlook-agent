@@ -34,8 +34,8 @@ artifacts and local verification commands:
 - Unsafe mode is required for destructive or unknown raw action paths, but it
   does not bypass exact confirmation.
 - Search responses expose bounded-window metadata (`returned`, `limit`,
-  `truncated`, and Graph `next_link` when available), and bulk move responses
-  expose `succeeded`/`failed` partial-result fields.
+  `truncated`, and opaque `next_cursor` when continuation is available), and
+  bulk move responses expose `succeeded`/`failed` partial-result fields.
 - Redaction covers secrets, cookies, canary values, raw bodies, previews,
   snippets, attachment contents, raw Graph text, and raw EWS XML text.
 - Release artifacts are defined by scripts and GitHub workflows, including

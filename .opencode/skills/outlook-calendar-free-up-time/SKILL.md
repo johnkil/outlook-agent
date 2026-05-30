@@ -19,6 +19,8 @@ Use calendar evidence before proposing moves.
 6. Use `outlook.action_dry_run` before moving, canceling, or changing broad
    sets of calendar items.
 7. Execute only the reviewed payload with `outlook.action_confirm` after exact
-   confirmation.
+   confirmation. If dry-run returns an `approval_challenge`, pass only
+   host-provided `approval_challenge_id` and `approval_token`; never ask for
+   the approval secret.
 8. Use `outlook.raw_action` only when `outlook.capabilities` shows the needed
    transport action and no high-level tool covers it.

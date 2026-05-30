@@ -95,6 +95,14 @@ outside this public repository.
 Rules:
 
 - Use secret-store references in config, not secret values.
+- Use `external:name` when an enterprise wrapper such as 1Password, Bitwarden,
+  or Vault should provide the secret. Define the command under
+  `secrets.external.<name>` as an absolute command path plus argv array; do not
+  use shell strings.
+- Native Windows Credential Manager and Linux Secret Service backends are
+  intentionally deferred until there is a concrete rollout owner for those
+  platforms. Use `external:name` as the supported portable route on Windows or
+  Linux when macOS Keychain and file secrets are not appropriate.
 - Keep profile ownership clear: one owner for Graph, one owner for EWS, and one
   owner for OWA-like enterprise profiles.
 - Rotate credentials through the identity or mail platform, then refresh the

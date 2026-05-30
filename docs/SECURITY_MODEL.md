@@ -48,3 +48,14 @@ Logs must not include:
 - raw message bodies;
 - attachment contents;
 - raw session dumps.
+
+Optional runtime audit logging is off by default. Operators may set
+`OUTLOOK_AGENT_AUDIT_LOG=stderr` or
+`OUTLOOK_AGENT_AUDIT_LOG_FILE=/absolute/path/audit.jsonl` to emit JSONL audit
+events for dry-run, confirm, execute, and reject decisions. Audit events are
+structured around `type`, `transport`, `profile`, `action`, `safety_class`,
+`decision`, payload/review fingerprints, item count, and a redacted error
+category. They deliberately do not carry raw payloads, raw response bodies,
+message bodies, attachment bytes, session material, cookies, canary values, or
+tokens. File audit logs are opened append-only and created with user-only
+permissions (`0600` on Unix-like systems).

@@ -2,11 +2,14 @@ package mcpserver
 
 import (
 	"context"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/johnkil/outlook-agent/internal/action"
+	"github.com/johnkil/outlook-agent/internal/approval"
 	"github.com/johnkil/outlook-agent/internal/policy"
 	"github.com/johnkil/outlook-agent/internal/secret"
 	"github.com/johnkil/outlook-agent/internal/transport"
@@ -64,7 +67,7 @@ func TestActionConfirmConsumesTokenAndExecutesExactAction(t *testing.T) {
 
 func TestActionConfirmRequiresExternalApprovalWhenConfigured(t *testing.T) {
 	runtime := NewRuntime(fake.New())
-	runtime.approvalToken = "human-approved"
+	runtime.approvalPolicy = approval.Policy{Mode: approval.ModeOptional, LegacyToken: "human-approved"}
 
 	_, dryRun, err := dryRunHandler(runtime)(context.Background(), nil, DryRunInput{
 		Action:  "mail.move_to_deleted_items",
@@ -82,7 +85,7 @@ func TestActionConfirmRequiresExternalApprovalWhenConfigured(t *testing.T) {
 	if err != nil {
 		t.Fatalf("confirm handler: %v", err)
 	}
-	if missingApproval.OK || missingApproval.Error != "external approval token required" {
+	if missingApproval.OK || !strings.Contains(missingApproval.Error, "legacy static approval token") {
 		t.Fatalf("expected external approval gate to reject missing token, got %#v", missingApproval)
 	}
 
@@ -97,6 +100,520 @@ func TestActionConfirmRequiresExternalApprovalWhenConfigured(t *testing.T) {
 	}
 	if !output.OK {
 		t.Fatalf("expected externally approved action to execute: %#v", output)
+	}
+}
+
+func TestActionConfirmRequiresPayloadBoundApprovalInRequiredMode(t *testing.T) {
+	client := newRecordingTransport(action.Definition{Name: "mail.move_to_deleted_items", Transport: "test", Class: policy.ReversibleBulk, Level: action.LevelHighLevelMCPTool})
+	runtime := NewRuntime(client)
+	runtime.approvalPolicy = approval.Policy{Mode: approval.ModeRequired, Secret: "approval-secret"}
+	runtime.approval = approval.NewStore(time.Now)
+	payload := map[string]any{"ids": []any{"msg-1"}}
+
+	_, dryRun, err := dryRunHandler(runtime)(context.Background(), nil, DryRunInput{
+		Action:  "mail.move_to_deleted_items",
+		Payload: payload,
+	})
+	if err != nil {
+		t.Fatalf("dry-run handler: %v", err)
+	}
+	if !dryRun.RequiresApproval || dryRun.ApprovalChallenge == nil {
+		t.Fatalf("expected payload-bound approval challenge in dry-run output: %#v", dryRun)
+	}
+	if dryRun.Review == nil || dryRun.Review.PayloadFingerprint == "" {
+		t.Fatalf("expected dry-run output to include review packet with payload fingerprint: %#v", dryRun)
+	}
+
+	_, missingApproval, err := actionConfirmHandler(runtime)(context.Background(), nil, ActionConfirmInput{
+		ConfirmToken: dryRun.ConfirmationToken,
+		Action:       "mail.move_to_deleted_items",
+		Payload:      payload,
+	})
+	if err != nil {
+		t.Fatalf("confirm handler: %v", err)
+	}
+	if missingApproval.OK || !strings.Contains(missingApproval.Error, "payload-bound external approval") {
+		t.Fatalf("expected missing approval to be rejected, got %#v", missingApproval)
+	}
+
+	approvalToken, err := approval.SignChallenge("approval-secret", *dryRun.ApprovalChallenge)
+	if err != nil {
+		t.Fatalf("sign approval challenge: %v", err)
+	}
+	_, output, err := actionConfirmHandler(runtime)(context.Background(), nil, ActionConfirmInput{
+		ConfirmToken:        dryRun.ConfirmationToken,
+		ApprovalChallengeID: dryRun.ApprovalChallenge.ID,
+		ApprovalToken:       approvalToken,
+		Action:              "mail.move_to_deleted_items",
+		Payload:             payload,
+	})
+	if err != nil {
+		t.Fatalf("confirm handler: %v", err)
+	}
+	if !output.OK {
+		t.Fatalf("expected payload-bound approved action to execute: %#v", output)
+	}
+}
+
+func TestActionConfirmRejectsApprovalForDifferentPayload(t *testing.T) {
+	client := newRecordingTransport(action.Definition{Name: "mail.move_to_deleted_items", Transport: "test", Class: policy.ReversibleBulk, Level: action.LevelHighLevelMCPTool})
+	runtime := NewRuntime(client)
+	runtime.approvalPolicy = approval.Policy{Mode: approval.ModeRequired, Secret: "approval-secret"}
+	runtime.approval = approval.NewStore(time.Now)
+	approvedPayload := map[string]any{"ids": []any{"msg-1"}}
+	changedPayload := map[string]any{"ids": []any{"msg-2"}}
+
+	_, dryRun, err := dryRunHandler(runtime)(context.Background(), nil, DryRunInput{
+		Action:  "mail.move_to_deleted_items",
+		Payload: approvedPayload,
+	})
+	if err != nil {
+		t.Fatalf("dry-run handler: %v", err)
+	}
+	approvalToken, err := approval.SignChallenge("approval-secret", *dryRun.ApprovalChallenge)
+	if err != nil {
+		t.Fatalf("sign approval challenge: %v", err)
+	}
+	changedConfirmToken, err := runtime.confirm.Generate(bindingFor(client, "default", "mail.move_to_deleted_items", changedPayload, false), 10*time.Minute)
+	if err != nil {
+		t.Fatalf("generate changed confirmation token: %v", err)
+	}
+
+	_, output, err := actionConfirmHandler(runtime)(context.Background(), nil, ActionConfirmInput{
+		ConfirmToken:        changedConfirmToken,
+		ApprovalChallengeID: dryRun.ApprovalChallenge.ID,
+		ApprovalToken:       approvalToken,
+		Action:              "mail.move_to_deleted_items",
+		Payload:             changedPayload,
+	})
+	if err != nil {
+		t.Fatalf("confirm handler: %v", err)
+	}
+	if output.OK || !strings.Contains(output.Error, "approval challenge binding mismatch") {
+		t.Fatalf("expected approval for different payload to be rejected, got %#v", output)
+	}
+	if client.executed {
+		t.Fatal("action must not execute with approval for different payload")
+	}
+}
+
+func TestActionConfirmDoesNotConsumeApprovalWhenConfirmTokenIsInvalid(t *testing.T) {
+	client := newRecordingTransport(action.Definition{Name: "mail.move_to_deleted_items", Transport: "test", Class: policy.ReversibleBulk, Level: action.LevelHighLevelMCPTool})
+	runtime := NewRuntime(client)
+	runtime.approvalPolicy = approval.Policy{Mode: approval.ModeRequired, Secret: "approval-secret"}
+	runtime.approval = approval.NewStore(time.Now)
+	payload := map[string]any{"ids": []any{"msg-1"}}
+
+	_, dryRun, err := dryRunHandler(runtime)(context.Background(), nil, DryRunInput{
+		Action:  "mail.move_to_deleted_items",
+		Payload: payload,
+	})
+	if err != nil {
+		t.Fatalf("dry-run handler: %v", err)
+	}
+	approvalToken, err := approval.SignChallenge("approval-secret", *dryRun.ApprovalChallenge)
+	if err != nil {
+		t.Fatalf("sign approval challenge: %v", err)
+	}
+
+	_, badConfirm, err := actionConfirmHandler(runtime)(context.Background(), nil, ActionConfirmInput{
+		ConfirmToken:        "bad-confirm-token",
+		ApprovalChallengeID: dryRun.ApprovalChallenge.ID,
+		ApprovalToken:       approvalToken,
+		Action:              "mail.move_to_deleted_items",
+		Payload:             payload,
+	})
+	if err != nil {
+		t.Fatalf("confirm handler: %v", err)
+	}
+	if badConfirm.OK || !strings.Contains(badConfirm.Error, "confirmation token is invalid") {
+		t.Fatalf("expected bad confirm token to be rejected, got %#v", badConfirm)
+	}
+
+	_, output, err := actionConfirmHandler(runtime)(context.Background(), nil, ActionConfirmInput{
+		ConfirmToken:        dryRun.ConfirmationToken,
+		ApprovalChallengeID: dryRun.ApprovalChallenge.ID,
+		ApprovalToken:       approvalToken,
+		Action:              "mail.move_to_deleted_items",
+		Payload:             payload,
+	})
+	if err != nil {
+		t.Fatalf("confirm handler: %v", err)
+	}
+	if !output.OK {
+		t.Fatalf("expected approval to remain usable after invalid confirm token: %#v", output)
+	}
+}
+
+func TestMailMoveToDeletedItemsRequiresPayloadBoundApprovalInRequiredMode(t *testing.T) {
+	client := newRecordingTransport(action.Definition{Name: "mail.move_to_deleted_items", Transport: "test", Class: policy.ReversibleBulk, Level: action.LevelHighLevelMCPTool})
+	runtime := NewRuntime(client)
+	runtime.approvalPolicy = approval.Policy{Mode: approval.ModeRequired, Secret: "approval-secret"}
+	runtime.approval = approval.NewStore(time.Now)
+	payload := map[string]any{"ids": []any{"msg-1"}}
+
+	_, dryRun, err := dryRunHandler(runtime)(context.Background(), nil, DryRunInput{
+		Action:  "mail.move_to_deleted_items",
+		Payload: payload,
+	})
+	if err != nil {
+		t.Fatalf("dry-run handler: %v", err)
+	}
+	approvalToken, err := approval.SignChallenge("approval-secret", *dryRun.ApprovalChallenge)
+	if err != nil {
+		t.Fatalf("sign approval challenge: %v", err)
+	}
+
+	_, missingApproval, err := mailMoveToDeletedItemsHandler(runtime)(context.Background(), nil, MailMoveToDeletedItemsInput{
+		IDs:          []string{"msg-1"},
+		ConfirmToken: dryRun.ConfirmationToken,
+	})
+	if err != nil {
+		t.Fatalf("move handler: %v", err)
+	}
+	if missingApproval.OK || !strings.Contains(missingApproval.Error, "payload-bound external approval") {
+		t.Fatalf("expected missing approval to be rejected, got %#v", missingApproval)
+	}
+
+	_, output, err := mailMoveToDeletedItemsHandler(runtime)(context.Background(), nil, MailMoveToDeletedItemsInput{
+		IDs:                 []string{"msg-1"},
+		ConfirmToken:        dryRun.ConfirmationToken,
+		ApprovalChallengeID: dryRun.ApprovalChallenge.ID,
+		ApprovalToken:       approvalToken,
+	})
+	if err != nil {
+		t.Fatalf("move handler: %v", err)
+	}
+	if !output.OK {
+		t.Fatalf("expected approved move to execute: %#v", output)
+	}
+}
+
+func TestMailSendDraftRequiresPayloadBoundApprovalInRequiredMode(t *testing.T) {
+	client := newRecordingTransport(action.Definition{Name: "mail.send_draft", Transport: "test", Class: policy.SendLike, Level: action.LevelHighLevelMCPTool})
+	runtime := NewRuntime(client)
+	runtime.approvalPolicy = approval.Policy{Mode: approval.ModeRequired, Secret: "approval-secret"}
+	runtime.approval = approval.NewStore(time.Now)
+	payload := map[string]any{"draft_id": "draft-1"}
+
+	_, dryRun, err := dryRunHandler(runtime)(context.Background(), nil, DryRunInput{
+		Action:  "mail.send_draft",
+		Payload: payload,
+	})
+	if err != nil {
+		t.Fatalf("dry-run handler: %v", err)
+	}
+	approvalToken, err := approval.SignChallenge("approval-secret", *dryRun.ApprovalChallenge)
+	if err != nil {
+		t.Fatalf("sign approval challenge: %v", err)
+	}
+
+	_, missingApproval, err := mailSendDraftHandler(runtime)(context.Background(), nil, MailSendDraftInput{
+		DraftID:      "draft-1",
+		ConfirmToken: dryRun.ConfirmationToken,
+	})
+	if err != nil {
+		t.Fatalf("send draft handler: %v", err)
+	}
+	if missingApproval.OK || !strings.Contains(missingApproval.Error, "payload-bound external approval") {
+		t.Fatalf("expected missing approval to be rejected, got %#v", missingApproval)
+	}
+
+	_, output, err := mailSendDraftHandler(runtime)(context.Background(), nil, MailSendDraftInput{
+		DraftID:             "draft-1",
+		ConfirmToken:        dryRun.ConfirmationToken,
+		ApprovalChallengeID: dryRun.ApprovalChallenge.ID,
+		ApprovalToken:       approvalToken,
+	})
+	if err != nil {
+		t.Fatalf("send draft handler: %v", err)
+	}
+	if !output.OK {
+		t.Fatalf("expected approved send draft to execute: %#v", output)
+	}
+}
+
+func TestCalendarRespondRequiresPayloadBoundApprovalInRequiredMode(t *testing.T) {
+	client := newRecordingTransport(action.Definition{Name: "calendar.respond", Transport: "test", Class: policy.SendLike, Level: action.LevelHighLevelMCPTool})
+	runtime := NewRuntime(client)
+	runtime.approvalPolicy = approval.Policy{Mode: approval.ModeRequired, Secret: "approval-secret"}
+	runtime.approval = approval.NewStore(time.Now)
+	payload := map[string]any{"event_id": "evt-1", "response": "accept", "comment": "", "send_response": true}
+
+	_, dryRun, err := dryRunHandler(runtime)(context.Background(), nil, DryRunInput{
+		Action:  "calendar.respond",
+		Payload: payload,
+	})
+	if err != nil {
+		t.Fatalf("dry-run handler: %v", err)
+	}
+	approvalToken, err := approval.SignChallenge("approval-secret", *dryRun.ApprovalChallenge)
+	if err != nil {
+		t.Fatalf("sign approval challenge: %v", err)
+	}
+
+	_, missingApproval, err := calendarRespondHandler(runtime)(context.Background(), nil, CalendarRespondInput{
+		EventID:       "evt-1",
+		Response:      "accept",
+		SendResponse:  boolPointer(true),
+		ConfirmToken:  dryRun.ConfirmationToken,
+		ApprovalToken: "",
+	})
+	if err != nil {
+		t.Fatalf("calendar respond handler: %v", err)
+	}
+	if missingApproval.OK || !strings.Contains(missingApproval.Error, "payload-bound external approval") {
+		t.Fatalf("expected missing approval to be rejected, got %#v", missingApproval)
+	}
+
+	_, output, err := calendarRespondHandler(runtime)(context.Background(), nil, CalendarRespondInput{
+		EventID:             "evt-1",
+		Response:            "accept",
+		SendResponse:        boolPointer(true),
+		ConfirmToken:        dryRun.ConfirmationToken,
+		ApprovalChallengeID: dryRun.ApprovalChallenge.ID,
+		ApprovalToken:       approvalToken,
+	})
+	if err != nil {
+		t.Fatalf("calendar respond handler: %v", err)
+	}
+	if !output.OK || !client.executed {
+		t.Fatalf("expected approved calendar response to execute: %#v executed=%v", output, client.executed)
+	}
+}
+
+func TestCalendarRespondValidatesRequiredFields(t *testing.T) {
+	runtime := NewRuntime(fake.New())
+
+	_, missingEvent, err := calendarRespondHandler(runtime)(context.Background(), nil, CalendarRespondInput{
+		Response:     "accept",
+		SendResponse: boolPointer(true),
+		ConfirmToken: "token",
+	})
+	if err != nil {
+		t.Fatalf("calendar respond handler: %v", err)
+	}
+	if missingEvent.OK || !strings.Contains(missingEvent.Error, "event_id required") {
+		t.Fatalf("expected missing event id to be rejected, got %#v", missingEvent)
+	}
+
+	_, badResponse, err := calendarRespondHandler(runtime)(context.Background(), nil, CalendarRespondInput{
+		EventID:      "evt-1",
+		Response:     "maybe",
+		SendResponse: boolPointer(true),
+		ConfirmToken: "token",
+	})
+	if err != nil {
+		t.Fatalf("calendar respond handler: %v", err)
+	}
+	if badResponse.OK || !strings.Contains(badResponse.Error, "response must be") {
+		t.Fatalf("expected invalid response to be rejected, got %#v", badResponse)
+	}
+
+	_, missingSendResponse, err := calendarRespondHandler(runtime)(context.Background(), nil, CalendarRespondInput{
+		EventID:      "evt-1",
+		Response:     "accept",
+		ConfirmToken: "token",
+	})
+	if err != nil {
+		t.Fatalf("calendar respond handler: %v", err)
+	}
+	if missingSendResponse.OK || !strings.Contains(missingSendResponse.Error, "send_response required") {
+		t.Fatalf("expected missing send_response to be rejected, got %#v", missingSendResponse)
+	}
+}
+
+func TestMailSendDraftRequiresDraftID(t *testing.T) {
+	client := newRecordingTransport(action.Definition{Name: "mail.send_draft", Transport: "test", Class: policy.SendLike, Level: action.LevelHighLevelMCPTool})
+	runtime := NewRuntime(client)
+
+	_, output, err := mailSendDraftHandler(runtime)(context.Background(), nil, MailSendDraftInput{
+		DraftID:      "",
+		ConfirmToken: "confirm-token",
+	})
+	if err != nil {
+		t.Fatalf("send draft handler: %v", err)
+	}
+	if output.OK || !strings.Contains(output.Error, "draft_id required") {
+		t.Fatalf("expected missing draft_id to be rejected, got %#v", output)
+	}
+	if client.executed {
+		t.Fatal("send draft must not execute without a draft id")
+	}
+}
+
+func TestReversibleMessageMutationHandlersValidateRequiredState(t *testing.T) {
+	runtime := NewRuntime(fake.New())
+
+	_, moveOutput, err := mailMoveToFolderHandler(runtime)(context.Background(), nil, MailMoveToFolderInput{
+		IDs: []string{"msg-1"},
+	})
+	if err != nil {
+		t.Fatalf("move handler: %v", err)
+	}
+	if moveOutput.OK || !strings.Contains(moveOutput.Error, "folder_id required") {
+		t.Fatalf("expected missing folder_id to be rejected, got %#v", moveOutput)
+	}
+
+	_, flagOutput, err := mailFlagHandler(runtime)(context.Background(), nil, MailFlagInput{
+		IDs: []string{"msg-1"},
+	})
+	if err != nil {
+		t.Fatalf("flag handler: %v", err)
+	}
+	if flagOutput.OK || !strings.Contains(flagOutput.Error, "flag_status required") {
+		t.Fatalf("expected missing flag_status to be rejected, got %#v", flagOutput)
+	}
+
+	_, categorizeOutput, err := mailCategorizeHandler(runtime)(context.Background(), nil, MailCategorizeInput{
+		IDs: []string{"msg-1"},
+	})
+	if err != nil {
+		t.Fatalf("categorize handler: %v", err)
+	}
+	if categorizeOutput.OK || !strings.Contains(categorizeOutput.Error, "categories required") {
+		t.Fatalf("expected missing categories to be rejected, got %#v", categorizeOutput)
+	}
+
+	_, markReadOutput, err := mailMarkReadHandler(runtime)(context.Background(), nil, MailMarkReadInput{
+		IDs: []string{"msg-1"},
+	})
+	if err != nil {
+		t.Fatalf("mark read handler: %v", err)
+	}
+	if markReadOutput.OK || !strings.Contains(markReadOutput.Error, "is_read required") {
+		t.Fatalf("expected missing is_read to be rejected, got %#v", markReadOutput)
+	}
+}
+
+func TestMailCategorizeAllowsEmptyCategoryReplacement(t *testing.T) {
+	client := newRecordingTransport(action.Definition{Name: "mail.categorize", Transport: "test", Class: policy.ReversibleBulk, Level: action.LevelHighLevelMCPTool})
+	runtime := NewRuntime(client)
+
+	_, output, err := mailCategorizeHandler(runtime)(context.Background(), nil, MailCategorizeInput{
+		IDs:        []string{"msg-1"},
+		Categories: []string{},
+	})
+	if err != nil {
+		t.Fatalf("categorize handler: %v", err)
+	}
+	if !output.OK || !client.executed {
+		t.Fatalf("expected empty category replacement to execute: %#v executed=%v", output, client.executed)
+	}
+	categories, ok := client.payload["categories"].([]any)
+	if !ok || len(categories) != 0 {
+		t.Fatalf("expected categories payload to be an empty replacement list, got %#v", client.payload["categories"])
+	}
+}
+
+func TestReversibleMessageMutationSingleExecutesAndBulkRequiresConfirmation(t *testing.T) {
+	client := newRecordingTransport(action.Definition{Name: "mail.mark_read", Transport: "test", Class: policy.ReversibleBulk, Level: action.LevelHighLevelMCPTool})
+	runtime := NewRuntime(client)
+
+	_, singleOutput, err := mailMarkReadHandler(runtime)(context.Background(), nil, MailMarkReadInput{
+		IDs:    []string{"msg-1"},
+		IsRead: boolPointer(true),
+	})
+	if err != nil {
+		t.Fatalf("mark read handler: %v", err)
+	}
+	if !singleOutput.OK || !client.executed {
+		t.Fatalf("expected single explicit message mutation to execute directly: %#v executed=%v", singleOutput, client.executed)
+	}
+
+	client.executed = false
+	_, missingConfirm, err := mailMarkReadHandler(runtime)(context.Background(), nil, MailMarkReadInput{
+		IDs:    []string{"msg-1", "msg-2"},
+		IsRead: boolPointer(true),
+	})
+	if err != nil {
+		t.Fatalf("mark read handler: %v", err)
+	}
+	if missingConfirm.OK || !strings.Contains(missingConfirm.Error, "confirm_token required") {
+		t.Fatalf("expected bulk mutation to require confirmation, got %#v", missingConfirm)
+	}
+	if client.executed {
+		t.Fatal("bulk mutation must not execute without confirmation")
+	}
+
+	_, dryRun, err := dryRunHandler(runtime)(context.Background(), nil, DryRunInput{
+		Action: "mail.mark_read",
+		Payload: map[string]any{
+			"ids":     []any{"msg-1", "msg-2"},
+			"is_read": true,
+		},
+	})
+	if err != nil {
+		t.Fatalf("dry-run handler: %v", err)
+	}
+
+	_, confirmed, err := mailMarkReadHandler(runtime)(context.Background(), nil, MailMarkReadInput{
+		IDs:          []string{"msg-1", "msg-2"},
+		IsRead:       boolPointer(true),
+		ConfirmToken: dryRun.ConfirmationToken,
+	})
+	if err != nil {
+		t.Fatalf("mark read handler: %v", err)
+	}
+	if !confirmed.OK || !client.executed {
+		t.Fatalf("expected confirmed bulk mutation to execute: %#v executed=%v", confirmed, client.executed)
+	}
+}
+
+func TestMailRuleSetEnabledRejectsApprovalForDifferentRule(t *testing.T) {
+	client := newRecordingTransport(action.Definition{Name: "mail.rules.set_enabled", Transport: "test", Class: policy.SettingsOrRules, Level: action.LevelHighLevelMCPTool})
+	runtime := NewRuntime(client)
+	runtime.approvalPolicy = approval.Policy{Mode: approval.ModeRequired, Secret: "approval-secret"}
+	runtime.approval = approval.NewStore(time.Now)
+	approvedPayload := map[string]any{"id": "rule-1", "enabled": false, "folder_id": ""}
+	changedPayload := map[string]any{"id": "rule-2", "enabled": false, "folder_id": ""}
+
+	_, dryRun, err := dryRunHandler(runtime)(context.Background(), nil, DryRunInput{
+		Action:  "mail.rules.set_enabled",
+		Payload: approvedPayload,
+	})
+	if err != nil {
+		t.Fatalf("dry-run handler: %v", err)
+	}
+	approvalToken, err := approval.SignChallenge("approval-secret", *dryRun.ApprovalChallenge)
+	if err != nil {
+		t.Fatalf("sign approval challenge: %v", err)
+	}
+	changedConfirmToken, err := runtime.confirm.Generate(bindingFor(client, "default", "mail.rules.set_enabled", changedPayload, false), 10*time.Minute)
+	if err != nil {
+		t.Fatalf("generate changed confirmation token: %v", err)
+	}
+
+	_, output, err := mailRuleSetEnabledHandler(runtime)(context.Background(), nil, MailRuleSetEnabledInput{
+		RuleID:              "rule-2",
+		Enabled:             boolPointer(false),
+		ConfirmToken:        changedConfirmToken,
+		ApprovalChallengeID: dryRun.ApprovalChallenge.ID,
+		ApprovalToken:       approvalToken,
+	})
+	if err != nil {
+		t.Fatalf("rule set-enabled handler: %v", err)
+	}
+	if output.OK || !strings.Contains(output.Error, "approval challenge binding mismatch") {
+		t.Fatalf("expected approval for different rule to be rejected, got %#v", output)
+	}
+	if client.executed {
+		t.Fatal("rule update must not execute with approval for a different rule")
+	}
+}
+
+func TestMailRuleSetEnabledRequiresExplicitEnabledState(t *testing.T) {
+	runtime := NewRuntime(fake.New())
+
+	_, output, err := mailRuleSetEnabledHandler(runtime)(context.Background(), nil, MailRuleSetEnabledInput{
+		RuleID:       "rule-1",
+		ConfirmToken: "token",
+	})
+	if err != nil {
+		t.Fatalf("rule set-enabled handler: %v", err)
+	}
+	if output.OK || !strings.Contains(output.Error, "enabled required") {
+		t.Fatalf("expected missing enabled to be rejected, got %#v", output)
 	}
 }
 
@@ -124,6 +641,75 @@ func TestActionConfirmRejectsChangedPayload(t *testing.T) {
 	}
 }
 
+func TestActionConfirmRejectsChangedReviewFingerprint(t *testing.T) {
+	client := newReviewChangingTransport(action.Definition{Name: "mail.move_to_deleted_items", Transport: "test", Class: policy.ReversibleBulk, Level: action.LevelHighLevelMCPTool})
+	runtime := NewRuntime(client)
+	payload := map[string]any{"ids": []any{"msg-1"}}
+
+	client.reviewDestination = "Deleted Items"
+	_, dryRun, err := dryRunHandler(runtime)(context.Background(), nil, DryRunInput{
+		Action:  "mail.move_to_deleted_items",
+		Payload: payload,
+	})
+	if err != nil {
+		t.Fatalf("dry-run handler: %v", err)
+	}
+	if dryRun.ConfirmationToken == "" {
+		t.Fatalf("expected confirmation token: %#v", dryRun)
+	}
+
+	client.reviewDestination = "Archive"
+	_, output, err := actionConfirmHandler(runtime)(context.Background(), nil, ActionConfirmInput{
+		ConfirmToken: dryRun.ConfirmationToken,
+		Action:       "mail.move_to_deleted_items",
+		Payload:      payload,
+	})
+	if err != nil {
+		t.Fatalf("confirm handler: %v", err)
+	}
+	if output.OK || !strings.Contains(output.Error, "confirmation token is invalid") {
+		t.Fatalf("expected changed review to reject confirmation token, got %#v", output)
+	}
+	if client.executed {
+		t.Fatal("action must not execute when review fingerprint changes after dry-run")
+	}
+}
+
+func TestActionConfirmAcceptsPayloadBoundApprovalWithRichReview(t *testing.T) {
+	client := newReviewChangingTransport(action.Definition{Name: "mail.move_to_deleted_items", Transport: "test", Class: policy.ReversibleBulk, Level: action.LevelHighLevelMCPTool})
+	runtime := NewRuntime(client)
+	runtime.approvalPolicy = approval.Policy{Mode: approval.ModeRequired, Secret: "approval-secret"}
+	runtime.approval = approval.NewStore(time.Now)
+	payload := map[string]any{"ids": []any{"msg-1"}}
+	client.reviewDestination = "Deleted Items"
+
+	_, dryRun, err := dryRunHandler(runtime)(context.Background(), nil, DryRunInput{
+		Action:  "mail.move_to_deleted_items",
+		Payload: payload,
+	})
+	if err != nil {
+		t.Fatalf("dry-run handler: %v", err)
+	}
+	approvalToken, err := approval.SignChallenge("approval-secret", *dryRun.ApprovalChallenge)
+	if err != nil {
+		t.Fatalf("sign approval challenge: %v", err)
+	}
+
+	_, output, err := actionConfirmHandler(runtime)(context.Background(), nil, ActionConfirmInput{
+		ConfirmToken:        dryRun.ConfirmationToken,
+		ApprovalChallengeID: dryRun.ApprovalChallenge.ID,
+		ApprovalToken:       approvalToken,
+		Action:              "mail.move_to_deleted_items",
+		Payload:             payload,
+	})
+	if err != nil {
+		t.Fatalf("confirm handler: %v", err)
+	}
+	if !output.OK {
+		t.Fatalf("expected payload-bound approval with rich review to execute: %#v", output)
+	}
+}
+
 func TestDryRunDoesNotIssueTokenForDestructiveActionWithoutUnsafe(t *testing.T) {
 	client := newRecordingTransport(action.Definition{Name: "DeleteItem", Transport: "test", Class: policy.Destructive, Level: action.LevelRawGuardedExecution})
 	runtime := NewRuntime(client)
@@ -143,6 +729,149 @@ func TestDryRunDoesNotIssueTokenForDestructiveActionWithoutUnsafe(t *testing.T) 
 	}
 	if !output.RequiresUnsafe || output.Error == "" {
 		t.Fatalf("expected unsafe requirement in dry-run output: %#v", output)
+	}
+}
+
+func TestDryRunDoesNotIssueTokenWhenGraphSendDraftReviewFails(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		if request.Method != http.MethodGet || request.URL.Path != "/v1.0/me/messages/draft-1" {
+			t.Fatalf("unexpected request: %s %s", request.Method, request.URL.String())
+		}
+		response.WriteHeader(http.StatusInternalServerError)
+		_, _ = response.Write([]byte(`{"error":{"code":"InternalServerError"}}`))
+	}))
+	defer server.Close()
+
+	client := graph.NewTransport(graph.Config{
+		BaseURL:   server.URL + "/v1.0",
+		SecretRef: secret.Ref("memory:graph"),
+	}, secret.NewMemoryStore(map[string]string{"memory:graph": "token-secret"}), server.Client())
+	runtime := NewRuntime(client)
+
+	_, output, err := dryRunHandler(runtime)(context.Background(), nil, DryRunInput{
+		Action:  "mail.send_draft",
+		Payload: map[string]any{"draft_id": "draft-1"},
+	})
+	if err != nil {
+		t.Fatalf("dry-run handler: %v", err)
+	}
+	if output.OK || output.ConfirmationToken != "" {
+		t.Fatalf("expected failed draft review without confirmation token, got %#v", output)
+	}
+	if !strings.Contains(output.Error, "draft metadata") {
+		t.Fatalf("expected draft metadata error, got %#v", output)
+	}
+}
+
+func TestDryRunDoesNotIssueTokenWhenOWASendReviewMissing(t *testing.T) {
+	client := owa.NewTransport(owa.Config{
+		BaseURL:   "https://example.test",
+		Username:  "DOMAIN\\user",
+		SecretRef: secret.Ref("memory:owa"),
+	}, secret.NewMemoryStore(map[string]string{"memory:owa": "password"}), nil)
+	runtime := NewRuntime(client)
+
+	_, output, err := dryRunHandler(runtime)(context.Background(), nil, DryRunInput{
+		Action: "SendItem",
+		Payload: map[string]any{"Body": map[string]any{
+			"ItemIds": []any{map[string]any{"Id": "draft-1"}},
+		}},
+	})
+	if err != nil {
+		t.Fatalf("dry-run handler: %v", err)
+	}
+	if output.OK || output.ConfirmationToken != "" {
+		t.Fatalf("expected missing OWA send review without confirmation token, got %#v", output)
+	}
+	if !strings.Contains(output.Error, "mail review metadata") {
+		t.Fatalf("expected mail review metadata error, got %#v", output)
+	}
+}
+
+func TestDryRunDoesNotIssueTokenWhenOWASendReviewHasMultipleItems(t *testing.T) {
+	client := owa.NewTransport(owa.Config{
+		BaseURL:   "https://example.test",
+		Username:  "DOMAIN\\user",
+		SecretRef: secret.Ref("memory:owa"),
+	}, secret.NewMemoryStore(map[string]string{"memory:owa": "password"}), nil)
+	runtime := NewRuntime(client)
+
+	_, output, err := dryRunHandler(runtime)(context.Background(), nil, DryRunInput{
+		Action: "SendItem",
+		Payload: map[string]any{"Body": map[string]any{"Items": []any{
+			map[string]any{
+				"Subject":      "First",
+				"Body":         map[string]any{"Value": "first body"},
+				"ToRecipients": []any{map[string]any{"EmailAddress": map[string]any{"EmailAddress": "one@example.test"}}},
+			},
+			map[string]any{
+				"Subject":      "Second",
+				"Body":         map[string]any{"Value": "second body"},
+				"ToRecipients": []any{map[string]any{"EmailAddress": map[string]any{"EmailAddress": "two@example.test"}}},
+			},
+		}}},
+	})
+	if err != nil {
+		t.Fatalf("dry-run handler: %v", err)
+	}
+	if output.OK || output.ConfirmationToken != "" {
+		t.Fatalf("expected ambiguous OWA send review without confirmation token, got %#v", output)
+	}
+	if !strings.Contains(output.Error, "multiple mail items") {
+		t.Fatalf("expected multi-item mail review error, got %#v", output)
+	}
+}
+
+func TestDryRunRejectsCursorBoundSearchNext(t *testing.T) {
+	client := newRecordingTransport(action.Definition{Name: "mail.search_next", Transport: "test", Class: policy.ReadMetadata, Level: action.LevelHighLevelMCPTool})
+	runtime := NewRuntime(client)
+
+	_, output, err := dryRunHandler(runtime)(context.Background(), nil, DryRunInput{
+		Action: "mail.search_next",
+		Payload: map[string]any{
+			"next_link": "https://graph.example.test/v1.0/me/messages?$skiptoken=forged",
+		},
+	})
+	if err != nil {
+		t.Fatalf("dry-run handler: %v", err)
+	}
+	if output.OK || output.ConfirmationToken != "" || !strings.Contains(output.Error, "outlook.mail_search_next") {
+		t.Fatalf("expected cursor-bound dry-run to be rejected without token, got %#v", output)
+	}
+}
+
+func TestDryRunDoesNotIssueTokenWhenGraphCalendarRespondReviewFails(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		if request.Method != http.MethodGet || request.URL.Path != "/v1.0/me/events/event-1" {
+			t.Fatalf("unexpected request: %s %s", request.Method, request.URL.String())
+		}
+		response.WriteHeader(http.StatusInternalServerError)
+		_, _ = response.Write([]byte(`{"error":{"code":"InternalServerError"}}`))
+	}))
+	defer server.Close()
+
+	client := graph.NewTransport(graph.Config{
+		BaseURL:   server.URL + "/v1.0",
+		SecretRef: secret.Ref("memory:graph"),
+	}, secret.NewMemoryStore(map[string]string{"memory:graph": "token-secret"}), server.Client())
+	runtime := NewRuntime(client)
+
+	_, output, err := dryRunHandler(runtime)(context.Background(), nil, DryRunInput{
+		Action: "calendar.respond",
+		Payload: map[string]any{
+			"event_id":      "event-1",
+			"response":      "accept",
+			"send_response": true,
+		},
+	})
+	if err != nil {
+		t.Fatalf("dry-run handler: %v", err)
+	}
+	if output.OK || output.ConfirmationToken != "" {
+		t.Fatalf("expected failed calendar review without confirmation token, got %#v", output)
+	}
+	if !strings.Contains(output.Error, "event metadata") {
+		t.Fatalf("expected event metadata error, got %#v", output)
 	}
 }
 
@@ -171,6 +900,28 @@ func TestActionConfirmRejectsDestructiveTokenWithoutUnsafe(t *testing.T) {
 	}
 	if output.Error == "" {
 		t.Fatalf("expected policy error in output: %#v", output)
+	}
+}
+
+func TestActionConfirmRejectsCursorBoundSearchNext(t *testing.T) {
+	client := newRecordingTransport(action.Definition{Name: "mail.search_next", Transport: "test", Class: policy.ReadMetadata, Level: action.LevelHighLevelMCPTool})
+	runtime := NewRuntime(client)
+
+	_, output, err := actionConfirmHandler(runtime)(context.Background(), nil, ActionConfirmInput{
+		ConfirmToken: "token",
+		Action:       "mail.search_next",
+		Payload: map[string]any{
+			"next_link": "https://graph.example.test/v1.0/me/messages?$skiptoken=forged",
+		},
+	})
+	if err != nil {
+		t.Fatalf("confirm handler: %v", err)
+	}
+	if output.OK || !strings.Contains(output.Error, "outlook.mail_search_next") {
+		t.Fatalf("expected cursor-bound confirm to be rejected, got %#v", output)
+	}
+	if client.executed {
+		t.Fatal("cursor-bound search_next must not execute through generic confirmation")
 	}
 }
 
@@ -373,7 +1124,7 @@ func TestMailRuleSetEnabledReturnsTransportFailureWithoutData(t *testing.T) {
 
 	_, output, err := mailRuleSetEnabledHandler(runtime)(context.Background(), nil, MailRuleSetEnabledInput{
 		RuleID:       "rule-1",
-		Enabled:      false,
+		Enabled:      boolPointer(false),
 		ConfirmToken: token,
 	})
 	if err != nil {
@@ -392,7 +1143,8 @@ func TestCapabilitiesHandlerReturnsPolicyMetadata(t *testing.T) {
 		Level:     action.LevelRawGuardedExecution,
 	})
 
-	_, output, err := capabilitiesHandler(client)(context.Background(), nil, EmptyInput{})
+	runtime := NewRuntime(client)
+	_, output, err := capabilitiesHandler(runtime)(context.Background(), nil, EmptyInput{})
 	if err != nil {
 		t.Fatalf("capabilities handler: %v", err)
 	}
@@ -408,6 +1160,29 @@ func TestCapabilitiesHandlerReturnsPolicyMetadata(t *testing.T) {
 	}
 }
 
+func TestCapabilitiesHandlerReturnsApprovalMetadata(t *testing.T) {
+	client := newRecordingTransport(action.Definition{
+		Name:      "mail.move_to_deleted_items",
+		Transport: "test",
+		Class:     policy.ReversibleBulk,
+		Level:     action.LevelHighLevelMCPTool,
+	})
+	runtime := NewRuntime(client)
+	runtime.approvalPolicy = approval.Policy{Mode: approval.ModeRequired, Secret: "approval-secret"}
+
+	_, output, err := capabilitiesHandler(runtime)(context.Background(), nil, EmptyInput{})
+	if err != nil {
+		t.Fatalf("capabilities handler: %v", err)
+	}
+	if output.Approval.Mode != string(approval.ModeRequired) || !output.Approval.HighRiskRequiresApproval {
+		t.Fatalf("expected global approval metadata: %#v", output.Approval)
+	}
+	detail := output.Details[0]
+	if !detail.RequiresApproval || detail.ApprovalMode != string(approval.ModeRequired) {
+		t.Fatalf("expected high-risk capability to expose approval requirement: %#v", detail)
+	}
+}
+
 func TestCapabilitiesHandlerReturnsExplicitRequirementMetadata(t *testing.T) {
 	client := newRecordingTransport(action.Definition{
 		Name:      "GetItem",
@@ -416,7 +1191,8 @@ func TestCapabilitiesHandlerReturnsExplicitRequirementMetadata(t *testing.T) {
 		Level:     action.LevelRawGuardedExecution,
 	})
 
-	_, output, err := capabilitiesHandler(client)(context.Background(), nil, EmptyInput{})
+	runtime := NewRuntime(client)
+	_, output, err := capabilitiesHandler(runtime)(context.Background(), nil, EmptyInput{})
 	if err != nil {
 		t.Fatalf("capabilities handler: %v", err)
 	}
@@ -434,7 +1210,8 @@ func TestOWARawCapabilitiesExposeExecutionRoutes(t *testing.T) {
 		SecretRef: secret.Ref("memory:owa"),
 	}, secret.NewMemoryStore(map[string]string{"memory:owa": "password"}), nil)
 
-	_, output, err := capabilitiesHandler(client)(context.Background(), nil, EmptyInput{})
+	runtime := NewRuntime(client)
+	_, output, err := capabilitiesHandler(runtime)(context.Background(), nil, EmptyInput{})
 	if err != nil {
 		t.Fatalf("capabilities handler: %v", err)
 	}
@@ -510,6 +1287,27 @@ func TestRawActionAllowsSafeMetadataAction(t *testing.T) {
 	}
 	if !output.OK {
 		t.Fatalf("expected safe raw action to execute: %#v", output)
+	}
+}
+
+func TestRawActionRejectsCursorBoundSearchNext(t *testing.T) {
+	client := newRecordingTransport(action.Definition{Name: "mail.search_next", Transport: "test", Class: policy.ReadMetadata, Level: action.LevelHighLevelMCPTool})
+	runtime := NewRuntime(client)
+
+	_, output, err := rawActionHandler(runtime)(context.Background(), nil, RawActionInput{
+		Action: "mail.search_next",
+		Payload: map[string]any{
+			"next_link": "https://graph.example.test/v1.0/me/messages?$skiptoken=forged",
+		},
+	})
+	if err != nil {
+		t.Fatalf("raw action handler: %v", err)
+	}
+	if output.OK || !strings.Contains(output.Error, "outlook.mail_search_next") {
+		t.Fatalf("expected raw search_next to be rejected with cursor-bound guidance, got %#v", output)
+	}
+	if client.executed {
+		t.Fatal("raw search_next must not execute without an issued cursor")
 	}
 }
 
@@ -650,10 +1448,15 @@ func TestActionResultRedactsSecretBearingError(t *testing.T) {
 type recordingTransport struct {
 	definition action.Definition
 	executed   bool
+	payload    map[string]any
 }
 
 func newRecordingTransport(definition action.Definition) *recordingTransport {
 	return &recordingTransport{definition: definition}
+}
+
+func boolPointer(value bool) *bool {
+	return &value
 }
 
 func (client *recordingTransport) Name() string {
@@ -668,13 +1471,61 @@ func (client *recordingTransport) Capabilities(context.Context) transport.Capabi
 	return transport.CapabilitySet{Actions: []action.Definition{client.definition}}
 }
 
-func (client *recordingTransport) Execute(context.Context, transport.ActionRequest) transport.ActionResponse {
+func (client *recordingTransport) Execute(_ context.Context, request transport.ActionRequest) transport.ActionResponse {
 	client.executed = true
+	client.payload = request.Payload
 	return transport.ActionResponse{OK: true, Data: map[string]any{"executed": true}}
 }
 
 func (client *recordingTransport) DryRun(context.Context, transport.ActionRequest) transport.DryRunSummary {
 	return transport.DryRunSummary{Action: client.definition.Name, Count: 1, RequiresConfirmation: true}
+}
+
+type reviewChangingTransport struct {
+	definition        action.Definition
+	reviewDestination string
+	executed          bool
+}
+
+func newReviewChangingTransport(definition action.Definition) *reviewChangingTransport {
+	return &reviewChangingTransport{definition: definition}
+}
+
+func (client *reviewChangingTransport) Name() string {
+	return "test"
+}
+
+func (client *reviewChangingTransport) Authenticate(context.Context, string) transport.AuthResult {
+	return transport.AuthResult{OK: true}
+}
+
+func (client *reviewChangingTransport) Capabilities(context.Context) transport.CapabilitySet {
+	return transport.CapabilitySet{Actions: []action.Definition{client.definition}}
+}
+
+func (client *reviewChangingTransport) Execute(context.Context, transport.ActionRequest) transport.ActionResponse {
+	client.executed = true
+	return transport.ActionResponse{OK: true, Data: map[string]any{"executed": true}}
+}
+
+func (client *reviewChangingTransport) DryRun(_ context.Context, request transport.ActionRequest) transport.DryRunSummary {
+	review := transport.ReviewPacket{
+		Version:            transport.ReviewPacketVersion,
+		Transport:          client.Name(),
+		Action:             request.Name,
+		SafetyClass:        string(client.definition.Class),
+		Targets:            []transport.TargetRef{{Kind: "message", ID: "msg-1"}},
+		Mutation:           &transport.MutationReview{Operation: "move", To: client.reviewDestination},
+		PayloadFingerprint: transport.PayloadFingerprint(request.Payload),
+	}
+	return transport.DryRunSummary{
+		Action:               client.definition.Name,
+		Count:                1,
+		Reversible:           true,
+		RequiresConfirmation: true,
+		SafetyClass:          string(client.definition.Class),
+		Review:               &review,
+	}
 }
 
 type failingResponseTransport struct {

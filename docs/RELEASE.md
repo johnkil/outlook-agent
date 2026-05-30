@@ -32,6 +32,16 @@ version into `outlook-agent doctor` / MCP server metadata:
 
 Every archive is listed in `dist/SHA256SUMS.txt`.
 
+## SBOM Policy
+
+Release operators must decide whether the release channel requires a Software
+Bill of Materials (SBOM) before publishing public or enterprise artifacts. If
+SBOM generation is required, generate it from the exact tagged source and
+published archives, publish it alongside `SHA256SUMS.txt`, and keep the tool
+choice and signing/provenance policy documented with the release channel. Do
+not claim SBOM coverage for archives that were not built from the same tagged
+commit.
+
 To build into another directory, set:
 
 ```bash
@@ -71,8 +81,8 @@ authoritative fallback when GitHub Actions cannot start:
 GOPATH=$PWD/.cache/go GOCACHE=$PWD/.cache/go-build GOMODCACHE=$PWD/.cache/go-mod scripts/ci-local.sh
 ```
 
-The script runs formatting, tests, build, whitespace, public-safety, and
-`govulncheck` gates.
+The script runs formatting, `go mod tidy` module tidiness, tests, build,
+whitespace, public-safety, and `govulncheck` gates.
 
 For manual debugging, the equivalent core checks are:
 

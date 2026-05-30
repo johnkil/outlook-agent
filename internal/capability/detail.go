@@ -14,6 +14,8 @@ type Detail struct {
 	RequiresDryRun         bool   `json:"requires_dry_run"`
 	RequiresConfirmation   bool   `json:"requires_confirmation"`
 	RequiresUnsafe         bool   `json:"requires_unsafe,omitempty"`
+	RequiresApproval       bool   `json:"requires_approval,omitempty"`
+	ApprovalMode           string `json:"approval_mode,omitempty"`
 	RequiresExplicitTarget bool   `json:"requires_explicit_target,omitempty"`
 	RequiresExplicitIntent bool   `json:"requires_explicit_intent,omitempty"`
 	ExecutionRoute         string `json:"execution_route"`

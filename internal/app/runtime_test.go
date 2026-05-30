@@ -153,6 +153,55 @@ func TestBuildTransportSelectsFileSecretStoreFromRef(t *testing.T) {
 	}
 }
 
+func TestBuildTransportSelectsExternalSecretStoreFromConfig(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		if request.URL.Path != "/owa/auth.owa" {
+			t.Fatalf("unexpected path: %s", request.URL.Path)
+		}
+		if err := request.ParseForm(); err != nil {
+			t.Fatalf("parse auth form: %v", err)
+		}
+		if request.Form.Get("password") != "password-secret" {
+			t.Fatalf("expected external command password, got %q", request.Form.Get("password"))
+		}
+		http.SetCookie(response, &http.Cookie{Name: "X-OWA-CANARY", Value: "canary-secret"})
+		response.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
+	command, args := externalSecretHelperCommand(t, "mail-credential")
+	path := writeConfig(t, fmt.Sprintf(`{
+		"default_profile": "work",
+		"secrets": {
+			"external": {
+				"mail-credential": {
+					"command": %q,
+					"args": %s
+				}
+			}
+		},
+		"profiles": {
+			"work": {
+				"transport": "owa",
+				"secret_ref": "external:mail-credential",
+				"settings": {
+					"base_url": %q,
+					"username": "DOMAIN\\user"
+				}
+			}
+		}
+	}`, command, jsonArray(t, args), server.URL))
+
+	client, _, err := app.BuildTransport(app.Options{ConfigPath: path})
+	if err != nil {
+		t.Fatalf("build transport: %v", err)
+	}
+	auth := client.Authenticate(context.Background(), "work")
+	if !auth.OK {
+		t.Fatalf("expected auth success with external secret store, got %#v", auth)
+	}
+}
+
 func TestBuildTransportCreatesEWSProfile(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
 		if request.URL.Path != "/EWS/Exchange.asmx" {
@@ -576,4 +625,41 @@ func writeConfig(t *testing.T, body string) string {
 		t.Fatalf("write config: %v", err)
 	}
 	return path
+}
+
+func externalSecretHelperCommand(t *testing.T, name string) (string, []string) {
+	t.Helper()
+	command, err := os.Executable()
+	if err != nil {
+		t.Fatalf("resolve helper binary: %v", err)
+	}
+	return command, []string{"-test.run=TestExternalSecretRuntimeHelperProcess", "--", name}
+}
+
+func jsonArray(t *testing.T, values []string) string {
+	t.Helper()
+	encoded, err := json.Marshal(values)
+	if err != nil {
+		t.Fatalf("encode json array: %v", err)
+	}
+	return string(encoded)
+}
+
+func TestExternalSecretRuntimeHelperProcess(t *testing.T) {
+	args := os.Args
+	for len(args) > 0 && args[0] != "--" {
+		args = args[1:]
+	}
+	if len(args) == 0 {
+		return
+	}
+	args = args[1:]
+	if len(args) != 1 {
+		os.Exit(2)
+	}
+	if args[0] != "mail-credential" {
+		os.Exit(2)
+	}
+	_, _ = os.Stdout.WriteString("password-secret\n")
+	os.Exit(0)
 }

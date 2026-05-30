@@ -158,17 +158,28 @@ The MCP server registers the initial public tool surface from `docs/SPEC.md`:
 - `outlook.auth_check`
 - `outlook.capabilities`
 - `outlook.mail_search`
+- `outlook.mail_search_next`
 - `outlook.mail_fetch_metadata`
 - `outlook.mail_fetch_body`
 - `outlook.mail_list_attachments`
 - `outlook.mail_fetch_attachment`
 - `outlook.mail_create_draft`
+- `outlook.mail_create_reply_draft`
+- `outlook.mail_create_reply_all_draft`
+- `outlook.mail_create_forward_draft`
+- `outlook.mail_send_draft`
+- `outlook.mail_move_to_folder`
+- `outlook.mail_archive`
+- `outlook.mail_flag`
+- `outlook.mail_categorize`
+- `outlook.mail_mark_read`
 - `outlook.mail_move_to_deleted_items`
 - `outlook.mail_rules_list`
 - `outlook.mail_rule_set_enabled`
 - `outlook.mailbox_settings_get`
 - `outlook.calendar_list`
 - `outlook.calendar_availability`
+- `outlook.calendar_respond`
 - `outlook.action_dry_run`
 - `outlook.action_confirm`
 - `outlook.raw_action`
@@ -193,22 +204,30 @@ response includes `compatibility_version` so clients can verify the MCP contract
 keeps a backwards-compatible `actions` name list, and adds `details` entries
 with `name`, `transport`, `safety_class`, and numeric coverage `level` plus
 `allowed_direct`, `requires_dry_run`, `requires_confirmation`, and
-`requires_unsafe` policy gates. Details may also include
-`requires_explicit_target` or `requires_explicit_intent` so agents can ask for
-or preserve the missing condition before attempting execution. The
-`execution_route` field summarizes the route as `direct`,
+`requires_unsafe` policy gates. Details may also include `requires_approval`,
+`approval_mode`, `requires_explicit_target`, or `requires_explicit_intent` so
+agents can ask for or preserve the missing condition before attempting
+execution. The top-level `approval` section names the current approval mode and
+whether high-risk actions require host approval. The `execution_route` field
+summarizes the route as `direct`,
 `direct_explicit_target`, `direct_explicit_intent`, `dry_run_confirm`,
 or `unsafe_dry_run_confirm`. For gated actions, the expected flow is:
 
 1. Read `outlook.capabilities.details`.
 2. If direct execution is not allowed, call `outlook.action_dry_run`.
-3. Show or reason over the dry-run summary.
-4. Execute only the exact payload with `outlook.action_confirm`.
+3. Show or reason over the dry-run review packet.
+4. If `requires_approval=true`, wait for the host to sign the returned
+   `approval_challenge`; do not ask the user for the approval secret.
+5. Execute only the exact payload with `outlook.action_confirm`, passing
+   `approval_challenge_id` and `approval_token` only when the host supplies
+   them.
 
 Prompt shape for destructive or broad work:
 
 ```text
 Use outlook-agent. First call outlook.capabilities, then dry-run any gated
 action with outlook.action_dry_run. Execute only after the exact dry-run summary
-is acceptable, using outlook.action_confirm.
+is acceptable, using outlook.action_confirm. If dry-run returns
+requires_approval=true, wait for host approval and pass the returned
+approval_challenge_id plus approval_token without exposing any approval secret.
 ```

@@ -110,6 +110,41 @@ func TestHighLevelMailSearchCallsFindItemAndNormalizesMessages(t *testing.T) {
 	}
 }
 
+func TestHighLevelMailSearchClampsHugePageSize(t *testing.T) {
+	var calls []recordedServiceCall
+	server := newOWAServiceServer(t, &calls, map[string]any{
+		"Body": map[string]any{
+			"ResponseMessages": map[string]any{
+				"Items": []any{
+					map[string]any{"RootFolder": map[string]any{"Items": []any{}}},
+				},
+			},
+		},
+	})
+	defer server.Close()
+	client := newTestTransport(server)
+
+	response := client.Execute(context.Background(), transport.ActionRequest{
+		Name:    "mail.search",
+		Payload: map[string]any{"max": 1_000_000},
+	})
+
+	if !response.OK {
+		t.Fatalf("expected mail.search ok: %#v", response)
+	}
+	if len(calls) != 1 {
+		t.Fatalf("expected one service call, got %#v", calls)
+	}
+	body := calls[0].Body["Body"].(map[string]any)
+	pageView := body["IndexedPageItemView"].(map[string]any)
+	if pageView["MaxEntriesReturned"] != float64(transport.MaxPageSize) {
+		t.Fatalf("expected clamped OWA page size, got %#v", pageView)
+	}
+	if response.Data["limit"] != transport.MaxPageSize || response.Data["limit_clamped"] != true {
+		t.Fatalf("expected clamped limit metadata, got %#v", response.Data)
+	}
+}
+
 func TestHighLevelMailSearchUsesConfiguredTimeZone(t *testing.T) {
 	var calls []recordedServiceCall
 	server := newOWAServiceServer(t, &calls, map[string]any{"Body": map[string]any{"Items": []any{}}})

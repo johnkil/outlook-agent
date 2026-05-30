@@ -137,14 +137,14 @@ notes.
 
 | Safety class | Actions |
 | --- | --- |
-| `read_metadata` | `ConvertId`, `ExpandDL`, `FindConversation`, `FindFolder`, `FindItem`, `FindPeople`, `GetCalendarView`, `GetConversationItems`, `GetFolder`, `GetMailTips`, `GetPersona`, `GetReminders`, `GetRoomLists`, `GetRooms`, `GetServerTimeZones`, `GetServiceConfiguration`, `GetSharingFolder`, `GetSharingMetadata`, `GetUserAvailability`, `GetUserAvailabilityInternal`, `GetUserPhoto`, `GetUserRetentionPolicyTags`, `NotificationSubscribe`, `ResolveNames`, `SyncFolderHierarchy`, `SyncFolderItems` |
+| `read_metadata` | `ConvertId`, `ExpandDL`, `FindConversation`, `FindFolder`, `FindItem`, `FindPeople`, `GetCalendarView`, `GetConversationItems`, `GetFolder`, `GetMailTips`, `GetPersona`, `GetReminders`, `GetRoomLists`, `GetRooms`, `GetServerTimeZones`, `GetServiceConfiguration`, `GetSharingFolder`, `GetSharingMetadata`, `GetUserAvailability`, `GetUserAvailabilityInternal`, `GetUserPhoto`, `GetUserRetentionPolicyTags`, `ResolveNames`, `SyncFolderHierarchy`, `SyncFolderItems` |
 | `read_body_explicit` | `GetItem` |
 | `read_attachment_explicit` | `GetAttachment` |
 | `unknown` | `SearchMailboxes` |
 | `reversible_bulk` | `ArchiveItem`, `CopyFolder`, `CopyItem`, `CreateAttachment`, `MarkAllItemsAsRead`, `MarkAsJunk`, `MoveFolder`, `MoveItem`, `PerformReminderAction` |
 | `send_like` | `CreateItem`, `SendItem` |
 | `destructive` | `ApplyBulkItemAction`, `ApplyConversationAction`, `ApplyMessageAction`, `DeleteAttachment`, `DeleteFolder`, `DeleteItem`, `EmptyFolder` |
-| `settings_or_rules` | `CreateFolder`, `CreateFolderPath`, `CreateSweepRuleForSender`, `GetInboxRules`, `GetUserOofSettings`, `UpdateFolder`, `UpdateItem`, `UpdateUserConfiguration` |
+| `settings_or_rules` | `CreateFolder`, `CreateFolderPath`, `CreateSweepRuleForSender`, `GetInboxRules`, `GetUserOofSettings`, `NotificationSubscribe`, `UpdateFolder`, `UpdateItem`, `UpdateUserConfiguration` |
 
 ## Promotion Notes
 

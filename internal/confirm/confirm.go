@@ -10,11 +10,13 @@ import (
 )
 
 type Binding struct {
-	Action     string
-	Transport  string
-	Profile    string
-	Payload    any
-	UnsafeMode bool
+	Action            string
+	Transport         string
+	Profile           string
+	Payload           any
+	UnsafeMode        bool
+	SafetyClass       string
+	ReviewFingerprint string
 }
 
 type Store struct {

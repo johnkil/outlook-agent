@@ -65,9 +65,14 @@ resulting JSON token credential behind the profile `secret_ref`, and writes only
 sanitized metadata to stdout. It must not print `device_code`, `access_token`,
 or `refresh_token`.
 
-Supported secret references are `keychain:service/account` for macOS Keychain
-and explicit `file:/absolute/path` for cross-platform local or CI/dev use. File
-secrets must be user-only readable/writable (`0600` on Unix-like systems).
+Supported secret references are `keychain:service/account` for macOS Keychain,
+explicit `file:/absolute/path` for cross-platform local or CI/dev use, and
+`external:name` for operator-managed command providers. File secrets must be
+user-only readable/writable (`0600` on Unix-like systems). External secret
+commands are defined in config under `secrets.external.<name>` as an absolute
+`command` path plus an `args` array. The runtime invokes the command directly
+without a shell, applies a timeout and bounded stdout read, trims trailing
+newlines, and must not include command stdout or stderr in returned errors.
 
 `policy explain` without arguments returns the stable safety-class list.
 `policy explain --action <name>` returns all built-in transport capability
@@ -92,17 +97,28 @@ Initial public tool names:
 outlook.auth_check
 outlook.capabilities
 outlook.mail_search
+outlook.mail_search_next
 outlook.mail_fetch_metadata
 outlook.mail_fetch_body
 outlook.mail_list_attachments
 outlook.mail_fetch_attachment
 outlook.mail_create_draft
+outlook.mail_create_reply_draft
+outlook.mail_create_reply_all_draft
+outlook.mail_create_forward_draft
+outlook.mail_send_draft
+outlook.mail_move_to_folder
+outlook.mail_archive
+outlook.mail_flag
+outlook.mail_categorize
+outlook.mail_mark_read
 outlook.mail_move_to_deleted_items
 outlook.mail_rules_list
 outlook.mail_rule_set_enabled
 outlook.mailbox_settings_get
 outlook.calendar_list
 outlook.calendar_availability
+outlook.calendar_respond
 outlook.action_dry_run
 outlook.action_confirm
 outlook.raw_action
@@ -120,59 +136,111 @@ Key tool inputs:
   for policy-aware clients. Each `details` entry contains `name`, `transport`,
   `safety_class`, numeric coverage `level`,
   `allowed_direct`, `requires_dry_run`, `requires_confirmation`, and
-  `requires_unsafe`. Explicit read or mutation requirements are exposed through
-  `requires_explicit_target` and `requires_explicit_intent`. The
+  `requires_unsafe`. High-risk entries also expose `requires_approval` and
+  `approval_mode` when payload-bound host approval is required. Explicit read
+  or mutation requirements are exposed through `requires_explicit_target` and
+  `requires_explicit_intent`. The `approval` section exposes the global
+  approval mode and whether high-risk actions require approval. The
   `execution_route` field is one of `direct`, `direct_explicit_target`,
-  `direct_explicit_intent`, `dry_run_confirm`, or
-  `unsafe_dry_run_confirm`.
+  `direct_explicit_intent`, `dry_run_confirm`, or `unsafe_dry_run_confirm`.
 - High-level mail and calendar tools accept optional `mailbox` for transports
   that support delegated or shared mailbox targeting. Graph uses that value as
   `/users/{id|userPrincipalName}`; when omitted, Graph uses `/me`.
 - `outlook.mail_search` returns normalized metadata plus bounded-window fields
-  `returned`, `limit`, and `truncated`. Graph also returns `next_link` when
-  Microsoft Graph provides `@odata.nextLink`.
+  `returned`, `limit`, and `truncated`. When the selected transport supports
+  continuation, it returns an opaque `next_cursor`; agents continue with
+  `outlook.mail_search_next` instead of storing provider continuation URLs.
 - `outlook.calendar_availability`: `start`, `end`, and optional `email`.
   When `email` is omitted, OWA profiles use `settings.mailbox_email` if
   configured.
+- `outlook.calendar_respond`: `event_id`, `response` (`accept`, `decline`, or
+  `tentative`), `send_response`, `confirm_token`, optional `comment`, optional
+  `approval_challenge_id`, optional `approval_token`, and optional `mailbox`.
+  The action maps to `calendar.respond`, is classified as `send_like`, and
+  requires a matching `outlook.action_dry_run` review before execution.
 - `outlook.mail_list_attachments`: `id` for one explicit message. The tool
   returns attachment metadata only and must not return attachment content.
 - `outlook.mail_fetch_attachment`: `message_id` and `attachment_id`. The tool
   is explicit-target only and returns normalized attachment metadata plus
   base64 content when the transport provides it.
+- `outlook.mail_create_reply_draft`: `message_id`, optional `body`, and
+  optional `mailbox`. The action maps to `mail.create_reply_draft`, is
+  classified as `draft_only`, and creates a save-only reply draft without
+  sending.
+- `outlook.mail_create_reply_all_draft`: `message_id`, optional `body`, and
+  optional `mailbox`. The action maps to `mail.create_reply_all_draft`, is
+  classified as `draft_only`, and creates a save-only reply-all draft without
+  sending.
+- `outlook.mail_create_forward_draft`: `message_id`, `to`, optional `body`,
+  and optional `mailbox`. The action maps to `mail.create_forward_draft`, is
+  classified as `draft_only`, and creates a save-only forward draft without
+  sending.
+- `outlook.mail_send_draft`: `draft_id`, `confirm_token`, optional
+  `approval_challenge_id`, optional `approval_token`, and optional `mailbox`.
+  The action maps to `mail.send_draft`, is classified as `send_like`, and
+  requires a matching `outlook.action_dry_run` review before execution. In
+  required approval mode, the host must approve the exact review packet before
+  the send can proceed.
+- `outlook.mail_move_to_folder`: `ids`, `folder_id`, optional
+  `confirm_token`, optional `approval_challenge_id`, optional
+  `approval_token`, and optional `mailbox`. The action maps to
+  `mail.move_to_folder`. A single explicit id is a reversible single-item
+  mutation; multiple ids require a matching dry-run confirmation.
+- `outlook.mail_archive`: `ids`, optional `confirm_token`, optional
+  `approval_challenge_id`, optional `approval_token`, and optional `mailbox`.
+  The action maps to `mail.archive`. A single explicit id may execute directly;
+  multiple ids require dry-run confirmation.
+- `outlook.mail_flag`: `ids`, `flag_status`, optional `confirm_token`,
+  optional `approval_challenge_id`, optional `approval_token`, and optional
+  `mailbox`. The action maps to `mail.flag` and uses the same single vs bulk
+  reversible mutation rules.
+- `outlook.mail_categorize`: `ids`, non-empty `categories`, optional
+  `confirm_token`, optional `approval_challenge_id`, optional
+  `approval_token`, and optional `mailbox`. The action maps to
+  `mail.categorize` and replaces the message category list.
+- `outlook.mail_mark_read`: `ids`, `is_read`, optional `confirm_token`,
+  optional `approval_challenge_id`, optional `approval_token`, and optional
+  `mailbox`. The action maps to `mail.mark_read` and uses the same single vs
+  bulk reversible mutation rules.
 - `outlook.mail_rules_list`: optional `folder_id` and optional `mailbox`.
   Returns read-only mailbox rule metadata when the selected transport supports
   `mail.rules.list`.
 - `outlook.mail_rule_set_enabled`: `rule_id`, `enabled`, `confirm_token`,
-  optional `approval_token`, optional `folder_id`, and optional `mailbox`. The
-  action maps to
+  optional `approval_challenge_id`, optional `approval_token`, optional
+  `folder_id`, and optional `mailbox`. The action maps to
   `mail.rules.set_enabled`, is classified as `settings_or_rules`, and requires
   a matching `outlook.action_dry_run` confirmation token before execution.
 - `outlook.mail_move_to_deleted_items`: `ids`, `confirm_token`, optional
-  `approval_token`, and optional `mailbox`. Responses include `succeeded` and
-  `failed` partial-result fields in addition to `moved_count`.
+  `approval_challenge_id`, optional `approval_token`, and optional `mailbox`.
+  Responses include `succeeded` and `failed` partial-result fields in addition
+  to `moved_count`.
 - `outlook.mailbox_settings_get`: optional `setting` and optional `mailbox`.
   Returns read-only mailbox settings metadata when the selected transport
   supports `mailbox.settings.get`.
 - `outlook.action_dry_run`: returns `ok=false`, `error`, and no
   `confirmation_token` when the requested confirmed action is not permitted in
   the selected mode. For example, destructive and unknown actions require
-  `unsafe_mode=true`.
+  `unsafe_mode=true`. Successful dry-runs return a review packet and, in
+  required approval mode for high-risk actions, `requires_approval=true` plus
+  `approval_challenge`.
 - `outlook.action_confirm`: validates the exact confirmation token binding and
-  then applies confirmed-action policy again before transport execution. When
-  the host sets `OUTLOOK_AGENT_APPROVAL_TOKEN`, confirm tools also require an
-  `approval_token` supplied out-of-band by the host after user approval; dry-run
-  output does not reveal that token.
+  then applies confirmed-action policy again before transport execution. In
+  required approval mode, high-risk actions also require
+  `approval_challenge_id` and an HMAC `approval_token` for the exact dry-run
+  challenge. `OUTLOOK_AGENT_APPROVAL_TOKEN` is retained only as optional legacy
+  static-token compatibility and is not production-grade approval.
 - Raw `GraphRequest`: transport action for a relative Microsoft Graph path
   with `method`, `path`, optional `query`, optional safe custom `headers`, and
   optional JSON `body`. It is intentionally classified as `destructive`, so MCP
   callers must use unsafe dry-run plus exact confirmation before execution.
-  JSON responses are returned under `json`; non-JSON text is returned under
-  `body_text` and redacted on generic/raw MCP paths.
+  Responses use a bounded raw envelope: `status`, allowlisted `headers`,
+  `body_preview`, `body_sha256`, and `body_truncated`. Full raw body fields are
+  not returned by default.
 - Raw `EWSRequest`: transport action for a caller-provided SOAP XML envelope
   with `body_xml` and optional `soap_action`. It is intentionally classified as
   `destructive`, so MCP callers must use unsafe dry-run plus exact confirmation
-  before execution. XML responses are returned under `xml_text` and redacted on
-  generic/raw MCP paths.
+  before execution. Responses use the same bounded raw envelope as Graph raw
+  requests.
 
 ## Safety Classes
 
@@ -222,6 +290,16 @@ DryRun(ctx, ActionRequest) DryRunSummary
 
 Transport implementations must not print or return secrets.
 
+The MCP runtime may emit optional operator-controlled audit events when
+`OUTLOOK_AGENT_AUDIT_LOG=stderr` or `OUTLOOK_AGENT_AUDIT_LOG_FILE` is set.
+Audit events are JSONL records for dry-run, confirm, execute, and reject
+decisions. They include action metadata, safety class, decision, count,
+payload fingerprint, review fingerprint, and redacted error category; they
+must not include raw payloads, raw provider responses, message bodies,
+attachment bytes, cookies, canary values, passwords, access tokens, refresh
+tokens, or session dumps. File audit logs are append-only and created with
+user-only permissions (`0600` on Unix-like systems).
+
 Configured transports:
 
 - `fake`: local deterministic development data.
@@ -251,9 +329,14 @@ Configured transports:
   `GetMailFolder`, `mail.search`, `mail.fetch_metadata`, `mail.rules.list`,
   `mailbox.settings.get`, `calendar.list`, and `calendar.availability`, plus
   explicit `mail.fetch_body`, explicit `mail.list_attachments`, explicit
-  `mail.fetch_attachment`, `mail.create_draft`,
-  `mail.move_to_deleted_items`, confirmed `mail.rules.set_enabled`, and raw
-  guarded `GraphRequest`; `auth check` probes `/me/mailFolders/inbox`.
+  `mail.fetch_attachment`, `mail.create_draft`, `mail.create_reply_draft`,
+  `mail.create_reply_all_draft`, `mail.create_forward_draft`,
+  `mail.send_draft`, `mail.move_to_folder`, `mail.archive`, `mail.flag`,
+  `mail.categorize`, `mail.mark_read`, `mail.move_to_deleted_items`,
+  confirmed `mail.rules.set_enabled`, and raw guarded `GraphRequest`; `auth
+  check` probes `/me/mailFolders/inbox`. `calendar.respond` uses Microsoft
+  Graph event response actions for accept, decline, and tentative responses to
+  exact event ids.
   `mail.rules.list` uses
   `/me/mailFolders/{folder}/messageRules`, defaulting to Inbox.
   `mail.rules.set_enabled` uses `PATCH
@@ -278,7 +361,7 @@ Default output redacts:
 - raw message bodies, previews, and snippets;
 - attachment contents except through explicit attachment tools;
 - generic raw response fields such as `body_text`, `xml_text`, `contentBytes`,
-  and `content_base64`;
+  and `content_base64`; raw transports expose only preview/hash envelopes;
 - opaque transport ids unless needed for follow-up operations.
 
 The runtime may return stable handles that map to transport ids in memory or in
@@ -309,6 +392,29 @@ Configuration should support:
 - environment variable pointing to a config path.
 
 Config values may reference secret-store keys but must not store secret values.
+External command secret refs must be named references, not shell strings:
+
+```json
+{
+  "secrets": {
+    "external": {
+      "mail-credential": {
+        "command": "/usr/local/bin/op",
+        "args": ["read", "op://vault/item/field"]
+      }
+    }
+  },
+  "profiles": {
+    "work": {
+      "transport": "graph",
+      "secret_ref": "external:mail-credential"
+    }
+  }
+}
+```
+
+The command path must be absolute. Arguments are passed as argv and are never
+interpreted by a shell.
 
 When a config is loaded, runtime entrypoints must preserve the resolved profile
 name. CLI auth checks, MCP auth checks, and confirmation-token bindings default

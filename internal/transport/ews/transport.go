@@ -88,17 +88,24 @@ func (client *Transport) Execute(ctx context.Context, request transport.ActionRe
 			"response_code":      metadata.ResponseCode,
 		}}}
 	case "mail.search":
-		limit := intValue(request.Payload, "max", 150)
-		result, err := client.findItems(ctx, stringValue(request.Payload, "folder_id", "inbox"), limit, stringValue(request.Payload, "query", ""))
+		limit, err := transport.ClampPageSize(request.Payload["max"], transport.DefaultPageSize, transport.MaxPageSize)
 		if err != nil {
 			return transport.ActionResponse{OK: false, Error: err.Error()}
 		}
-		return transport.ActionResponse{OK: true, Data: map[string]any{
+		result, err := client.findItems(ctx, stringValue(request.Payload, "folder_id", "inbox"), limit.Value, stringValue(request.Payload, "query", ""))
+		if err != nil {
+			return transport.ActionResponse{OK: false, Error: err.Error()}
+		}
+		data := map[string]any{
 			"messages":  result.Messages,
 			"returned":  len(result.Messages),
-			"limit":     limit,
+			"limit":     limit.Value,
 			"truncated": result.Truncated,
-		}}
+		}
+		if limit.Clamped {
+			data["limit_clamped"] = true
+		}
+		return transport.ActionResponse{OK: true, Data: data}
 	case "mail.fetch_metadata":
 		messageID := strings.TrimSpace(stringValue(request.Payload, "id", ""))
 		if messageID == "" {
@@ -120,11 +127,19 @@ func (client *Transport) Execute(ctx context.Context, request transport.ActionRe
 		}
 		return transport.ActionResponse{OK: true, Data: map[string]any{"id": message.ID, "body_text": message.Body}}
 	case "calendar.list":
-		events, err := client.listCalendarEvents(ctx, stringValue(request.Payload, "start", ""), stringValue(request.Payload, "end", ""), intValue(request.Payload, "max", 150))
+		limit, err := transport.ClampPageSize(request.Payload["max"], transport.DefaultPageSize, transport.MaxPageSize)
 		if err != nil {
 			return transport.ActionResponse{OK: false, Error: err.Error()}
 		}
-		return transport.ActionResponse{OK: true, Data: map[string]any{"events": events}}
+		events, err := client.listCalendarEvents(ctx, stringValue(request.Payload, "start", ""), stringValue(request.Payload, "end", ""), limit.Value)
+		if err != nil {
+			return transport.ActionResponse{OK: false, Error: err.Error()}
+		}
+		data := map[string]any{"events": events, "limit": limit.Value}
+		if limit.Clamped {
+			data["limit_clamped"] = true
+		}
+		return transport.ActionResponse{OK: true, Data: data}
 	case "calendar.availability":
 		windows, err := client.getAvailability(ctx, request.Payload)
 		if err != nil {
@@ -152,9 +167,70 @@ func (client *Transport) Execute(ctx context.Context, request transport.ActionRe
 
 func (client *Transport) DryRun(_ context.Context, request transport.ActionRequest) transport.DryRunSummary {
 	if request.Name == "EWSRequest" {
-		return transport.DryRunSummary{Action: request.Name, Count: 1, Reversible: false, RequiresConfirmation: true}
+		review := ewsRawRequestReview(request.Name, request.Payload)
+		return transport.DryRunSummary{Action: request.Name, Count: 1, Reversible: false, RequiresConfirmation: true, SafetyClass: string(policy.Destructive), Review: &review, Warnings: review.Limitations}
 	}
 	return transport.DryRunSummary{Action: request.Name, Count: 1, Reversible: true, RequiresConfirmation: false}
+}
+
+func ewsRawRequestReview(actionName string, payload map[string]any) transport.ReviewPacket {
+	bodyXML := stringValue(payload, "body_xml", "")
+	soapAction := strings.TrimSpace(stringValue(payload, "soap_action", ""))
+	raw := &transport.RawRequestReview{
+		SOAPAction:  soapAction,
+		Operation:   ewsOperationName(soapAction, bodyXML),
+		BodySHA256:  transport.BodySHA256(bodyXML),
+		BodyPreview: transport.RedactedPreview(bodyXML, 500),
+	}
+	limitations := []string{"raw EWS SOAP request is advanced and high-risk; prefer high-level tools when available"}
+	if strings.TrimSpace(bodyXML) == "" {
+		limitations = append(limitations, "body_xml was empty during dry-run")
+	}
+	if raw.Operation == "" {
+		limitations = append(limitations, "SOAP operation could not be detected during dry-run")
+	}
+	return transport.ReviewPacket{
+		Version:            transport.ReviewPacketVersion,
+		Transport:          "ews",
+		Action:             actionName,
+		SafetyClass:        string(policy.Destructive),
+		Raw:                raw,
+		PayloadFingerprint: transport.PayloadFingerprint(payload),
+		Limitations:        limitations,
+	}
+}
+
+func ewsOperationName(soapAction string, bodyXML string) string {
+	if trimmed := strings.TrimSpace(soapAction); trimmed != "" {
+		trimmed = strings.TrimRight(trimmed, "/")
+		if index := strings.LastIndex(trimmed, "/"); index >= 0 && index+1 < len(trimmed) {
+			return trimmed[index+1:]
+		}
+		return trimmed
+	}
+	bodyIndex := strings.Index(strings.ToLower(bodyXML), "body")
+	if bodyIndex < 0 {
+		return ""
+	}
+	afterBody := bodyXML[bodyIndex:]
+	closeIndex := strings.Index(afterBody, ">")
+	if closeIndex < 0 {
+		return ""
+	}
+	rest := strings.TrimSpace(afterBody[closeIndex+1:])
+	if !strings.HasPrefix(rest, "<") || strings.HasPrefix(rest, "</") {
+		return ""
+	}
+	rest = strings.TrimPrefix(rest, "<")
+	end := strings.IndexAny(rest, " />")
+	if end < 0 {
+		end = len(rest)
+	}
+	name := rest[:end]
+	if colon := strings.LastIndex(name, ":"); colon >= 0 && colon+1 < len(name) {
+		name = name[colon+1:]
+	}
+	return name
 }
 
 func (client *Transport) executeRawEWSRequest(ctx context.Context, payload map[string]any) (map[string]any, error) {
@@ -183,23 +259,11 @@ func (client *Transport) executeRawEWSRequest(ctx context.Context, payload map[s
 	}
 	defer response.Body.Close()
 
-	data := map[string]any{
-		"status":  response.StatusCode,
-		"headers": selectedEWSResponseHeaders(response.Header),
-	}
 	rawBody, err := transport.ReadLimited(response.Body, transport.MaxResponseBytes)
 	if err != nil {
 		return nil, err
 	}
-	if len(rawBody) > 0 {
-		contentType := response.Header.Get("Content-Type")
-		data["content_type"] = contentType
-		if strings.Contains(strings.ToLower(contentType), "xml") || strings.TrimSpace(contentType) == "" {
-			data["xml_text"] = string(rawBody)
-		} else {
-			data["body_text"] = string(rawBody)
-		}
-	}
+	data := transport.RawResponseEnvelope(response.StatusCode, response.Header, rawBody)
 	return data, nil
 }
 
@@ -537,14 +601,4 @@ func intValue(values map[string]any, key string, fallback int) int {
 		}
 	}
 	return fallback
-}
-
-func selectedEWSResponseHeaders(headers http.Header) map[string]any {
-	output := map[string]any{}
-	for _, key := range []string{"request-id", "client-request-id", "retry-after", "location", "content-type"} {
-		if value := headers.Get(key); value != "" {
-			output[key] = value
-		}
-	}
-	return output
 }

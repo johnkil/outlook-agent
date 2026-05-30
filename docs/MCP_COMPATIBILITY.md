@@ -14,16 +14,28 @@ Compatibility version `0.1` includes these tool names:
 - `outlook.auth_check`
 - `outlook.capabilities`
 - `outlook.mail_search`
+- `outlook.mail_search_next`
 - `outlook.mail_fetch_metadata`
 - `outlook.mail_fetch_body`
 - `outlook.mail_list_attachments`
 - `outlook.mail_fetch_attachment`
 - `outlook.mail_create_draft`
+- `outlook.mail_create_reply_draft`
+- `outlook.mail_create_reply_all_draft`
+- `outlook.mail_create_forward_draft`
+- `outlook.mail_send_draft`
+- `outlook.mail_move_to_folder`
+- `outlook.mail_archive`
+- `outlook.mail_flag`
+- `outlook.mail_categorize`
+- `outlook.mail_mark_read`
 - `outlook.mail_move_to_deleted_items`
 - `outlook.mail_rules_list`
+- `outlook.mail_rule_set_enabled`
 - `outlook.mailbox_settings_get`
 - `outlook.calendar_list`
 - `outlook.calendar_availability`
+- `outlook.calendar_respond`
 - `outlook.action_dry_run`
 - `outlook.action_confirm`
 - `outlook.raw_action`
@@ -49,11 +61,44 @@ high-level mail and calendar tools. Transports that support delegated or shared
 mailbox targeting may use it; transports that do not support it keep their
 existing behavior or return a normal transport error.
 
+Compatibility version `0.1` also returns opaque `next_cursor` values from
+paginated mail search responses when a transport supports continuation. Clients
+must call `outlook.mail_search_next` with that cursor instead of storing or
+replaying provider continuation URLs. Raw provider `next_link` values are not
+returned by default.
+
 Compatibility version `0.1` also includes additive tools for mailbox rules and
 mailbox settings: read-metadata `outlook.mail_rules_list`,
 dry-run-confirmed settings/rules `outlook.mail_rule_set_enabled`, and
 read-metadata `outlook.mailbox_settings_get`. The set-enabled helper exposes a
 narrow existing-rule toggle without opening arbitrary rule/settings writes.
+
+Compatibility version `0.1` also includes `outlook.mail_send_draft` for sending
+one existing draft through the typed high-risk path. Clients must first call
+`outlook.action_dry_run` for action `mail.send_draft`, review the returned
+packet, and then call `outlook.mail_send_draft` with the exact confirmation
+token plus host approval fields when approval mode requires them.
+
+Compatibility version `0.1` also includes save-only related draft helpers:
+`outlook.mail_create_reply_draft`, `outlook.mail_create_reply_all_draft`, and
+`outlook.mail_create_forward_draft`. These create drafts only and never send;
+use `outlook.mail_send_draft` as a separate reviewed operation if the draft
+must later be sent.
+
+Compatibility version `0.1` also includes reversible message organization
+helpers: `outlook.mail_move_to_folder`, `outlook.mail_archive`,
+`outlook.mail_flag`, `outlook.mail_categorize`, and
+`outlook.mail_mark_read`. Single explicit message changes may execute directly
+when the request contains the exact id and new state. Bulk changes require
+`outlook.action_dry_run` for the matching action, user/host review of the
+returned packet, and exact confirmation fields when calling the high-level
+tool.
+
+Compatibility version `0.1` also includes `outlook.calendar_respond` for
+responding accept, decline, or tentative to one exact event. The underlying
+action is `calendar.respond`, is classified as `send_like`, and requires
+dry-run review, exact confirmation, and host approval when approval mode
+requires it.
 
 Clients must ignore unknown output fields and unknown capability detail fields.
 Servers must keep existing fields present with compatible meanings.
@@ -121,4 +166,5 @@ Compatibility guarantees:
   destructive;
 - confirmation tokens are exact-action, exact-payload, transport, profile,
   unsafe-mode, and expiry bound;
-- raw responses must pass redaction before returning through MCP.
+- raw responses must be bounded preview/hash envelopes with allowlisted
+  headers before returning through MCP.

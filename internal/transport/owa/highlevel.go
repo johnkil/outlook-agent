@@ -14,19 +14,26 @@ import (
 func (client *Transport) executeHighLevel(ctx context.Context, request transport.ActionRequest) (transport.ActionResponse, bool) {
 	switch request.Name {
 	case "mail.search":
-		limit := intValue(request.Payload, "max", 150)
-		response := client.executeService(ctx, "FindItem", client.buildFindInboxItemsRequest(limit), false)
+		limit, err := transport.ClampPageSize(request.Payload["max"], transport.DefaultPageSize, transport.MaxPageSize)
+		if err != nil {
+			return transport.ActionResponse{OK: false, Error: err.Error()}, true
+		}
+		response := client.executeService(ctx, "FindItem", client.buildFindInboxItemsRequest(limit.Value), false)
 		if !response.OK {
 			return response, true
 		}
 		window := normalizeMailItems(extractItems(response.Data))
 		messages := filterMessages(window, stringValue(request.Payload, "query"))
-		return transport.ActionResponse{OK: true, Data: map[string]any{
+		data := map[string]any{
 			"messages":  messages,
 			"returned":  len(messages),
-			"limit":     limit,
-			"truncated": len(window) >= limit,
-		}}, true
+			"limit":     limit.Value,
+			"truncated": len(window) >= limit.Value,
+		}
+		if limit.Clamped {
+			data["limit_clamped"] = true
+		}
+		return transport.ActionResponse{OK: true, Data: data}, true
 	case "calendar.list":
 		response := client.executeService(ctx, "GetCalendarView", client.buildCalendarViewRequest(stringValue(request.Payload, "start"), stringValue(request.Payload, "end")), true)
 		if !response.OK {
@@ -243,7 +250,10 @@ func filenameFromContentDisposition(value string) string {
 
 func (client *Transport) buildFindInboxItemsRequest(maxItems int) any {
 	if maxItems <= 0 {
-		maxItems = 150
+		maxItems = transport.DefaultPageSize
+	}
+	if maxItems > transport.MaxPageSize {
+		maxItems = transport.MaxPageSize
 	}
 	return object(
 		field("__type", "FindItemJsonRequest:#Exchange"),

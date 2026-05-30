@@ -22,7 +22,17 @@ type Source struct {
 
 type Config struct {
 	DefaultProfile string             `json:"default_profile"`
+	Secrets        SecretStores       `json:"secrets,omitempty"`
 	Profiles       map[string]Profile `json:"profiles"`
+}
+
+type SecretStores struct {
+	External map[string]ExternalSecretCommand `json:"external,omitempty"`
+}
+
+type ExternalSecretCommand struct {
+	Command string   `json:"command"`
+	Args    []string `json:"args,omitempty"`
 }
 
 type Profile struct {
@@ -84,26 +94,27 @@ func rejectInlineSecrets(data []byte) error {
 	if err := json.Unmarshal(data, &raw); err != nil {
 		return err
 	}
-	if containsInlineSecret(raw) {
+	if containsInlineSecret(raw, nil) {
 		return fmt.Errorf("config must reference secrets, not store secret values")
 	}
 	return nil
 }
 
-func containsInlineSecret(value any) bool {
+func containsInlineSecret(value any, path []string) bool {
 	switch typed := value.(type) {
 	case map[string]any:
 		for key, child := range typed {
-			if isInlineSecretKey(key) {
+			normalized := normalizeConfigKey(key)
+			if !isExternalSecretStoreName(path) && isInlineSecretKey(key) {
 				return true
 			}
-			if containsInlineSecret(child) {
+			if containsInlineSecret(child, append(path, normalized)) {
 				return true
 			}
 		}
 	case []any:
 		for _, child := range typed {
-			if containsInlineSecret(child) {
+			if containsInlineSecret(child, path) {
 				return true
 			}
 		}
@@ -111,6 +122,10 @@ func containsInlineSecret(value any) bool {
 		return containsURLUserinfo(typed) || containsSensitiveURLMaterial(typed)
 	}
 	return false
+}
+
+func isExternalSecretStoreName(path []string) bool {
+	return len(path) == 2 && path[0] == "secrets" && path[1] == "external"
 }
 
 func isInlineSecretKey(key string) bool {

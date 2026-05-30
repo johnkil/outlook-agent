@@ -105,6 +105,36 @@ Before promoting an upgrade:
 8. Confirm logs do not contain secrets, session material, raw message bodies,
    attachment contents, or raw discovery assets.
 
+## Runtime Audit Logging
+
+Audit logging is disabled by default. Enable it only in an operator-controlled
+runtime environment:
+
+```bash
+OUTLOOK_AGENT_AUDIT_LOG=stderr
+OUTLOOK_AGENT_AUDIT_LOG_FILE=/absolute/path/outlook-agent-audit.jsonl
+```
+
+When `OUTLOOK_AGENT_AUDIT_LOG_FILE` is set, it takes precedence over stderr
+logging. The file is opened in append mode and created with `0600`
+permissions. Store it on a protected local path or approved log collection
+path; do not place it in the repository, release artifacts, shared notes, or
+issue attachments.
+
+Audit events are JSONL records for dry-run, confirm, execute, and reject
+decisions. Expected fields are the timestamp, event type, transport, profile,
+action, safety class, decision, payload fingerprint, review fingerprint, count,
+and a redacted error category. They are designed for incident reconstruction:
+which operation was reviewed, confirmed, executed, or blocked, without storing
+mailbox content.
+
+Audit logs must remain free of passwords, OAuth tokens, cookies, canary values,
+raw payloads, raw provider responses, message bodies, attachment bytes, HAR
+files, browser traces, screenshots, raw HTML, and raw JavaScript. If an audit
+log appears to contain secret or mailbox content, treat it as an accidental
+secret exposure and follow `SECURITY.md` plus the incident response section in
+this runbook.
+
 ## Graph Live Validation
 
 Use the Graph-specific live smoke harness after a private Graph profile has
@@ -235,10 +265,18 @@ Safe public shape:
 ```json
 {
   "default_profile": "work",
+  "secrets": {
+    "external": {
+      "mail-credential": {
+        "command": "/usr/local/bin/op",
+        "args": ["read", "op://vault/item/field"]
+      }
+    }
+  },
   "profiles": {
     "work": {
       "transport": "owa",
-      "secret_ref": "keychain:mail.example.com/DOMAIN\\user",
+      "secret_ref": "external:mail-credential",
       "settings": {
         "base_url": "https://mail.example.com",
         "username": "DOMAIN\\user",
@@ -254,3 +292,9 @@ Private enterprise overlays may define real hosts, account names, mailbox
 addresses, rollout groups, package-manager channels, and organization policy
 links, but those overlays must live outside this public repository and must not
 be copied into issues, pull requests, release artifacts, or public docs.
+
+External command secrets must use `external:name` references plus
+`secrets.external.<name>` config entries. The command must be an absolute path
+and arguments must be an argv array; do not store shell strings, inline
+passwords, tokens, cookies, canary values, or captured command output in
+config.
