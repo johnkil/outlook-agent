@@ -11,7 +11,7 @@ Use this skill for inbox triage, unread-mail review, and reply-needed detection.
 
 1. Use `outlook.mail_search` with a clear timeframe and folder scope. If the
    response includes `next_cursor`, continue with `outlook.mail_search_next`;
-   do not use provider `next_link` values.
+   do not use provider `next_link` values or call the same cursor concurrently.
 2. Use `outlook.mail_fetch_metadata` for selected messages when search results
    need a stable id, sender, timestamp, or attachment flag.
 3. Group results into `Urgent`, `Needs reply`, `Waiting`, and `FYI`.

@@ -65,7 +65,10 @@ Compatibility version `0.1` also returns opaque `next_cursor` values from
 paginated mail search responses when a transport supports continuation. Clients
 must call `outlook.mail_search_next` with that cursor instead of storing or
 replaying provider continuation URLs. Raw provider `next_link` values are not
-returned by default.
+returned by default. A cursor is single-use and is leased while
+`outlook.mail_search_next` is fetching the next page; concurrent reuse of the
+same cursor fails before the provider continuation is replayed. If the provider
+call fails, the lease is rolled back and the same cursor can be retried.
 
 Compatibility version `0.1` also includes additive tools for mailbox rules and
 mailbox settings: read-metadata `outlook.mail_rules_list`,

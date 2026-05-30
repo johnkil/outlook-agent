@@ -4,7 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/johnkil/outlook-agent/internal/transport"
 )
@@ -115,6 +117,61 @@ func TestMailSearchNextKeepsCursorWhenProviderFails(t *testing.T) {
 	}
 	if nextPage.Returned != 1 || len(nextPage.Messages) != 1 {
 		t.Fatalf("expected retry to fetch one next-page message, got %#v", nextPage)
+	}
+}
+
+func TestMailSearchNextDoesNotReplaySameCursorConcurrently(t *testing.T) {
+	client := newBlockingSearchNextTransport()
+	runtime := NewRuntime(client)
+
+	_, firstPage, err := mailSearchHandler(runtime)(context.Background(), nil, MailSearchInput{Query: "planning"})
+	if err != nil {
+		t.Fatalf("mail search handler: %v", err)
+	}
+	if firstPage.NextCursor == "" {
+		t.Fatalf("expected next cursor: %#v", firstPage)
+	}
+
+	firstDone := make(chan error, 1)
+	go func() {
+		_, _, err := mailSearchNextHandler(runtime)(context.Background(), nil, MailSearchNextInput{Cursor: firstPage.NextCursor})
+		firstDone <- err
+	}()
+
+	select {
+	case <-client.firstSearchNextStarted:
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for first search_next provider call")
+	}
+
+	secondDone := make(chan error, 1)
+	go func() {
+		_, _, err := mailSearchNextHandler(runtime)(context.Background(), nil, MailSearchNextInput{Cursor: firstPage.NextCursor})
+		secondDone <- err
+	}()
+
+	var secondErr error
+	duplicateProviderCall := false
+	select {
+	case <-client.secondSearchNextStarted:
+		duplicateProviderCall = true
+	case secondErr = <-secondDone:
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for second search_next result")
+	}
+
+	client.release()
+	if err := <-firstDone; err != nil {
+		t.Fatalf("first search_next failed: %v", err)
+	}
+	if duplicateProviderCall {
+		t.Fatal("same cursor was replayed into a second provider mail.search_next call")
+	}
+	if secondErr == nil || !strings.Contains(secondErr.Error(), "cursor") {
+		t.Fatalf("expected concurrent cursor use to fail safely, got %v", secondErr)
+	}
+	if calls := client.searchNextCallCount(); calls != 1 {
+		t.Fatalf("expected one provider search_next call, got %d", calls)
 	}
 }
 
@@ -230,4 +287,86 @@ func (client *paginatedSearchNextTransport) Execute(_ context.Context, request t
 
 func (client *paginatedSearchNextTransport) DryRun(context.Context, transport.ActionRequest) transport.DryRunSummary {
 	return transport.DryRunSummary{}
+}
+
+type blockingSearchNextTransport struct {
+	firstSearchNextStarted  chan struct{}
+	secondSearchNextStarted chan struct{}
+	releaseSearchNext       chan struct{}
+	releaseOnce             sync.Once
+	mu                      sync.Mutex
+	searchNextCalls         int
+}
+
+func newBlockingSearchNextTransport() *blockingSearchNextTransport {
+	return &blockingSearchNextTransport{
+		firstSearchNextStarted:  make(chan struct{}),
+		secondSearchNextStarted: make(chan struct{}),
+		releaseSearchNext:       make(chan struct{}),
+	}
+}
+
+func (client *blockingSearchNextTransport) Name() string {
+	return "graph"
+}
+
+func (client *blockingSearchNextTransport) Authenticate(context.Context, string) transport.AuthResult {
+	return transport.AuthResult{OK: true}
+}
+
+func (client *blockingSearchNextTransport) Capabilities(context.Context) transport.CapabilitySet {
+	return transport.CapabilitySet{}
+}
+
+func (client *blockingSearchNextTransport) Execute(_ context.Context, request transport.ActionRequest) transport.ActionResponse {
+	switch request.Name {
+	case "mail.search":
+		return transport.ActionResponse{OK: true, Data: map[string]any{
+			"messages":  []any{map[string]any{"subject": "First"}},
+			"returned":  1,
+			"limit":     1,
+			"truncated": true,
+			"next_link": "https://graph.example.test/v1.0/me/messages?$skiptoken=next",
+		}}
+	case "mail.search_next":
+		callNumber := client.recordSearchNextCall()
+		if callNumber == 1 {
+			close(client.firstSearchNextStarted)
+		}
+		if callNumber == 2 {
+			close(client.secondSearchNextStarted)
+		}
+		<-client.releaseSearchNext
+		return transport.ActionResponse{OK: true, Data: map[string]any{
+			"messages":  []any{map[string]any{"subject": "Second"}},
+			"returned":  1,
+			"limit":     1,
+			"truncated": false,
+		}}
+	default:
+		return transport.ActionResponse{OK: false, Error: "unexpected action"}
+	}
+}
+
+func (client *blockingSearchNextTransport) DryRun(context.Context, transport.ActionRequest) transport.DryRunSummary {
+	return transport.DryRunSummary{}
+}
+
+func (client *blockingSearchNextTransport) recordSearchNextCall() int {
+	client.mu.Lock()
+	defer client.mu.Unlock()
+	client.searchNextCalls++
+	return client.searchNextCalls
+}
+
+func (client *blockingSearchNextTransport) searchNextCallCount() int {
+	client.mu.Lock()
+	defer client.mu.Unlock()
+	return client.searchNextCalls
+}
+
+func (client *blockingSearchNextTransport) release() {
+	client.releaseOnce.Do(func() {
+		close(client.releaseSearchNext)
+	})
 }

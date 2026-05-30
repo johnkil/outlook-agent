@@ -88,6 +88,104 @@ func TestStoreConsumesScopedCursorForSameRuntimeScope(t *testing.T) {
 	}
 }
 
+func TestStoreLeasesScopedCursorExclusivelyUntilRollback(t *testing.T) {
+	now := time.Date(2026, 5, 29, 12, 0, 0, 0, time.UTC)
+	store := cursor.NewStore(func() time.Time { return now })
+	binding := cursor.Binding{Transport: "graph", Profile: "default", Action: "mail.search", Mailbox: "me", QueryHash: "query-a"}
+	scope := cursor.Scope{Transport: "graph", Profile: "default", Action: "mail.search"}
+	id, err := store.Issue(binding, "graph", "https://graph.example.test/next", time.Minute)
+	if err != nil {
+		t.Fatalf("issue cursor: %v", err)
+	}
+
+	lease, err := store.LeaseScoped(scope, id, time.Minute)
+	if err != nil {
+		t.Fatalf("expected first lease to succeed: %v", err)
+	}
+	if lease.CursorID != id || lease.Record.NextLink != "https://graph.example.test/next" {
+		t.Fatalf("unexpected lease: %#v", lease)
+	}
+	if _, err := store.LeaseScoped(scope, id, time.Minute); err == nil {
+		t.Fatal("expected concurrent lease to fail")
+	}
+	if ok := store.RollbackLease(lease); !ok {
+		t.Fatal("expected rollback to release cursor lease")
+	}
+	if _, err := store.LeaseScoped(scope, id, time.Minute); err != nil {
+		t.Fatalf("expected lease after rollback to succeed: %v", err)
+	}
+}
+
+func TestStoreCommitLeaseConsumesScopedCursor(t *testing.T) {
+	now := time.Date(2026, 5, 29, 12, 0, 0, 0, time.UTC)
+	store := cursor.NewStore(func() time.Time { return now })
+	binding := cursor.Binding{Transport: "graph", Profile: "default", Action: "mail.search", Mailbox: "me", QueryHash: "query-a"}
+	scope := cursor.Scope{Transport: "graph", Profile: "default", Action: "mail.search"}
+	id, err := store.Issue(binding, "graph", "https://graph.example.test/next", time.Minute)
+	if err != nil {
+		t.Fatalf("issue cursor: %v", err)
+	}
+
+	lease, err := store.LeaseScoped(scope, id, time.Minute)
+	if err != nil {
+		t.Fatalf("lease cursor: %v", err)
+	}
+	if ok := store.CommitLease(lease); !ok {
+		t.Fatal("expected commit to consume cursor lease")
+	}
+	if _, ok := store.ConsumeScoped(id, scope); ok {
+		t.Fatal("expected committed lease to consume original cursor")
+	}
+}
+
+func TestStoreExpiredLeaseCanBeReclaimed(t *testing.T) {
+	now := time.Date(2026, 5, 29, 12, 0, 0, 0, time.UTC)
+	store := cursor.NewStore(func() time.Time { return now })
+	binding := cursor.Binding{Transport: "graph", Profile: "default", Action: "mail.search", Mailbox: "me", QueryHash: "query-a"}
+	scope := cursor.Scope{Transport: "graph", Profile: "default", Action: "mail.search"}
+	id, err := store.Issue(binding, "graph", "https://graph.example.test/next", time.Minute)
+	if err != nil {
+		t.Fatalf("issue cursor: %v", err)
+	}
+	firstLease, err := store.LeaseScoped(scope, id, time.Second)
+	if err != nil {
+		t.Fatalf("lease cursor: %v", err)
+	}
+
+	now = now.Add(2 * time.Second)
+	secondLease, err := store.LeaseScoped(scope, id, time.Second)
+	if err != nil {
+		t.Fatalf("expected expired lease to be reclaimable: %v", err)
+	}
+	if secondLease.LeaseID == firstLease.LeaseID {
+		t.Fatalf("expected reclaimed lease to get a new lease id, got %q", secondLease.LeaseID)
+	}
+	if ok := store.CommitLease(firstLease); ok {
+		t.Fatal("expired stale lease must not commit after cursor was reclaimed")
+	}
+	if ok := store.CommitLease(secondLease); !ok {
+		t.Fatal("expected reclaimed lease to commit")
+	}
+}
+
+func TestStoreLeaseRejectsScopeMismatchWithoutConsumingCursor(t *testing.T) {
+	now := time.Date(2026, 5, 29, 12, 0, 0, 0, time.UTC)
+	store := cursor.NewStore(func() time.Time { return now })
+	binding := cursor.Binding{Transport: "graph", Profile: "default", Action: "mail.search", Mailbox: "me", QueryHash: "query-a"}
+	scope := cursor.Scope{Transport: "graph", Profile: "default", Action: "mail.search"}
+	id, err := store.Issue(binding, "graph", "https://graph.example.test/next", time.Minute)
+	if err != nil {
+		t.Fatalf("issue cursor: %v", err)
+	}
+
+	if _, err := store.LeaseScoped(cursor.Scope{Transport: "graph", Profile: "other", Action: "mail.search"}, id, time.Minute); err == nil {
+		t.Fatal("expected wrong scope lease to fail")
+	}
+	if _, ok := store.ConsumeScoped(id, scope); !ok {
+		t.Fatal("expected failed lease attempt not to consume cursor")
+	}
+}
+
 func TestStoreSupportsConcurrentIssueAndConsume(t *testing.T) {
 	now := time.Date(2026, 5, 29, 12, 0, 0, 0, time.UTC)
 	store := cursor.NewStore(func() time.Time { return now })

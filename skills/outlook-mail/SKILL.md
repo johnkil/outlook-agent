@@ -15,7 +15,9 @@ specific message or thread.
    actions.
 2. Search or list a bounded mailbox slice with `outlook.mail_search` first.
    If the result has `next_cursor`, continue with `outlook.mail_search_next`;
-   never store or replay provider `next_link` values.
+   never store or replay provider `next_link` values. Treat each cursor as
+   single-use; do not call `outlook.mail_search_next` concurrently with the
+   same cursor.
 3. Fetch one selected message with `outlook.mail_fetch_metadata` before reading
    body or attachment content.
 4. Fetch message bodies with `outlook.mail_fetch_body` only for explicit,

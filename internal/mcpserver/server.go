@@ -331,6 +331,7 @@ type toolRegistration struct {
 }
 
 const ApprovalTokenEnv = approval.LegacyTokenEnv
+const searchCursorLeaseTTL = 2 * time.Minute
 
 var toolRegistrations = []toolRegistration{
 	{name: "outlook.auth_check", add: func(server *mcp.Server, runtime *Runtime, name string) {
@@ -638,10 +639,11 @@ func mailSearchNextHandler(runtime *Runtime) func(context.Context, *mcp.CallTool
 			Profile:   runtime.profile,
 			Action:    "mail.search",
 		}
-		record, ok := runtime.cursors.PeekScoped(input.Cursor, scope)
-		if !ok {
-			return nil, MailSearchOutput{}, errors.New("cursor is invalid or expired")
+		lease, err := runtime.cursors.LeaseScoped(scope, input.Cursor, searchCursorLeaseTTL)
+		if err != nil {
+			return nil, MailSearchOutput{}, err
 		}
+		record := lease.Record
 		response := runtime.client.Execute(ctx, transport.ActionRequest{
 			Name: "mail.search_next",
 			Payload: map[string]any{
@@ -650,9 +652,12 @@ func mailSearchNextHandler(runtime *Runtime) func(context.Context, *mcp.CallTool
 			},
 		})
 		if err := transportResponseError(response); err != nil {
+			runtime.cursors.RollbackLease(lease)
 			return nil, MailSearchOutput{}, err
 		}
-		runtime.cursors.ConsumeScoped(input.Cursor, scope)
+		if ok := runtime.cursors.CommitLease(lease); !ok {
+			return nil, MailSearchOutput{}, errors.New("cursor lease expired or was superseded")
+		}
 		rawNextLink := stringMetadata(response.Data, "next_link")
 		redacted := redact.Value(response.Data).(map[string]any)
 		messages, _ := redacted["messages"].([]any)
