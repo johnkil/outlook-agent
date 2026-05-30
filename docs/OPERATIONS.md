@@ -308,6 +308,9 @@ references. Keychain writes use Security.framework in `darwin+cgo` builds so
 secret values are never passed through process arguments. `darwin&&!cgo`
 builds fail Keychain writes closed; use `file:` or `external:` secret stores
 for enrollment or refresh flows that need to persist new credentials.
+`darwin+cgo` builds also prefer Security.framework for Keychain reads and keep
+`/usr/bin/security` only as a fallback path; release archives built with
+`CGO_ENABLED=0` use the command read path.
 
 Run the gated live check on a Mac before relying on Keychain writes:
 
