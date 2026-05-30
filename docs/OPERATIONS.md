@@ -80,6 +80,13 @@ Allowed distribution wrappers:
 - mobile-device-management or workstation-management deployment;
 - direct archive installation for small pilot groups.
 
+The current first-user pilot channel is direct archive installation from
+GitHub Releases. The pilot release owner is the repository maintainer who
+publishes the archive and `SHA256SUMS.txt`; the pilot rollback owner is the
+operator who installs the archive for the pilot environment. Rollback means
+installing the previous approved release archive after checksum verification
+and then rerunning the upgrade validation steps below.
+
 Distribution rules:
 
 - Verify the archive against `SHA256SUMS.txt` before wrapping it.

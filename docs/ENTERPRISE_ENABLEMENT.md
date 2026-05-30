@@ -142,6 +142,13 @@ Acceptable channels:
 Each channel must verify release checksums, preserve the runtime config
 boundary, and keep tenant-specific setup outside this public repository.
 
+The initial first-user channel is direct archive install from GitHub Releases.
+The pilot release owner is the repository maintainer publishing the archive and
+`SHA256SUMS.txt`; the pilot rollback owner is the pilot operator who installed
+the archive. Pilot rollback restores the previous approved archive after
+checksum verification, then reruns `doctor`, `auth check`, and MCP
+initialization validation.
+
 ## Validation Matrix
 
 Use this order for rollout validation:

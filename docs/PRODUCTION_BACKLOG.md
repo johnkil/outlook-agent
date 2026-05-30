@@ -16,7 +16,6 @@ investigated with public-safe evidence.
 
 | Gate | GitHub issue | Required evidence |
 | --- | --- | --- |
-| enterprise distribution channel | https://github.com/johnkil/outlook-agent/issues/4 | Approved package or installer channel verifies release checksums, preserves the private config boundary, and names release/rollback owners. |
 | Graph OAuth and live smoke enablement | https://github.com/johnkil/outlook-agent/issues/5 | Approved Graph app/permissions, secret-store token handling, `auth check`, and controlled read-only smoke evidence. |
 | EWS enablement and live smoke validation | https://github.com/johnkil/outlook-agent/issues/6 | Approved endpoint/auth method, secret-store credential handling, `auth check`, and controlled read-metadata smoke evidence. |
 | OWA-compatible live validation and fixture recovery | https://github.com/johnkil/outlook-agent/issues/42 | Controlled private profile passes auth/session readiness, read-metadata smoke, dry-run smoke for guarded mutation classes, payload-bound approval mutation smoke, and recovery cleanup for interrupted synthetic fixtures. |
@@ -28,6 +27,7 @@ investigated with public-safe evidence.
 | --- | --- | --- |
 | Hosted GitHub Actions CI | https://github.com/johnkil/outlook-agent/issues/2 | Hosted `test` jobs now execute real workflow steps for pull requests, and main branch protection requires the `test` status check before merge. |
 | Repository secret scanning and protection | https://github.com/johnkil/outlook-agent/issues/3 | Dependabot security updates are enabled, secret scanning is enabled, push protection is enabled, and main branch protection requires the hosted `test` status check, requires conversation resolution, enforces admin rules, disables force pushes, and disables branch deletion. |
+| Direct archive pilot distribution | https://github.com/johnkil/outlook-agent/issues/4 | The initial enterprise distribution channel is a direct archive pilot from GitHub Releases. The pilot release owner is the repository maintainer publishing the release archive and `SHA256SUMS.txt`; the pilot rollback owner is the pilot operator who installed the archive and can reinstall the previous verified release. Pilot installation verifies release archives against `SHA256SUMS.txt`, keeps runtime secrets in the configured secret store, and ensures private config profiles stay outside public artifacts. |
 | Installed MCP release smoke determinism | https://github.com/johnkil/outlook-agent/issues/40 | `scripts/release-smoke.sh` runs the packaged host binary through the deterministic MCP stdio Go SDK smoke using `OUTLOOK_AGENT_BINARY_UNDER_TEST`, so the release gate does not depend on model final-response formatting. |
 
 ## Partially Completed External Gates
