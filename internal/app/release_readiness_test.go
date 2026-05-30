@@ -36,6 +36,7 @@ func TestReleaseReadinessArtifactsExist(t *testing.T) {
 			"go build",
 			"honnef.co/go/tools/cmd/staticcheck@v0.7.0",
 			"scripts/public-safety-check.sh",
+			"scripts/action-coverage-smoke.sh",
 			"golang.org/x/vuln/cmd/govulncheck@v1.3.0",
 		},
 		filepath.Join("..", "..", "scripts", "release-smoke.sh"): {
@@ -102,9 +103,11 @@ func TestReleaseReadinessArtifactsExist(t *testing.T) {
 			"honnef.co/go/tools/cmd/staticcheck@v0.7.0",
 			"golang.org/x/vuln/cmd/govulncheck@v1.3.0",
 			"scripts/public-safety-check.sh",
+			"scripts/action-coverage-smoke.sh",
 		},
 		filepath.Join("..", "..", ".github", "workflows", "release.yml"): {
 			"scripts/release-build.sh",
+			"scripts/release-verify.sh dist",
 			"gh release",
 			"contents: write",
 		},
@@ -112,11 +115,25 @@ func TestReleaseReadinessArtifactsExist(t *testing.T) {
 			"# Release Evidence",
 			"Template",
 			"Actual evidence",
+			"Automated CI gates",
+			"Tag workflow gates",
+			"Operator-only evidence",
+			"Do not mark a gate as passed from local static review",
+			"Never paste tenant URLs",
 			"CI run URL",
 			"macOS keychain integration",
 			"live Graph read-only smoke",
 			"dependency manifest",
 			"Known limitations",
+		},
+		filepath.Join("..", "..", "docs", "ACTION_COVERAGE.md"): {
+			"# Action Coverage",
+			"Base action coverage smoke",
+			"hosted CI",
+			"scripts/ci-local.sh",
+			"scripts/action-coverage-smoke.sh",
+			"must not call `outlook.action_confirm`",
+			"OUTLOOK_AGENT_OPENCODE_LIVE_DIR",
 		},
 	}
 
@@ -131,6 +148,53 @@ func TestReleaseReadinessArtifactsExist(t *testing.T) {
 				t.Fatalf("expected %s to contain %q", path, marker)
 			}
 		}
+	}
+}
+
+func TestReleaseWorkflowVerifiesArtifactsBeforePublishing(t *testing.T) {
+	assertFileMarkersInOrder(t,
+		filepath.Join("..", "..", ".github", "workflows", "release.yml"),
+		"scripts/release-build.sh",
+		"scripts/release-verify.sh dist",
+		"gh release create",
+	)
+}
+
+func TestCIWorkflowRunsActionCoverageAfterPublicSafety(t *testing.T) {
+	assertFileMarkersInOrder(t,
+		filepath.Join("..", "..", ".github", "workflows", "ci.yml"),
+		"scripts/public-safety-check.sh",
+		"scripts/action-coverage-smoke.sh",
+		"golang.org/x/vuln/cmd/govulncheck@v1.3.0",
+	)
+}
+
+func TestLocalCIRunsActionCoverageAfterPublicSafety(t *testing.T) {
+	assertFileMarkersInOrder(t,
+		filepath.Join("..", "..", "scripts", "ci-local.sh"),
+		"scripts/public-safety-check.sh",
+		"scripts/action-coverage-smoke.sh",
+		"golang.org/x/vuln/cmd/govulncheck@v1.3.0",
+	)
+}
+
+func assertFileMarkersInOrder(t *testing.T, path string, markers ...string) {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read %s: %v", path, err)
+	}
+	text := string(data)
+	previousIndex := -1
+	for _, marker := range markers {
+		index := strings.Index(text, marker)
+		if index == -1 {
+			t.Fatalf("expected %s to contain %q", path, marker)
+		}
+		if index < previousIndex {
+			t.Fatalf("expected %q to appear after previous marker in %s", marker, path)
+		}
+		previousIndex = index
 	}
 }
 

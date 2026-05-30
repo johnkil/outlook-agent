@@ -25,6 +25,9 @@ jobs:
       - name: Build release artifacts
         run: scripts/release-build.sh "${GITHUB_REF_NAME}"
 
+      - name: Verify release artifacts
+        run: scripts/release-verify.sh dist
+
       - name: Publish GitHub release
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

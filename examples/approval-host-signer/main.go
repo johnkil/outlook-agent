@@ -13,7 +13,11 @@ import (
 	"strings"
 )
 
-const approvalSecretEnv = "OUTLOOK_AGENT_APPROVAL_SECRET"
+const (
+	approvalSecretEnv            = "OUTLOOK_AGENT_APPROVAL_SECRET"
+	maxSigningPayloadInputBytes  = 64 * 1024
+	oversizedSigningPayloadError = "approval signing payload is too large"
+)
 
 type output struct {
 	OK            bool   `json:"ok"`
@@ -51,21 +55,34 @@ func main() {
 
 func readPayload(path string, stdin io.Reader) ([]byte, error) {
 	if path == "" || path == "-" {
-		payload, err := io.ReadAll(stdin)
+		payload, err := readBoundedPayload(stdin, "approval signing payload is required on stdin")
 		if err != nil {
 			return nil, fmt.Errorf("read signing payload from stdin: %w", err)
 		}
-		if len(payload) == 0 {
-			return nil, errors.New("approval signing payload is required on stdin")
-		}
 		return payload, nil
 	}
-	payload, err := os.ReadFile(path)
+	file, err := os.Open(path)
 	if err != nil {
 		return nil, fmt.Errorf("read signing payload file: %w", err)
 	}
+	defer file.Close()
+	payload, err := readBoundedPayload(file, "approval signing payload file is empty")
+	if err != nil {
+		return nil, fmt.Errorf("read signing payload file: %w", err)
+	}
+	return payload, nil
+}
+
+func readBoundedPayload(reader io.Reader, emptyMessage string) ([]byte, error) {
+	payload, err := io.ReadAll(io.LimitReader(reader, maxSigningPayloadInputBytes+1))
+	if err != nil {
+		return nil, err
+	}
+	if len(payload) > maxSigningPayloadInputBytes {
+		return nil, errors.New(oversizedSigningPayloadError)
+	}
 	if len(payload) == 0 {
-		return nil, errors.New("approval signing payload file is empty")
+		return nil, errors.New(emptyMessage)
 	}
 	return payload, nil
 }

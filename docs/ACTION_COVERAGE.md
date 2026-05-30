@@ -103,6 +103,22 @@ level 5: workflow skill guidance
   `execution_route` summarizes those fields into a single route enum. The
   current audit verifies every registered OWA raw action has a route.
 
+## Base action coverage smoke
+
+The base action coverage smoke runs in hosted CI and in `scripts/ci-local.sh`
+through `scripts/action-coverage-smoke.sh`. Base mode requires no live Outlook
+credentials: it verifies the built-in policy matrix, every registered action's
+safety route, and the invariants that keep unsafe execution behind dry-run and
+confirmation gates.
+
+Opt-in live checks are still separate. `OUTLOOK_AGENT_LIVE_CONFIG` adds a live
+auth check, and `OUTLOOK_AGENT_OPENCODE_LIVE_DIR` plus
+`OUTLOOK_AGENT_OPENCODE_MODEL` adds an Opencode MCP smoke. That MCP smoke is
+intentionally narrow: it may call auth, capabilities, and
+`outlook.action_dry_run` only. It must not call `outlook.action_confirm`, raw
+execution, send, delete, move, body-read, attachment-content, or any other
+write-like execution tool.
+
 ## OWA Transport Status
 
 The raw OWA registry currently classifies 55 service actions. See

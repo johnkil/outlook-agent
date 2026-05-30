@@ -4,6 +4,10 @@ This file is a template for a release operator to copy into release notes,
 issue evidence, or an internal release record. It is not actual evidence until
 all placeholders are filled for a specific tag.
 
+Do not mark a gate as passed from local static review. A passed gate needs a
+fresh command result, hosted CI run, tag workflow run, or explicit skipped
+reason for that exact release candidate.
+
 ## Template
 
 Version:
@@ -16,7 +20,7 @@ Date:
 
 Go version:
 
-Required gates:
+### Automated CI gates
 
 - gofmt:
 - go mod tidy diff:
@@ -27,27 +31,35 @@ Required gates:
 - govulncheck:
 - public safety check:
 - action coverage smoke:
+
+### Tag workflow gates
+
 - release build:
 - release verify:
 - checksum verification:
 - dependency manifest:
+
+### Operator-only evidence
+
+- CI run URL:
+- Release URL:
 - macOS keychain integration:
 - live Graph read-only smoke:
+- published install path smoke:
 
-Artifacts:
+### Artifacts
 
-- Release URL:
 - SHA256SUMS.txt:
 - SHA256SUMS.txt.asc:
 - Dependency manifest:
 - Formal SBOM, if required by the release channel:
 
-Known limitations:
+### Known limitations
 
 ## Actual Evidence
 
 Actual evidence belongs in the operator's release record for a specific tag.
-Do not commit private live-smoke transcripts, tenant URLs, mailbox identifiers,
+Never paste tenant URLs, mailbox identifiers, private live-smoke transcripts,
 tokens, cookies, canary values, message bodies, attachment contents, or local
 profile files here. Public release evidence should use pass/fail/skipped status,
 public-safe run links, artifact names, checksums, and limitations.
