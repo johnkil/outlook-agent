@@ -68,9 +68,9 @@ There is **no direct high-level "send"**: the normal tool path is
 still represent send-like actions, but only behind raw/unsafe policy plus
 dry-run, confirmation, and approval gates. Under the hood: mail search returns
 metadata via a strict field allow-list (never bodies), raw outputs are
-size-bounded and redacted, transports refuse unsafe redirects, and every
-dry-run / confirm / execute / reject can be audited. The agent does the busywork;
-**you keep the keys.** 🔑
+size-bounded and redacted, EWS/OWA credential and session redirects are blocked,
+and every dry-run / confirm / execute / reject can be audited. The agent does
+the busywork; **you keep the keys.** 🔑
 
 ---
 

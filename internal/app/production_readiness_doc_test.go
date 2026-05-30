@@ -249,6 +249,26 @@ func TestReadmeDocumentsGraphWriteCapableScopes(t *testing.T) {
 	}
 }
 
+func TestReadmeQualifiesRedirectGuardCoverage(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join("..", "..", "README.md"))
+	if err != nil {
+		t.Fatalf("read README.md: %v", err)
+	}
+	text := string(data)
+
+	if strings.Contains(text, "transports refuse unsafe redirects") {
+		t.Fatalf("README.md must not claim every transport refuses unsafe redirects")
+	}
+	for _, marker := range []string{
+		"EWS/OWA",
+		"credential and session redirects are blocked",
+	} {
+		if !strings.Contains(text, marker) {
+			t.Fatalf("expected README.md to contain %q", marker)
+		}
+	}
+}
+
 func TestDocsTrackGraphLiveSmokeHarness(t *testing.T) {
 	documents := map[string][]string{
 		filepath.Join("..", "..", "docs", "ENTERPRISE_ENABLEMENT.md"): {
