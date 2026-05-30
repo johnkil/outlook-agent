@@ -13,6 +13,23 @@ import (
 	"github.com/johnkil/outlook-agent/internal/transport"
 )
 
+func TestDefaultHTTPClientDisablesHTTP2ForOWA(t *testing.T) {
+	client := defaultHTTPClient()
+	transport, ok := client.Transport.(*http.Transport)
+	if !ok {
+		t.Fatalf("expected *http.Transport, got %T", client.Transport)
+	}
+	if transport.ForceAttemptHTTP2 {
+		t.Fatal("OWA client must not force HTTP/2")
+	}
+	if transport.TLSNextProto == nil {
+		t.Fatal("OWA client must set a non-nil empty TLSNextProto map to disable automatic HTTP/2")
+	}
+	if len(transport.TLSNextProto) != 0 {
+		t.Fatalf("expected no alternate protocols for OWA transport, got %#v", transport.TLSNextProto)
+	}
+}
+
 func TestTransportRefreshesCachedSessionAfterTTL(t *testing.T) {
 	now := time.Date(2026, 5, 29, 12, 0, 0, 0, time.UTC)
 	var loginCount atomic.Int32

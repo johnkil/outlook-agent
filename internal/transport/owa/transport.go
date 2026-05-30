@@ -2,6 +2,7 @@ package owa
 
 import (
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -51,6 +52,7 @@ func defaultHTTPClient() *http.Client {
 	}
 	cloned := httpTransport.Clone()
 	cloned.ForceAttemptHTTP2 = false
+	cloned.TLSNextProto = map[string]func(string, *tls.Conn) http.RoundTripper{}
 	cloned.DisableKeepAlives = true
 	return &http.Client{Transport: cloned, Timeout: transport.DefaultHTTPTimeout}
 }

@@ -100,6 +100,7 @@ import "C"
 import (
 	"context"
 	"fmt"
+	"os/exec"
 	"unsafe"
 )
 
@@ -118,6 +119,10 @@ var securityAddGenericPassword = func(ctx context.Context, service string, accou
 }
 
 var securityFindGenericPassword = func(ctx context.Context, service string, account string) ([]byte, error) {
+	return securityFindGenericPasswordWithFallback(ctx, service, account)
+}
+
+var securityFrameworkFindGenericPassword = func(ctx context.Context, service string, account string) ([]byte, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -129,6 +134,23 @@ var securityFindGenericPassword = func(ctx context.Context, service string, acco
 		return nil, fmt.Errorf("security framework returned status %d", status)
 	}
 	return value, nil
+}
+
+var securityCommandFindGenericPassword = func(ctx context.Context, service string, account string) ([]byte, error) {
+	command := exec.CommandContext(ctx, "/usr/bin/security", "find-generic-password", "-w", "-s", service, "-a", account)
+	return command.Output()
+}
+
+func securityFindGenericPasswordWithFallback(ctx context.Context, service string, account string) ([]byte, error) {
+	value, err := securityCommandFindGenericPassword(ctx, service, account)
+	if err == nil {
+		return value, nil
+	}
+	fallbackValue, fallbackErr := securityFrameworkFindGenericPassword(ctx, service, account)
+	if fallbackErr == nil {
+		return fallbackValue, nil
+	}
+	return nil, err
 }
 
 func upsertGenericPassword(service string, account string, password []byte) int {
