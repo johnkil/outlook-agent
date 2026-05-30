@@ -884,6 +884,9 @@ func TestTransportDryRunEWSRequestRequiresConfirmation(t *testing.T) {
 	if summary.Review.Transport != "ews" || summary.Review.SafetyClass != string(policy.Destructive) {
 		t.Fatalf("unexpected EWS review metadata: %#v", summary.Review)
 	}
+	if summary.Review.Completeness != "minimal" || !stringSliceContains(summary.Review.WarningCodes, "raw_semantics_not_fully_understood") {
+		t.Fatalf("expected minimal raw EWS review warning, got %#v", summary.Review)
+	}
 	if summary.Review.Raw.SOAPAction != "http://schemas.microsoft.com/exchange/services/2006/messages/DeleteItem" || summary.Review.Raw.Operation != "DeleteItem" {
 		t.Fatalf("unexpected EWS raw review: %#v", summary.Review.Raw)
 	}
@@ -1119,4 +1122,13 @@ func successfulGetUserAvailabilityResponse() string {
     </m:GetUserAvailabilityResponse>
   </soap:Body>
 </soap:Envelope>`
+}
+
+func stringSliceContains(values []string, expected string) bool {
+	for _, value := range values {
+		if value == expected {
+			return true
+		}
+	}
+	return false
 }

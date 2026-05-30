@@ -194,6 +194,8 @@ func ewsRawRequestReview(actionName string, payload map[string]any) transport.Re
 		Transport:          "ews",
 		Action:             actionName,
 		SafetyClass:        string(policy.Destructive),
+		Completeness:       transport.ReviewCompletenessMinimal,
+		WarningCodes:       []string{transport.ReviewWarningRawSemanticsNotFullyUnderstood},
 		Raw:                raw,
 		PayloadFingerprint: transport.PayloadFingerprint(payload),
 		Limitations:        limitations,

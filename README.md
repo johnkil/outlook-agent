@@ -184,6 +184,11 @@ high-risk work. Dry-run responses also include an `approval` object that says
 whether approval is required for that exact action and whether a challenge was
 issued.
 
+Review packets carry `completeness` and warning metadata. Typed Graph reviews
+include bounded context such as draft attachment names/sizes, rule old → new
+state, and calendar organizer/attendee/location metadata; raw Graph/EWS/OWA
+reviews are explicitly marked minimal when their semantics are not fully known.
+
 `OUTLOOK_AGENT_APPROVAL_TOKEN` remains as a legacy static token for optional
 mode compatibility. It is not considered production-grade because it is not
 bound to the dry-run payload or review.

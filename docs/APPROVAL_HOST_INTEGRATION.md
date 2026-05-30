@@ -42,7 +42,9 @@ action and reports whether a challenge was issued.
    payload.
 2. Outlook Agent returns `review`, `confirmation_token`, and, when approval is
    required, `approval_challenge`.
-3. The host shows the `review` packet to a human.
+3. The host shows the `review` packet to a human, including completeness,
+   warning codes, limitations, omitted target counts, and any action-specific
+   metadata such as attachments, rule old/new state, or calendar context.
 4. If the human approves, the host signs
    `approval_challenge.signing_payload`.
 5. The agent calls `outlook.action_confirm` with the original payload,

@@ -11,12 +11,29 @@ import (
 
 const ReviewPacketVersion = "v1"
 
+const (
+	ReviewCompletenessComplete = "complete"
+	ReviewCompletenessPartial  = "partial"
+	ReviewCompletenessMinimal  = "minimal"
+)
+
+const (
+	ReviewWarningRawSemanticsNotFullyUnderstood = "raw_semantics_not_fully_understood"
+	ReviewWarningTargetsOmitted                 = "targets_omitted_from_review"
+	ReviewWarningRichReviewUnavailable          = "rich_review_unavailable"
+)
+
+const DefaultReviewTargetLimit = 50
+
 type ReviewPacket struct {
 	Version            string            `json:"version"`
 	Transport          string            `json:"transport,omitempty"`
 	Action             string            `json:"action"`
 	SafetyClass        string            `json:"safety_class,omitempty"`
+	Completeness       string            `json:"completeness,omitempty"`
+	WarningCodes       []string          `json:"warning_codes,omitempty"`
 	Targets            []TargetRef       `json:"targets,omitempty"`
+	OmittedTargetCount int               `json:"omitted_target_count,omitempty"`
 	Mutation           *MutationReview   `json:"mutation,omitempty"`
 	Mail               *MailReview       `json:"mail,omitempty"`
 	Calendar           *CalendarReview   `json:"calendar,omitempty"`
@@ -40,21 +57,32 @@ type MutationReview struct {
 }
 
 type MailReview struct {
-	To              []string `json:"to,omitempty"`
-	CC              []string `json:"cc,omitempty"`
-	BCC             []string `json:"bcc,omitempty"`
-	Subject         string   `json:"subject,omitempty"`
-	BodyPreview     string   `json:"body_preview,omitempty"`
-	BodySHA256      string   `json:"body_sha256,omitempty"`
-	AttachmentNames []string `json:"attachment_names,omitempty"`
+	To              []string           `json:"to,omitempty"`
+	CC              []string           `json:"cc,omitempty"`
+	BCC             []string           `json:"bcc,omitempty"`
+	Subject         string             `json:"subject,omitempty"`
+	BodyPreview     string             `json:"body_preview,omitempty"`
+	BodySHA256      string             `json:"body_sha256,omitempty"`
+	AttachmentNames []string           `json:"attachment_names,omitempty"`
+	Attachments     []AttachmentReview `json:"attachments,omitempty"`
+}
+
+type AttachmentReview struct {
+	Name        string `json:"name,omitempty"`
+	SizeBytes   int64  `json:"size_bytes,omitempty"`
+	ContentType string `json:"content_type,omitempty"`
 }
 
 type CalendarReview struct {
 	EventID       string   `json:"event_id,omitempty"`
 	Response      string   `json:"response,omitempty"`
+	Subject       string   `json:"subject,omitempty"`
 	Start         string   `json:"start,omitempty"`
 	End           string   `json:"end,omitempty"`
+	Location      string   `json:"location,omitempty"`
+	Organizer     string   `json:"organizer,omitempty"`
 	Attendees     []string `json:"attendees,omitempty"`
+	CurrentStatus string   `json:"current_status,omitempty"`
 	SendsResponse bool     `json:"sends_response"`
 }
 
@@ -79,6 +107,14 @@ func ReviewFingerprint(review ReviewPacket) string {
 func BodySHA256(text string) string {
 	sum := sha256.Sum256([]byte(text))
 	return hex.EncodeToString(sum[:])
+}
+
+func ClampTargetRefs(targets []TargetRef, max int) ([]TargetRef, int) {
+	if max <= 0 || len(targets) <= max {
+		return targets, 0
+	}
+	clamped := append([]TargetRef(nil), targets[:max]...)
+	return clamped, len(targets) - max
 }
 
 func TruncatedPreview(text string, maxRunes int) string {

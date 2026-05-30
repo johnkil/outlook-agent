@@ -940,19 +940,39 @@ func TestTransportRejectsMailCreateForwardDraftWithoutRecipients(t *testing.T) {
 
 func TestTransportDryRunMailSendDraftBuildsReview(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
-		if request.Method != http.MethodGet || request.URL.Path != "/v1.0/me/messages/draft-1" {
+		if request.Method != http.MethodGet {
 			t.Fatalf("unexpected request: %s %s", request.Method, request.URL.String())
 		}
 		response.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(response).Encode(map[string]any{
-			"id":             "draft-1",
-			"subject":        "Draft subject",
-			"hasAttachments": true,
-			"body":           map[string]any{"contentType": "Text", "content": "Draft body with access_token=secret"},
-			"toRecipients": []any{
-				map[string]any{"emailAddress": map[string]any{"name": "Alex", "address": "alex@example.com"}},
-			},
-		})
+		switch request.URL.Path {
+		case "/v1.0/me/messages/draft-1":
+			_ = json.NewEncoder(response).Encode(map[string]any{
+				"id":             "draft-1",
+				"subject":        "Draft subject",
+				"hasAttachments": true,
+				"body":           map[string]any{"contentType": "Text", "content": "Draft body with access_token=secret"},
+				"toRecipients": []any{
+					map[string]any{"emailAddress": map[string]any{"name": "Alex", "address": "alex@example.com"}},
+				},
+			})
+		case "/v1.0/me/messages/draft-1/attachments":
+			if got := request.URL.Query().Get("$select"); got != "id,name,contentType,size,isInline" {
+				t.Fatalf("expected bounded attachment select, got %q", got)
+			}
+			_ = json.NewEncoder(response).Encode(map[string]any{
+				"value": []any{
+					map[string]any{
+						"id":           "att-1",
+						"name":         "invoice.pdf",
+						"contentType":  "application/pdf",
+						"size":         12345,
+						"contentBytes": "must-not-appear",
+					},
+				},
+			})
+		default:
+			t.Fatalf("unexpected request: %s %s", request.Method, request.URL.String())
+		}
 	}))
 	defer server.Close()
 
@@ -980,6 +1000,56 @@ func TestTransportDryRunMailSendDraftBuildsReview(t *testing.T) {
 	}
 	if strings.Contains(summary.Review.Mail.BodyPreview, "secret") || summary.Review.Mail.BodySHA256 == "" {
 		t.Fatalf("expected redacted body preview and hash, got %#v", summary.Review.Mail)
+	}
+	if summary.Review.Completeness != "complete" || len(summary.Review.Limitations) != 0 {
+		t.Fatalf("expected complete send draft review without limitations, got %#v", summary.Review)
+	}
+	if len(summary.Review.Mail.Attachments) != 1 {
+		t.Fatalf("expected attachment metadata in review, got %#v", summary.Review.Mail)
+	}
+	attachment := summary.Review.Mail.Attachments[0]
+	if attachment.Name != "invoice.pdf" || attachment.SizeBytes != 12345 || attachment.ContentType != "application/pdf" {
+		t.Fatalf("unexpected attachment review metadata: %#v", attachment)
+	}
+	if strings.Contains(fmt.Sprint(summary.Review), "must-not-appear") {
+		t.Fatalf("review leaked attachment content bytes: %#v", summary.Review)
+	}
+}
+
+func TestTransportDryRunMailSendDraftFailsWhenAttachmentMetadataUnavailable(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		response.Header().Set("Content-Type", "application/json")
+		switch request.URL.Path {
+		case "/v1.0/me/messages/draft-1":
+			_ = json.NewEncoder(response).Encode(map[string]any{
+				"id":             "draft-1",
+				"subject":        "Draft subject",
+				"hasAttachments": true,
+			})
+		case "/v1.0/me/messages/draft-1/attachments":
+			response.WriteHeader(http.StatusServiceUnavailable)
+			_ = json.NewEncoder(response).Encode(map[string]any{"error": map[string]any{"code": "ServiceUnavailable"}})
+		default:
+			t.Fatalf("unexpected request: %s %s", request.Method, request.URL.String())
+		}
+	}))
+	defer server.Close()
+
+	client := graph.NewTransport(graph.Config{
+		BaseURL:   server.URL + "/v1.0",
+		SecretRef: secret.Ref("memory:graph"),
+	}, secret.NewMemoryStore(map[string]string{"memory:graph": "token-secret"}), server.Client())
+
+	summary := client.DryRun(context.Background(), transport.ActionRequest{
+		Name:    "mail.send_draft",
+		Payload: map[string]any{"draft_id": "draft-1"},
+	})
+
+	if summary.Error == "" || !strings.Contains(summary.Error, "attachment metadata") {
+		t.Fatalf("expected fail-closed attachment metadata error, got %#v", summary)
+	}
+	if summary.Review == nil || summary.Review.Completeness != "partial" {
+		t.Fatalf("expected partial review evidence with attachment failure, got %#v", summary.Review)
 	}
 }
 
@@ -1018,6 +1088,10 @@ func TestTransportDryRunCalendarRespondBuildsReview(t *testing.T) {
 		if request.Method != http.MethodGet || request.URL.Path != "/v1.0/me/events/event-1" {
 			t.Fatalf("unexpected request: %s %s", request.Method, request.URL.String())
 		}
+		selected := request.URL.Query().Get("$select")
+		if selected == "" || strings.Contains(selected, "body") || strings.Contains(selected, "bodyPreview") {
+			t.Fatalf("expected metadata-only event select, got %q", selected)
+		}
 		response.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(response).Encode(graphEventResponse("event-1", "Planning", "2026-05-28T09:00:00", "2026-05-28T09:30:00", "Room 1"))
 	}))
@@ -1050,8 +1124,23 @@ func TestTransportDryRunCalendarRespondBuildsReview(t *testing.T) {
 	if summary.Review.Calendar.EventID != "event-1" || summary.Review.Calendar.Response != "accept" || !summary.Review.Calendar.SendsResponse {
 		t.Fatalf("unexpected calendar review: %#v", summary.Review.Calendar)
 	}
+	if summary.Review.Calendar.Subject != "Planning" || summary.Review.Calendar.Location != "Room 1" {
+		t.Fatalf("expected event subject and location in review: %#v", summary.Review.Calendar)
+	}
+	if summary.Review.Calendar.Organizer != "Priya <priya@example.com>" {
+		t.Fatalf("expected organizer in review: %#v", summary.Review.Calendar)
+	}
+	if strings.Join(summary.Review.Calendar.Attendees, ",") != "Alex <alex@example.com>,Dana <dana@example.com>" {
+		t.Fatalf("expected bounded attendee metadata in review: %#v", summary.Review.Calendar.Attendees)
+	}
+	if summary.Review.Calendar.CurrentStatus != "tentativelyAccepted" {
+		t.Fatalf("expected current response status in review: %#v", summary.Review.Calendar)
+	}
 	if len(summary.Review.Targets) != 1 || summary.Review.Targets[0].Name != "Planning" {
 		t.Fatalf("expected event target in review: %#v", summary.Review.Targets)
+	}
+	if summary.Review.Completeness != "complete" {
+		t.Fatalf("expected complete calendar response review: %#v", summary.Review)
 	}
 	if strings.Contains(fmt.Sprint(summary.Review.Mutation.NewState), "secret") {
 		t.Fatalf("expected comment preview to be redacted: %#v", summary.Review.Mutation.NewState)
@@ -1284,6 +1373,32 @@ func TestTransportDryRunMailReversibleBulkReview(t *testing.T) {
 	}
 	if summary.Review.SafetyClass != string(policy.ReversibleBulk) || summary.Review.Mutation.NewState == nil {
 		t.Fatalf("unexpected reversible bulk review: %#v", summary.Review)
+	}
+}
+
+func TestTransportDryRunMailReversibleBulkReviewClampsLargeTargetList(t *testing.T) {
+	client := graph.NewTransport(graph.Config{
+		BaseURL:   "https://graph.example.test/v1.0",
+		SecretRef: secret.Ref("memory:graph"),
+	}, secret.NewMemoryStore(map[string]string{"memory:graph": "token-secret"}), nil)
+	ids := make([]string, 0, 55)
+	for index := 0; index < 55; index++ {
+		ids = append(ids, fmt.Sprintf("message-%02d", index+1))
+	}
+
+	summary := client.DryRun(context.Background(), transport.ActionRequest{
+		Name:    "mail.mark_read",
+		Payload: map[string]any{"ids": ids, "is_read": true},
+	})
+
+	if summary.Review == nil {
+		t.Fatalf("expected reversible bulk review: %#v", summary)
+	}
+	if len(summary.Review.Targets) != 50 || summary.Review.OmittedTargetCount != 5 {
+		t.Fatalf("expected clamped target list with omitted count, got targets=%d omitted=%d", len(summary.Review.Targets), summary.Review.OmittedTargetCount)
+	}
+	if summary.Count != 55 {
+		t.Fatalf("summary must preserve total count, got %#v", summary)
 	}
 }
 
@@ -1596,6 +1711,9 @@ func TestTransportDryRunGraphRequestRequiresConfirmation(t *testing.T) {
 	if summary.Review.SafetyClass != string(policy.Destructive) {
 		t.Fatalf("expected destructive GraphRequest review: %#v", summary.Review)
 	}
+	if summary.Review.Completeness != "minimal" || !stringSliceContains(summary.Review.WarningCodes, "raw_semantics_not_fully_understood") {
+		t.Fatalf("expected minimal raw review warning, got %#v", summary.Review)
+	}
 	if summary.Review.Raw.Method != "DELETE" || summary.Review.Raw.Path != "/me/messages/message-1" {
 		t.Fatalf("unexpected raw GraphRequest review: %#v", summary.Review.Raw)
 	}
@@ -1644,10 +1762,19 @@ func TestTransportDryRunGraphRequestReviewRedactsBody(t *testing.T) {
 }
 
 func TestTransportDryRunMailRulesSetEnabledRequiresConfirmation(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		if request.Method != http.MethodGet || request.URL.Path != "/v1.0/me/mailFolders/inbox/messageRules/rule-1" {
+			t.Fatalf("unexpected request: %s %s", request.Method, request.URL.String())
+		}
+		response.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(response).Encode(graphRuleResponse("rule-1", "Quiet newsletters", true))
+	}))
+	defer server.Close()
+
 	client := graph.NewTransport(graph.Config{
-		BaseURL:   "https://graph.example.test/v1.0",
+		BaseURL:   server.URL + "/v1.0",
 		SecretRef: secret.Ref("memory:graph"),
-	}, secret.NewMemoryStore(map[string]string{"memory:graph": "token-secret"}), nil)
+	}, secret.NewMemoryStore(map[string]string{"memory:graph": "token-secret"}), server.Client())
 
 	summary := client.DryRun(context.Background(), transport.ActionRequest{
 		Name: "mail.rules.set_enabled",
@@ -1666,15 +1793,22 @@ func TestTransportDryRunMailRulesSetEnabledRequiresConfirmation(t *testing.T) {
 	if len(summary.Review.Targets) != 1 || summary.Review.Targets[0].Kind != "message_rule" || summary.Review.Targets[0].ID != "rule-1" {
 		t.Fatalf("expected exact rule target in review: %#v", summary.Review.Targets)
 	}
+	if summary.Review.Targets[0].Name != "Quiet newsletters" {
+		t.Fatalf("expected rule display name in review target: %#v", summary.Review.Targets)
+	}
 	if summary.Review.Mutation == nil || summary.Review.Mutation.Operation != "set_enabled" {
 		t.Fatalf("expected set_enabled mutation review: %#v", summary.Review.Mutation)
+	}
+	oldState, _ := summary.Review.Mutation.OldState.(map[string]any)
+	if oldState["enabled"] != true {
+		t.Fatalf("expected enabled=true old state, got %#v", summary.Review.Mutation.OldState)
 	}
 	newState, _ := summary.Review.Mutation.NewState.(map[string]any)
 	if newState["enabled"] != false {
 		t.Fatalf("expected enabled=false new state, got %#v", summary.Review.Mutation.NewState)
 	}
-	if len(summary.Review.Limitations) == 0 || !strings.Contains(summary.Review.Limitations[0], "old rule state") {
-		t.Fatalf("expected old-state limitation, got %#v", summary.Review.Limitations)
+	if summary.Review.Completeness != "complete" || len(summary.Review.Limitations) != 0 {
+		t.Fatalf("expected complete rule review without old-state limitation, got %#v", summary.Review)
 	}
 }
 
@@ -2115,7 +2249,26 @@ func graphEventResponse(id string, subject string, start string, end string, loc
 		"location": map[string]any{
 			"displayName": location,
 		},
+		"organizer": map[string]any{
+			"emailAddress": map[string]any{"name": "Priya", "address": "priya@example.com"},
+		},
+		"attendees": []any{
+			map[string]any{"emailAddress": map[string]any{"name": "Alex", "address": "alex@example.com"}},
+			map[string]any{"emailAddress": map[string]any{"name": "Dana", "address": "dana@example.com"}},
+		},
+		"responseStatus": map[string]any{
+			"response": "tentativelyAccepted",
+		},
 	}
+}
+
+func stringSliceContains(values []string, expected string) bool {
+	for _, value := range values {
+		if value == expected {
+			return true
+		}
+	}
+	return false
 }
 
 func graphScheduleItemResponse(status string, start string, end string, subject string) map[string]any {

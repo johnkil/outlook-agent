@@ -217,7 +217,9 @@ flow is:
 
 1. Read `outlook.capabilities.details`.
 2. If direct execution is not allowed, call `outlook.action_dry_run`.
-3. Show or reason over the dry-run review packet.
+3. Show or reason over the dry-run review packet, including `completeness`,
+   `warning_codes`, limitations, omitted target counts, attachment metadata,
+   rule old/new state, and calendar context when present.
 4. If `approval.host_integration_required=true`, make sure the surrounding
    OpenCode host has an approval integration before attempting high-risk live
    confirmation.
