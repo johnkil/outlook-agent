@@ -565,10 +565,14 @@ func countValue(value any) int {
 
 func isReversible(request transport.ActionRequest) bool {
 	class := dryRunCapabilityClass(request.Name)
-	if class == policy.Destructive {
+	switch class {
+	case policy.Destructive:
 		return isMoveToDeletedItemsDelete(request)
+	case policy.SendLike, policy.Unknown:
+		return false
+	default:
+		return true
 	}
-	return true
 }
 
 func isMoveToDeletedItemsDelete(request transport.ActionRequest) bool {

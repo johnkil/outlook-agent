@@ -413,6 +413,9 @@ func TestTransportDryRunCreateItemReviewExtractsMailFields(t *testing.T) {
 	if summary.Review == nil || summary.Review.Mail == nil {
 		t.Fatalf("expected CreateItem mail review, got %#v", summary.Review)
 	}
+	if summary.Reversible {
+		t.Fatalf("expected raw CreateItem send-like dry-run to be irreversible, got %#v", summary)
+	}
 	if summary.Review.SafetyClass != string(policy.SendLike) || summary.Review.Mail.Subject != "Hello" {
 		t.Fatalf("unexpected CreateItem review: %#v", summary.Review)
 	}
@@ -424,6 +427,28 @@ func TestTransportDryRunCreateItemReviewExtractsMailFields(t *testing.T) {
 	}
 	if strings.Contains(summary.Review.Mail.BodyPreview, "secret") {
 		t.Fatalf("expected body preview redaction, got %q", summary.Review.Mail.BodyPreview)
+	}
+}
+
+func TestTransportDryRunUnknownRawActionIsIrreversible(t *testing.T) {
+	client := owa.NewTransport(owa.Config{
+		BaseURL:   "https://example.test",
+		Username:  "DOMAIN\\user",
+		SecretRef: secret.Ref("memory:owa"),
+	}, secret.NewMemoryStore(map[string]string{"memory:owa": "password"}), nil)
+
+	summary := client.DryRun(context.Background(), transport.ActionRequest{
+		Name: "SearchMailboxes",
+		Payload: map[string]any{"Body": map[string]any{
+			"Mailbox": "person@example.test",
+		}},
+	})
+
+	if summary.Reversible {
+		t.Fatalf("expected unknown raw action dry-run to be irreversible, got %#v", summary)
+	}
+	if summary.SafetyClass != string(policy.Unknown) {
+		t.Fatalf("expected unknown safety class, got %#v", summary)
 	}
 }
 
