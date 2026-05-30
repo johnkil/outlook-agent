@@ -30,6 +30,7 @@ checksum() {
 archive_count=0
 non_archive_count=0
 first_non_archive=""
+verified_archives=""
 while IFS= read -r line || [[ -n "$line" ]]; do
   [[ -z "$line" ]] && continue
   read -r expected archive_name extra <<<"$line"
@@ -56,6 +57,7 @@ while IFS= read -r line || [[ -n "$line" ]]; do
   case "$archive_name" in
     *.tar.gz|*.zip)
       archive_count=$((archive_count + 1))
+      verified_archives="${verified_archives}${archive_name}"$'\n'
       ;;
     *)
       non_archive_count=$((non_archive_count + 1))
@@ -77,7 +79,7 @@ fi
 
 while IFS= read -r archive; do
   archive_name="$(basename "$archive")"
-  if ! grep -Fq "  ${archive_name}" "$checksum_file"; then
+  if ! grep -Fxq "$archive_name" <<< "$verified_archives"; then
     echo "archive ${archive_name} is missing from SHA256SUMS.txt" >&2
     exit 1
   fi
