@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"testing"
 
@@ -126,7 +125,7 @@ func TestDoctorReportsReadinessContract(t *testing.T) {
 	if payload.Profile != "work" {
 		t.Fatalf("expected selected profile work, got %q", payload.Profile)
 	}
-	if payload.SecretStore.Kind != "keychain" || payload.SecretStore.Available != (runtime.GOOS == "darwin") {
+	if payload.SecretStore.Kind != "none" || !payload.SecretStore.Available {
 		t.Fatalf("unexpected secret-store readiness: %#v", payload.SecretStore)
 	}
 	for _, expected := range []string{"fake", "graph", "ews", "owa"} {
@@ -141,6 +140,9 @@ func TestDoctorReportsReadinessContract(t *testing.T) {
 
 func TestDoctorReportsFileSecretStoreReadiness(t *testing.T) {
 	secretPath := filepath.Join(t.TempDir(), "secret")
+	if err := os.WriteFile(secretPath, []byte("redacted-token\n"), 0o600); err != nil {
+		t.Fatalf("write secret: %v", err)
+	}
 	configPath := filepath.Join(t.TempDir(), "outlook-agent.json")
 	if err := os.WriteFile(configPath, []byte(fmt.Sprintf(`{
 		"default_profile": "work",
@@ -167,15 +169,21 @@ func TestDoctorReportsFileSecretStoreReadiness(t *testing.T) {
 	}
 	var payload struct {
 		SecretStore struct {
-			Kind      string `json:"kind"`
-			Available bool   `json:"available"`
+			Kind          string `json:"kind"`
+			Available     bool   `json:"available"`
+			RefConfigured bool   `json:"ref_configured"`
+			Readable      bool   `json:"readable"`
+			Writable      bool   `json:"writable"`
 		} `json:"secret_store"`
 	}
 	if err := json.Unmarshal(stdout.Bytes(), &payload); err != nil {
 		t.Fatalf("doctor output is not JSON: %v; output=%s", err, stdout.String())
 	}
-	if payload.SecretStore.Kind != "file" || !payload.SecretStore.Available {
+	if payload.SecretStore.Kind != "file" || !payload.SecretStore.Available || !payload.SecretStore.RefConfigured || !payload.SecretStore.Readable || !payload.SecretStore.Writable {
 		t.Fatalf("unexpected file secret-store readiness: %#v", payload.SecretStore)
+	}
+	if strings.Contains(stdout.String(), "redacted-token") {
+		t.Fatalf("doctor output leaked file secret value: %s", stdout.String())
 	}
 }
 

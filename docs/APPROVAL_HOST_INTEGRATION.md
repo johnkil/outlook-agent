@@ -104,6 +104,11 @@ if user_approves:
     })
 ```
 
+A minimal standalone signer example is available in
+`examples/approval-host-signer`. It reads the host secret from
+`OUTLOOK_AGENT_APPROVAL_SECRET`, reads the exact signing payload from stdin or a
+file, and prints only the approval token plus safe metadata.
+
 ## Logging Rules
 
 Safe to log:

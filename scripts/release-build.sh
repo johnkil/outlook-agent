@@ -93,10 +93,12 @@ for target in "${targets[@]}"; do
   rm -rf "$package_dir"
 done
 
+bash scripts/release-sbom.sh "$version" "$dist_dir"
+
 : > "$checksum_file"
 while IFS= read -r archive; do
   printf "%s  %s\n" "$(checksum "$archive")" "$(basename "$archive")" >> "$checksum_file"
-done < <(find "$dist_dir" -maxdepth 1 -type f \( -name "*.tar.gz" -o -name "*.zip" \) | sort)
+done < <(find "$dist_dir" -maxdepth 1 -type f \( -name "*.tar.gz" -o -name "*.zip" -o -name "*_dependency-manifest.json" \) | sort)
 
 if [[ -n "${OUTLOOK_AGENT_SIGN_RELEASE:-}" ]]; then
   if ! command -v gpg >/dev/null 2>&1; then

@@ -31,6 +31,8 @@ archive_count=0
 non_archive_count=0
 first_non_archive=""
 verified_archives=""
+dependency_manifest_count=0
+verified_dependency_manifests=""
 while IFS= read -r line || [[ -n "$line" ]]; do
   [[ -z "$line" ]] && continue
   read -r expected archive_name extra <<<"$line"
@@ -59,6 +61,10 @@ while IFS= read -r line || [[ -n "$line" ]]; do
       archive_count=$((archive_count + 1))
       verified_archives="${verified_archives}${archive_name}"$'\n'
       ;;
+    *_dependency-manifest.json)
+      dependency_manifest_count=$((dependency_manifest_count + 1))
+      verified_dependency_manifests="${verified_dependency_manifests}${archive_name}"$'\n'
+      ;;
     *)
       non_archive_count=$((non_archive_count + 1))
       if [[ -z "$first_non_archive" ]]; then
@@ -85,6 +91,27 @@ while IFS= read -r archive; do
   fi
 done < <(find "$dist_dir" -maxdepth 1 -type f \( -name "*.tar.gz" -o -name "*.zip" \) | sort)
 
+actual_dependency_manifest_count="$(
+  find "$dist_dir" -maxdepth 1 -type f -name "*_dependency-manifest.json" \
+    | wc -l \
+    | tr -d " "
+)"
+if [[ "$actual_dependency_manifest_count" -ne 1 ]]; then
+  echo "expected exactly one dependency manifest in ${dist_dir}, got ${actual_dependency_manifest_count}" >&2
+  exit 1
+fi
+if [[ "$dependency_manifest_count" -ne "$actual_dependency_manifest_count" ]]; then
+  echo "dependency manifest is missing from SHA256SUMS.txt" >&2
+  exit 1
+fi
+while IFS= read -r manifest; do
+  manifest_name="$(basename "$manifest")"
+  if ! grep -Fxq "$manifest_name" <<< "$verified_dependency_manifests"; then
+    echo "dependency manifest ${manifest_name} is missing from SHA256SUMS.txt" >&2
+    exit 1
+  fi
+done < <(find "$dist_dir" -maxdepth 1 -type f -name "*_dependency-manifest.json" | sort)
+
 signature_status="absent"
 if [[ -f "$signature_file" ]]; then
   if command -v gpg >/dev/null 2>&1; then
@@ -95,4 +122,4 @@ if [[ -f "$signature_file" ]]; then
   fi
 fi
 
-echo "release verify passed: ${archive_count} archives in ${dist_dir}; signature=${signature_status}"
+echo "release verify passed: ${archive_count} archives in ${dist_dir}; dependency_manifest=verified; signature=${signature_status}"

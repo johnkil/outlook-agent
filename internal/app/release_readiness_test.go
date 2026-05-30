@@ -43,6 +43,7 @@ func TestReleaseReadinessArtifactsExist(t *testing.T) {
 			"OUTLOOK_AGENT_DIST_DIR",
 			"scripts/release-build.sh",
 			"SHA256SUMS.txt",
+			"dependency-manifest",
 			"expected_archives=6",
 			"GOHOSTOS",
 			"GOHOSTARCH",
@@ -54,6 +55,7 @@ func TestReleaseReadinessArtifactsExist(t *testing.T) {
 			"SHA256SUMS.txt",
 			"release verify passed",
 			"checksum mismatch",
+			"dependency manifest",
 			"OUTLOOK_AGENT_DIST_DIR",
 			"SHA256SUMS.txt.asc",
 			"gpg --verify",
@@ -62,6 +64,7 @@ func TestReleaseReadinessArtifactsExist(t *testing.T) {
 			"GOOS",
 			"GOARCH",
 			"invalid release version",
+			"scripts/release-sbom.sh",
 			"buildinfo_pkg",
 			".Version=",
 			".Commit=",
@@ -70,6 +73,12 @@ func TestReleaseReadinessArtifactsExist(t *testing.T) {
 			".BuiltBy=",
 			"SHA256SUMS.txt",
 			"OUTLOOK_AGENT_SIGN_RELEASE",
+		},
+		filepath.Join("..", "..", "scripts", "release-sbom.sh"): {
+			"outlook-agent-dependency-manifest-v1",
+			"go list -m",
+			"go version",
+			"dependency-manifest.json",
 		},
 		filepath.Join("..", "..", "scripts", "public-safety-check.sh"): {
 			"OUTLOOK_AGENT_PUBLIC_SAFETY_PATTERN",
@@ -101,9 +110,12 @@ func TestReleaseReadinessArtifactsExist(t *testing.T) {
 		},
 		filepath.Join("..", "..", "docs", "RELEASE_EVIDENCE.md"): {
 			"# Release Evidence",
+			"Template",
+			"Actual evidence",
 			"CI run URL",
 			"macOS keychain integration",
 			"live Graph read-only smoke",
+			"dependency manifest",
 			"Known limitations",
 		},
 	}
@@ -129,8 +141,14 @@ func TestReleaseVerifyScriptAcceptsChecksummedArchives(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(distDir, archiveName), archiveData, 0o644); err != nil {
 		t.Fatalf("write archive fixture: %v", err)
 	}
-	sum := sha256.Sum256(archiveData)
-	checksums := fmt.Sprintf("%x  %s\n", sum, archiveName)
+	manifestName := "outlook-agent_vtest_dependency-manifest.json"
+	manifestData := []byte(`{"schema":"outlook-agent-dependency-manifest-v1"}`)
+	if err := os.WriteFile(filepath.Join(distDir, manifestName), manifestData, 0o644); err != nil {
+		t.Fatalf("write dependency manifest fixture: %v", err)
+	}
+	archiveSum := sha256.Sum256(archiveData)
+	manifestSum := sha256.Sum256(manifestData)
+	checksums := fmt.Sprintf("%x  %s\n%x  %s\n", archiveSum, archiveName, manifestSum, manifestName)
 	if err := os.WriteFile(filepath.Join(distDir, "SHA256SUMS.txt"), []byte(checksums), 0o644); err != nil {
 		t.Fatalf("write checksums fixture: %v", err)
 	}
@@ -141,6 +159,65 @@ func TestReleaseVerifyScriptAcceptsChecksummedArchives(t *testing.T) {
 	}
 	if !strings.Contains(string(output), "release verify passed: 1 archives") {
 		t.Fatalf("expected successful release verify output, got:\n%s", string(output))
+	}
+	if !strings.Contains(string(output), "dependency_manifest=verified") {
+		t.Fatalf("expected dependency manifest verification output, got:\n%s", string(output))
+	}
+}
+
+func TestReleaseVerifyScriptRequiresDependencyManifest(t *testing.T) {
+	distDir := t.TempDir()
+	archiveName := "outlook-agent_vtest_darwin_arm64.tar.gz"
+	archiveData := []byte("fake archive bytes")
+	if err := os.WriteFile(filepath.Join(distDir, archiveName), archiveData, 0o644); err != nil {
+		t.Fatalf("write archive fixture: %v", err)
+	}
+	sum := sha256.Sum256(archiveData)
+	checksums := fmt.Sprintf("%x  %s\n", sum, archiveName)
+	if err := os.WriteFile(filepath.Join(distDir, "SHA256SUMS.txt"), []byte(checksums), 0o644); err != nil {
+		t.Fatalf("write checksums fixture: %v", err)
+	}
+
+	output, err := exec.Command("/bin/bash", filepath.Join("..", "..", "scripts", "release-verify.sh"), distDir).CombinedOutput()
+	if err == nil {
+		t.Fatalf("expected release verify to reject missing dependency manifest:\n%s", string(output))
+	}
+	if !strings.Contains(string(output), "dependency manifest") {
+		t.Fatalf("expected dependency manifest output, got:\n%s", string(output))
+	}
+}
+
+func TestReleaseSBOMScriptWritesDependencyManifest(t *testing.T) {
+	distDir := t.TempDir()
+
+	output, err := exec.Command("/bin/bash", filepath.Join("..", "..", "scripts", "release-sbom.sh"), "vtest", distDir).CombinedOutput()
+	if err != nil {
+		t.Fatalf("release sbom failed unexpectedly: %v\n%s", err, string(output))
+	}
+	manifestPath := filepath.Join(distDir, "outlook-agent_vtest_dependency-manifest.json")
+	data, err := os.ReadFile(manifestPath)
+	if err != nil {
+		t.Fatalf("read dependency manifest: %v", err)
+	}
+	var manifest struct {
+		Schema    string `json:"schema"`
+		Version   string `json:"version"`
+		GoVersion string `json:"go_version"`
+		Modules   []struct {
+			Path string `json:"path"`
+		} `json:"modules"`
+	}
+	if err := json.Unmarshal(data, &manifest); err != nil {
+		t.Fatalf("dependency manifest is not JSON: %v\n%s", err, string(data))
+	}
+	if manifest.Schema != "outlook-agent-dependency-manifest-v1" || manifest.Version != "vtest" || manifest.GoVersion == "" {
+		t.Fatalf("unexpected dependency manifest metadata: %#v", manifest)
+	}
+	if len(manifest.Modules) == 0 {
+		t.Fatalf("expected dependency manifest modules, got %#v", manifest)
+	}
+	if strings.Contains(string(data), "password") || strings.Contains(string(data), "access_token") {
+		t.Fatalf("dependency manifest contains forbidden secret marker:\n%s", string(data))
 	}
 }
 

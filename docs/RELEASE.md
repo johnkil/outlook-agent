@@ -30,7 +30,8 @@ version into `outlook-agent doctor` / MCP server metadata:
 - `windows/amd64`
 - `windows/arm64`
 
-Every archive is listed in `dist/SHA256SUMS.txt`.
+Every archive and the generated dependency manifest are listed in
+`dist/SHA256SUMS.txt`.
 
 Verify a completed release directory without network access:
 
@@ -40,8 +41,9 @@ scripts/release-verify.sh dist
 
 The verifier checks that every listed archive exists, every archive checksum
 matches `SHA256SUMS.txt`, no extra `.tar.gz` or `.zip` archive is missing from
-the checksum file, and `SHA256SUMS.txt.asc` verifies when a detached signature
-exists and `gpg` is installed.
+the checksum file, exactly one `*_dependency-manifest.json` artifact exists and
+is covered by `SHA256SUMS.txt`, and `SHA256SUMS.txt.asc` verifies when a
+detached signature exists and `gpg` is installed.
 
 Release archives are built with `CGO_ENABLED=0` for reproducible cross-platform
 packaging from the hosted workflow. On macOS this means Keychain reads can use
@@ -52,15 +54,20 @@ directly into Keychain should run a local `darwin+cgo` build and verify it with
 TestKeychainStoreIntegration -count=1 -v`, or use `file:` / `external:` secret
 stores for write-capable credential storage.
 
-## SBOM Policy
+## SBOM / Dependency Manifest
 
-Release operators must decide whether the release channel requires a Software
-Bill of Materials (SBOM) before publishing public or enterprise artifacts. If
-SBOM generation is required, generate it from the exact tagged source and
-published archives, publish it alongside `SHA256SUMS.txt`, record the result in
-`docs/RELEASE_EVIDENCE.md`, and keep the tool choice and signing/provenance
-policy documented with the release channel. Do not claim SBOM coverage for
-archives that were not built from the same tagged commit.
+`scripts/release-build.sh` runs `scripts/release-sbom.sh` for the exact source
+checkout and writes `dist/outlook-agent_<version>_dependency-manifest.json`.
+The manifest records schema `outlook-agent-dependency-manifest-v1`, release
+version, commit, Go toolchain, generation time, and the `go list -m` module
+graph. This is a concrete dependency manifest for release evidence; it is not a
+signed formal SPDX/CycloneDX attestation.
+
+If a release channel requires a formal SBOM, generate that formal artifact from
+the same tagged source and published archives, publish it alongside
+`SHA256SUMS.txt`, record the tool and result in `docs/RELEASE_EVIDENCE.md`, and
+do not claim SBOM coverage for archives that were not built from the same
+tagged commit.
 
 To build into another directory, set:
 
@@ -76,9 +83,9 @@ GOPATH=$PWD/.cache/go GOCACHE=$PWD/.cache/go-build GOMODCACHE=$PWD/.cache/go-mod
 ```
 
 The smoke builds into a portable temporary dist directory, verifies six
-platform archives, verifies `SHA256SUMS.txt`, runs `scripts/release-verify.sh`,
-starts the host-platform archive when one is runnable, checks the embedded
-`doctor` version, and removes the temporary output unless
+platform archives, verifies the dependency manifest and `SHA256SUMS.txt`, runs
+`scripts/release-verify.sh`, starts the host-platform archive when one is
+runnable, checks the embedded `doctor` version, and removes the temporary output unless
 `OUTLOOK_AGENT_KEEP_RELEASE_SMOKE=1` is set.
 
 ## Signed Checksums
@@ -120,7 +127,8 @@ git push origin v0.1.0
 ```
 
 The release workflow runs `scripts/release-build.sh`, uploads the archives,
-`SHA256SUMS.txt`, and the optional signature to a GitHub release.
+the dependency manifest, `SHA256SUMS.txt`, and the optional signature to a
+GitHub release.
 
 Before publishing release notes, fill out `docs/RELEASE_EVIDENCE.md` for the
 tag. Keep private live-smoke details out of the repository; use pass/fail or
