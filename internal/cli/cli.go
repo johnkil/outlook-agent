@@ -12,6 +12,7 @@ import (
 	"strings"
 
 	"github.com/johnkil/outlook-agent/internal/action"
+	"github.com/johnkil/outlook-agent/internal/approval"
 	"github.com/johnkil/outlook-agent/internal/buildinfo"
 	"github.com/johnkil/outlook-agent/internal/capability"
 	"github.com/johnkil/outlook-agent/internal/config"
@@ -168,6 +169,15 @@ type doctorSecretStoreOutput struct {
 	Available bool   `json:"available"`
 }
 
+type doctorApprovalOutput struct {
+	Mode                    string `json:"mode"`
+	RequiredByDefault       bool   `json:"required_by_default"`
+	SecretConfigured        bool   `json:"secret_configured"`
+	LegacyTokenConfigured   bool   `json:"legacy_token_configured,omitempty"`
+	HostIntegrationRequired bool   `json:"host_integration_required"`
+	Warning                 string `json:"warning,omitempty"`
+}
+
 type doctorOutput struct {
 	OK          bool                    `json:"ok"`
 	Command     string                  `json:"command"`
@@ -175,6 +185,7 @@ type doctorOutput struct {
 	Profile     string                  `json:"profile,omitempty"`
 	Config      doctorConfigOutput      `json:"config"`
 	SecretStore doctorSecretStoreOutput `json:"secret_store"`
+	Approval    doctorApprovalOutput    `json:"approval"`
 	MCPStdio    bool                    `json:"mcp_stdio"`
 	Transports  []string                `json:"transports"`
 	NextSteps   []string                `json:"next_steps,omitempty"`
@@ -210,6 +221,7 @@ func runDoctor(stdout io.Writer, options Options) int {
 	}
 	currentBuild := buildinfo.Current()
 	secretStore := doctorSecretStore(profile, loaded)
+	approvalReadiness := doctorApproval(profile, loaded)
 	output := doctorOutput{
 		OK:      err == nil,
 		Command: "doctor",
@@ -221,6 +233,7 @@ func runDoctor(stdout io.Writer, options Options) int {
 			Path:  source.Path,
 		},
 		SecretStore: secretStore,
+		Approval:    approvalReadiness,
 		MCPStdio:    true,
 		Transports:  []string{"fake", "graph", "ews", "owa"},
 	}
@@ -254,6 +267,29 @@ func doctorSecretStore(profile string, loaded config.Config) doctorSecretStoreOu
 		return doctorSecretStoreOutput{Kind: "file", Available: true}
 	}
 	return doctorSecretStoreOutput{Kind: "keychain", Available: runtime.GOOS == "darwin"}
+}
+
+func doctorApproval(profile string, loaded config.Config) doctorApprovalOutput {
+	transportName := "fake"
+	if selected, ok := loaded.Profiles[profile]; ok && strings.TrimSpace(selected.Transport) != "" {
+		transportName = selected.Transport
+	}
+	policy := approval.PolicyFromEnv(transportName, os.Getenv)
+	defaultPolicy := approval.PolicyFromEnv(transportName, func(string) string { return "" })
+	output := doctorApprovalOutput{
+		Mode:                    string(policy.Mode),
+		RequiredByDefault:       defaultPolicy.Mode == approval.ModeRequired,
+		SecretConfigured:        strings.TrimSpace(policy.Secret) != "",
+		LegacyTokenConfigured:   strings.TrimSpace(policy.LegacyToken) != "",
+		HostIntegrationRequired: policy.Mode == approval.ModeRequired,
+	}
+	switch {
+	case output.HostIntegrationRequired && !output.SecretConfigured:
+		output.Warning = "OUTLOOK_AGENT_APPROVAL_SECRET is required for high-risk actions in required approval mode"
+	case policy.Mode == approval.ModeOptional && output.LegacyTokenConfigured && defaultPolicy.Mode == approval.ModeRequired:
+		output.Warning = "legacy OUTLOOK_AGENT_APPROVAL_TOKEN is compatibility-only and not production-grade approval"
+	}
+	return output
 }
 
 type policyExplainActionOutput struct {
@@ -773,6 +809,9 @@ func doctorNextSteps(output doctorOutput) []string {
 	}
 	if !output.SecretStore.Available {
 		steps = append(steps, "The macOS Keychain secret store is unavailable on this platform; configure an approved secret-store backend before live profiles.")
+	}
+	if output.Approval.HostIntegrationRequired && !output.Approval.SecretConfigured {
+		steps = append(steps, "Configure OUTLOOK_AGENT_APPROVAL_SECRET in the trusted host/operator environment before high-risk live actions.")
 	}
 	if output.MCPStdio {
 		steps = append(steps, "OpenCode can run Outlook Agent through a local MCP entry that executes outlook-agent --config <path> mcp.")

@@ -177,6 +177,13 @@ and does not use the confirmation flow. Sending an existing draft
 (`mail.send_draft`) is send-like and always goes through dry-run review, exact
 confirmation, and required host approval. 🔒
 
+`outlook-agent doctor` and `outlook.capabilities` expose approval readiness
+metadata so hosts can check whether required approval mode, signing payload
+version, challenge TTL, and secret presence are configured before live
+high-risk work. Dry-run responses also include an `approval` object that says
+whether approval is required for that exact action and whether a challenge was
+issued.
+
 `OUTLOOK_AGENT_APPROVAL_TOKEN` remains as a legacy static token for optional
 mode compatibility. It is not considered production-grade because it is not
 bound to the dry-run payload or review.

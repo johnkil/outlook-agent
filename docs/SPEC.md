@@ -42,6 +42,10 @@ includes:
 - `profile`: selected profile name after applying config defaults and
   `--profile`;
 - `secret_store`: readiness metadata for the configured secret-store backend;
+- `approval`: approval-mode readiness metadata with `mode`,
+  `required_by_default`, `secret_configured`, optional
+  `legacy_token_configured`, `host_integration_required`, and optional
+  sanitized `warning`;
 - `transports`: supported transport names;
 - `mcp_stdio`: whether the local MCP server mode is compiled in;
 - `next_steps`: sanitized, actionable onboarding guidance for common states.
@@ -52,7 +56,9 @@ returns exit code `1`, `ok=false`, and a sanitized `error` mirrored under
 
 `doctor.next_steps` covers common onboarding states such as fake transport
 fallback when no config is found, missing explicit config paths, unavailable
-secret stores, and OpenCode MCP setup.
+secret stores, missing host approval secrets in required mode, and OpenCode MCP
+setup. `doctor` reports only whether approval secrets are configured; it never
+prints secret values.
 
 `setup opencode --print` emits a public-safe local MCP config block. It prints
 only the binary path, optional config path, and MCP command arguments; it never
@@ -140,7 +146,10 @@ Key tool inputs:
   `approval_mode` when payload-bound host approval is required. Explicit read
   or mutation requirements are exposed through `requires_explicit_target` and
   `requires_explicit_intent`. The `approval` section exposes the global
-  approval mode and whether high-risk actions require approval. The
+  approval mode, whether high-risk actions require approval, whether the host
+  approval secret or legacy compatibility token is configured, the challenge
+  TTL in seconds, the signing payload version, and whether host integration is
+  required. The
   `execution_route` field is one of `direct`, `direct_explicit_target`,
   `direct_explicit_intent`, `dry_run_confirm`, or `unsafe_dry_run_confirm`.
 - High-level mail and calendar tools accept optional `mailbox` for transports
@@ -220,9 +229,12 @@ Key tool inputs:
 - `outlook.action_dry_run`: returns `ok=false`, `error`, and no
   `confirmation_token` when the requested confirmed action is not permitted in
   the selected mode. For example, destructive and unknown actions require
-  `unsafe_mode=true`. Successful dry-runs return a review packet and, in
-  required approval mode for high-risk actions, `requires_approval=true` plus
-  `approval_challenge`.
+  `unsafe_mode=true`. Dry-run responses include an `approval` object with
+  `mode`, `required_for_this_action`, `challenge_issued`,
+  `host_integration_required`, and, when applicable, `challenge_ttl_seconds`,
+  `signing_payload_version`, and `legacy_token_accepted`. Successful dry-runs
+  return a review packet and, in required approval mode for high-risk actions,
+  `requires_approval=true` plus `approval_challenge`.
 - `outlook.action_confirm`: validates the exact confirmation token binding and
   then applies confirmed-action policy again before transport execution. In
   required approval mode, high-risk actions also require

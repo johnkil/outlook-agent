@@ -21,6 +21,21 @@ The approval HMAC secret is read from `OUTLOOK_AGENT_APPROVAL_SECRET`. The agent
 must not know or print this secret. Store it only in the trusted host/operator
 environment.
 
+## Readiness Metadata
+
+Before high-risk live work, hosts can inspect `outlook-agent doctor` and
+`outlook.capabilities` without reading secret values. `doctor.approval` reports
+the selected approval mode, whether that transport requires approval by
+default, whether the host secret or legacy compatibility token is configured,
+whether host integration is required, and a sanitized warning when required
+mode is missing `OUTLOOK_AGENT_APPROVAL_SECRET`.
+
+`outlook.capabilities.approval` reports the runtime approval mode, whether
+high-risk actions require approval, secret/token presence booleans, challenge
+TTL seconds, signing payload version, and whether a trusted host integration is
+required. `outlook.action_dry_run.approval` repeats the mode for the exact
+action and reports whether a challenge was issued.
+
 ## Dry-Run Flow
 
 1. The agent calls `outlook.action_dry_run` for the exact high-risk action and
