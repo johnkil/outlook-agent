@@ -229,12 +229,59 @@ func TestReadmeDocumentsGraphWriteCapableScopes(t *testing.T) {
 
 	for _, marker := range []string{
 		"read-only Graph enrollment",
+		"`MailboxSettings.Read`",
+		"settings/rules metadata",
 		"write-capable Graph profile",
 		"`Mail.ReadWrite`",
+		"`Mail.Send`",
 		"`MailboxSettings.ReadWrite`",
+		"`Calendars.ReadWrite`",
 		"`mail.create_draft`",
+		"`mail.send_draft`",
+		"`calendar.respond`",
 		"`mail.move_to_deleted_items`",
 		"`mail.rules.set_enabled`",
+	} {
+		if !strings.Contains(text, marker) {
+			t.Fatalf("expected README.md to contain %q", marker)
+		}
+	}
+}
+
+func TestReadmeKeepsWriteLadderConcise(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join("..", "..", "README.md"))
+	if err != nil {
+		t.Fatalf("read README.md: %v", err)
+	}
+	text := string(data)
+
+	if strings.Contains(text, "move/delete, archive, flag, categorize") {
+		t.Fatalf("README.md must not overstate confirmation gates for every organization change")
+	}
+	for _, marker := range []string{
+		"broad mailbox changes",
+		"broader writes ask first",
+		"Narrow exact-target changes",
+	} {
+		if !strings.Contains(text, marker) {
+			t.Fatalf("expected README.md to contain %q", marker)
+		}
+	}
+}
+
+func TestReadmeQualifiesRedirectGuardCoverage(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join("..", "..", "README.md"))
+	if err != nil {
+		t.Fatalf("read README.md: %v", err)
+	}
+	text := string(data)
+
+	if strings.Contains(text, "transports refuse unsafe redirects") {
+		t.Fatalf("README.md must not claim every transport refuses unsafe redirects")
+	}
+	for _, marker := range []string{
+		"EWS/OWA",
+		"credential and session redirects are blocked",
 	} {
 		if !strings.Contains(text, marker) {
 			t.Fatalf("expected README.md to contain %q", marker)
