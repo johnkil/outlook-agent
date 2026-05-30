@@ -84,10 +84,12 @@ settings & rule metadata.
 **Prepare (save-only, never sends):** draft · reply draft · reply-all draft ·
 forward draft.
 
-**Write (dry-run + confirm; host approval in required mode):** send a draft ·
-respond to a calendar invite (accept/decline/tentative) · move to Deleted Items ·
-move to a folder · archive · flag · categorize · mark read/unread ·
-enable/disable an existing rule.
+**Write (reviewed/gated):** send a draft · respond to a calendar invite
+(accept/decline/tentative) · move to Deleted Items · enable/disable an existing
+rule. For single exact-id organization changes — move to a folder, archive, flag,
+categorize, mark read/unread — can execute directly when the tool has exactly
+one explicit message id and new state; bulk organization changes require
+dry-run + confirm, with host approval in required mode.
 
 **Escape hatch:** a single policy-guarded `raw_action` for capability-discovered
 calls, when no high-level tool fits yet.

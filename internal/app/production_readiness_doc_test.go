@@ -235,6 +235,9 @@ func TestReadmeDocumentsGraphWriteCapableScopes(t *testing.T) {
 		"`mail.create_draft`",
 		"`mail.move_to_deleted_items`",
 		"`mail.rules.set_enabled`",
+		"single exact-id organization changes",
+		"bulk organization changes",
+		"dry-run + confirm",
 	} {
 		if !strings.Contains(text, marker) {
 			t.Fatalf("expected README.md to contain %q", marker)
