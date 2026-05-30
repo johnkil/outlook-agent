@@ -36,6 +36,17 @@ if [[ "$archive_count" != "$expected_archives" ]]; then
   exit 1
 fi
 
+dependency_manifest_count="$(
+  find "$dist_dir" -maxdepth 1 -type f -name "*_dependency-manifest.json" \
+    | wc -l \
+    | tr -d " "
+)"
+if [[ "$dependency_manifest_count" != "1" ]]; then
+  echo "expected one dependency-manifest release artifact, got ${dependency_manifest_count}" >&2
+  find "$dist_dir" -maxdepth 1 -type f | sort >&2
+  exit 1
+fi
+
 while IFS= read -r archive; do
   archive_name="$(basename "$archive")"
   if ! grep -Fq "  ${archive_name}" "$checksum_file"; then
@@ -43,6 +54,12 @@ while IFS= read -r archive; do
     exit 1
   fi
 done < <(find "$dist_dir" -maxdepth 1 -type f \( -name "*.tar.gz" -o -name "*.zip" \) | sort)
+
+dependency_manifest_name="$(basename "$(find "$dist_dir" -maxdepth 1 -type f -name "*_dependency-manifest.json" | sort | head -n 1)")"
+if ! grep -Fq "  ${dependency_manifest_name}" "$checksum_file"; then
+  echo "dependency-manifest ${dependency_manifest_name} is missing from SHA256SUMS.txt" >&2
+  exit 1
+fi
 
 scripts/release-verify.sh "$dist_dir"
 

@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"runtime"
+	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
@@ -165,8 +165,15 @@ type doctorConfigOutput struct {
 }
 
 type doctorSecretStoreOutput struct {
-	Kind      string `json:"kind"`
-	Available bool   `json:"available"`
+	Kind                string `json:"kind"`
+	Available           bool   `json:"available"`
+	RefConfigured       bool   `json:"ref_configured"`
+	Readable            bool   `json:"readable,omitempty"`
+	Writable            bool   `json:"writable,omitempty"`
+	ProviderConfigured  bool   `json:"provider_configured,omitempty"`
+	RequiresCGOForWrite bool   `json:"requires_cgo_for_write,omitempty"`
+	Warning             string `json:"warning,omitempty"`
+	Recommendation      string `json:"recommendation,omitempty"`
 }
 
 type doctorApprovalOutput struct {
@@ -261,12 +268,180 @@ func runVersion(stdout io.Writer) int {
 	})
 }
 
+const doctorMaxFileSecretBytes = 1024 * 1024
+
 func doctorSecretStore(profile string, loaded config.Config) doctorSecretStoreOutput {
 	configuredProfile, ok := loaded.Profiles[profile]
-	if ok && strings.HasPrefix(configuredProfile.SecretRef, "file:") {
-		return doctorSecretStoreOutput{Kind: "file", Available: true}
+	transportName := "fake"
+	if ok && strings.TrimSpace(configuredProfile.Transport) != "" {
+		transportName = strings.TrimSpace(configuredProfile.Transport)
 	}
-	return doctorSecretStoreOutput{Kind: "keychain", Available: runtime.GOOS == "darwin"}
+	rawRef := ""
+	if ok {
+		rawRef = strings.TrimSpace(configuredProfile.SecretRef)
+	}
+	if rawRef == "" {
+		if transportName == "fake" {
+			return doctorSecretStoreOutput{Kind: "none", Available: true}
+		}
+		return doctorSecretStoreOutput{
+			Kind:           "none",
+			Available:      false,
+			RefConfigured:  false,
+			Warning:        "live profile transport " + transportName + " requires a secret_ref",
+			Recommendation: "Configure a secret_ref for the selected live profile using keychain:, file:, or external:.",
+		}
+	}
+
+	ref := secret.Ref(rawRef)
+	switch {
+	case strings.HasPrefix(rawRef, "file:"):
+		return doctorFileSecretStore(ref)
+	case strings.HasPrefix(rawRef, "external:"):
+		return doctorExternalSecretStore(ref, loaded.Secrets.External)
+	case strings.HasPrefix(rawRef, "keychain:"):
+		return doctorKeychainSecretStore(ref)
+	default:
+		return doctorSecretStoreOutput{
+			Kind:           "unknown",
+			Available:      false,
+			RefConfigured:  true,
+			Warning:        "unsupported secret_ref prefix",
+			Recommendation: "Use keychain:service/account, file:/absolute/path, or external:name.",
+		}
+	}
+}
+
+func doctorFileSecretStore(ref secret.Ref) doctorSecretStoreOutput {
+	output := doctorSecretStoreOutput{
+		Kind:          "file",
+		RefConfigured: true,
+	}
+	path, err := secret.ParseFileRef(ref)
+	if err != nil {
+		output.Warning = err.Error()
+		output.Recommendation = "Use file:/absolute/path with user-only permissions for file-backed secrets."
+		return output
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			output.Writable = directoryLooksUserWritable(filepath.Dir(path))
+			output.Warning = "file secret not found"
+			output.Recommendation = "Create the file secret with user-only permissions before using this live profile."
+			return output
+		}
+		output.Warning = "file secret is not accessible"
+		output.Recommendation = "Check the file secret path and permissions."
+		return output
+	}
+	if info.IsDir() {
+		output.Warning = "file secret path points to a directory"
+		output.Recommendation = "Use file:/absolute/path pointing to a regular user-only secret file."
+		return output
+	}
+	output.Writable = info.Mode().Perm()&0o200 != 0
+	if info.Mode().Perm()&0o077 != 0 {
+		output.Warning = "file secret must have user-only permissions"
+		output.Recommendation = "Restrict the file secret permissions to 0600 before using this profile."
+		return output
+	}
+	if info.Size() > doctorMaxFileSecretBytes {
+		output.Warning = "file secret is too large"
+		output.Recommendation = "Replace the file secret with a bounded token file."
+		return output
+	}
+	handle, err := os.Open(path)
+	if err != nil {
+		output.Warning = "file secret is not readable"
+		output.Recommendation = "Check the file secret path and owner permissions."
+		return output
+	}
+	_ = handle.Close()
+	output.Readable = true
+	output.Available = true
+	return output
+}
+
+func directoryLooksUserWritable(path string) bool {
+	info, err := os.Stat(path)
+	if err != nil || !info.IsDir() {
+		return false
+	}
+	return info.Mode().Perm()&0o200 != 0
+}
+
+func doctorExternalSecretStore(ref secret.Ref, configured map[string]config.ExternalSecretCommand) doctorSecretStoreOutput {
+	output := doctorSecretStoreOutput{
+		Kind:          "external",
+		RefConfigured: true,
+	}
+	name, err := secret.ParseExternalRef(ref)
+	if err != nil {
+		output.Warning = err.Error()
+		output.Recommendation = "Use external:name without path separators and define secrets.external[name]."
+		return output
+	}
+	command, ok := configured[name]
+	output.ProviderConfigured = ok
+	if !ok {
+		output.Warning = "external secret provider is not configured"
+		output.Recommendation = "Define the external secret provider under secrets.external before using this profile."
+		return output
+	}
+	commandPath := strings.TrimSpace(command.Command)
+	if commandPath == "" {
+		output.Warning = "external secret command is empty"
+		output.Recommendation = "Configure an absolute command path for the external secret provider."
+		return output
+	}
+	if !filepath.IsAbs(commandPath) {
+		output.Warning = "external secret command must be absolute"
+		output.Recommendation = "Use an absolute command path for the external secret provider."
+		return output
+	}
+	info, err := os.Stat(commandPath)
+	if err != nil {
+		output.Warning = "external secret command is not accessible"
+		output.Recommendation = "Check that the external secret command exists and is executable."
+		return output
+	}
+	if info.IsDir() || info.Mode().Perm()&0o111 == 0 {
+		output.Warning = "external secret command is not executable"
+		output.Recommendation = "Point the external secret provider at an executable command."
+		return output
+	}
+	output.Readable = true
+	output.Available = true
+	return output
+}
+
+func doctorKeychainSecretStore(ref secret.Ref) doctorSecretStoreOutput {
+	output := doctorSecretStoreOutput{
+		Kind:          "keychain",
+		RefConfigured: true,
+		Readable:      secret.KeychainReadSupported(),
+		Writable:      secret.KeychainWriteSupported(),
+	}
+	if _, err := secret.ParseKeychainRef(ref); err != nil {
+		output.Warning = err.Error()
+		output.Recommendation = "Use keychain:service/account for macOS Keychain-backed secrets."
+		return output
+	}
+	output.Available = output.Readable
+	if limitation := secret.KeychainWriteLimitation(); limitation != "" {
+		output.Warning = limitation
+		output.Recommendation = keychainRecommendation(limitation)
+		output.RequiresCGOForWrite = strings.Contains(strings.ToLower(limitation), "cgo")
+	}
+	return output
+}
+
+func keychainRecommendation(limitation string) string {
+	if strings.Contains(strings.ToLower(limitation), "cgo") {
+		return "Use file: or external: for portable enrollment writes, or run a local darwin+cgo build when Keychain writes are required."
+	}
+	return "Use file: or external: secret stores on platforms without macOS Keychain support."
 }
 
 func doctorApproval(profile string, loaded config.Config) doctorApprovalOutput {
@@ -808,7 +983,15 @@ func doctorNextSteps(output doctorOutput) []string {
 		steps = append(steps, "Create the missing config file or update the configured config path: "+output.Config.Path)
 	}
 	if !output.SecretStore.Available {
-		steps = append(steps, "The macOS Keychain secret store is unavailable on this platform; configure an approved secret-store backend before live profiles.")
+		if output.SecretStore.Recommendation != "" {
+			steps = append(steps, output.SecretStore.Recommendation)
+		} else if output.SecretStore.Warning != "" {
+			steps = append(steps, output.SecretStore.Warning)
+		} else {
+			steps = append(steps, "Configure an approved secret-store backend before live profiles.")
+		}
+	} else if output.SecretStore.Recommendation != "" {
+		steps = append(steps, output.SecretStore.Recommendation)
 	}
 	if output.Approval.HostIntegrationRequired && !output.Approval.SecretConfigured {
 		steps = append(steps, "Configure OUTLOOK_AGENT_APPROVAL_SECRET in the trusted host/operator environment before high-risk live actions.")
