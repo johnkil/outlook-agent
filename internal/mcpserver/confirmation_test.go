@@ -763,6 +763,65 @@ func TestDryRunDoesNotIssueTokenWhenGraphSendDraftReviewFails(t *testing.T) {
 	}
 }
 
+func TestDryRunDoesNotIssueTokenWhenOWASendReviewMissing(t *testing.T) {
+	client := owa.NewTransport(owa.Config{
+		BaseURL:   "https://example.test",
+		Username:  "DOMAIN\\user",
+		SecretRef: secret.Ref("memory:owa"),
+	}, secret.NewMemoryStore(map[string]string{"memory:owa": "password"}), nil)
+	runtime := NewRuntime(client)
+
+	_, output, err := dryRunHandler(runtime)(context.Background(), nil, DryRunInput{
+		Action: "SendItem",
+		Payload: map[string]any{"Body": map[string]any{
+			"ItemIds": []any{map[string]any{"Id": "draft-1"}},
+		}},
+	})
+	if err != nil {
+		t.Fatalf("dry-run handler: %v", err)
+	}
+	if output.OK || output.ConfirmationToken != "" {
+		t.Fatalf("expected missing OWA send review without confirmation token, got %#v", output)
+	}
+	if !strings.Contains(output.Error, "mail review metadata") {
+		t.Fatalf("expected mail review metadata error, got %#v", output)
+	}
+}
+
+func TestDryRunDoesNotIssueTokenWhenOWASendReviewHasMultipleItems(t *testing.T) {
+	client := owa.NewTransport(owa.Config{
+		BaseURL:   "https://example.test",
+		Username:  "DOMAIN\\user",
+		SecretRef: secret.Ref("memory:owa"),
+	}, secret.NewMemoryStore(map[string]string{"memory:owa": "password"}), nil)
+	runtime := NewRuntime(client)
+
+	_, output, err := dryRunHandler(runtime)(context.Background(), nil, DryRunInput{
+		Action: "SendItem",
+		Payload: map[string]any{"Body": map[string]any{"Items": []any{
+			map[string]any{
+				"Subject":      "First",
+				"Body":         map[string]any{"Value": "first body"},
+				"ToRecipients": []any{map[string]any{"EmailAddress": map[string]any{"EmailAddress": "one@example.test"}}},
+			},
+			map[string]any{
+				"Subject":      "Second",
+				"Body":         map[string]any{"Value": "second body"},
+				"ToRecipients": []any{map[string]any{"EmailAddress": map[string]any{"EmailAddress": "two@example.test"}}},
+			},
+		}}},
+	})
+	if err != nil {
+		t.Fatalf("dry-run handler: %v", err)
+	}
+	if output.OK || output.ConfirmationToken != "" {
+		t.Fatalf("expected ambiguous OWA send review without confirmation token, got %#v", output)
+	}
+	if !strings.Contains(output.Error, "multiple mail items") {
+		t.Fatalf("expected multi-item mail review error, got %#v", output)
+	}
+}
+
 func TestDryRunRejectsCursorBoundSearchNext(t *testing.T) {
 	client := newRecordingTransport(action.Definition{Name: "mail.search_next", Transport: "test", Class: policy.ReadMetadata, Level: action.LevelHighLevelMCPTool})
 	runtime := NewRuntime(client)

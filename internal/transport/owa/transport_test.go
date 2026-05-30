@@ -427,6 +427,62 @@ func TestTransportDryRunCreateItemReviewExtractsMailFields(t *testing.T) {
 	}
 }
 
+func TestTransportDryRunSendItemWithoutInlineItemReturnsReviewError(t *testing.T) {
+	client := owa.NewTransport(owa.Config{
+		BaseURL:   "https://example.test",
+		Username:  "DOMAIN\\user",
+		SecretRef: secret.Ref("memory:owa"),
+	}, secret.NewMemoryStore(map[string]string{"memory:owa": "password"}), nil)
+
+	summary := client.DryRun(context.Background(), transport.ActionRequest{
+		Name: "SendItem",
+		Payload: map[string]any{"Body": map[string]any{
+			"ItemIds": []any{map[string]any{"Id": "draft-1"}},
+		}},
+	})
+
+	if summary.Error == "" || !strings.Contains(summary.Error, "mail review metadata") {
+		t.Fatalf("expected missing mail review metadata error, got %#v", summary)
+	}
+	if summary.Review == nil || len(summary.Review.Limitations) == 0 {
+		t.Fatalf("expected review limitation for missing mail metadata, got %#v", summary.Review)
+	}
+}
+
+func TestTransportDryRunSendLikeMultiItemReturnsReviewError(t *testing.T) {
+	client := owa.NewTransport(owa.Config{
+		BaseURL:   "https://example.test",
+		Username:  "DOMAIN\\user",
+		SecretRef: secret.Ref("memory:owa"),
+	}, secret.NewMemoryStore(map[string]string{"memory:owa": "password"}), nil)
+
+	summary := client.DryRun(context.Background(), transport.ActionRequest{
+		Name: "CreateItem",
+		Payload: map[string]any{"Body": map[string]any{"Items": []any{
+			map[string]any{
+				"Subject":      "First",
+				"Body":         map[string]any{"Value": "first body"},
+				"ToRecipients": []any{map[string]any{"EmailAddress": map[string]any{"EmailAddress": "one@example.test"}}},
+			},
+			map[string]any{
+				"Subject":      "Second",
+				"Body":         map[string]any{"Value": "second body"},
+				"ToRecipients": []any{map[string]any{"EmailAddress": map[string]any{"EmailAddress": "two@example.test"}}},
+			},
+		}}},
+	})
+
+	if summary.Error == "" || !strings.Contains(summary.Error, "multiple mail items") {
+		t.Fatalf("expected multi-item mail review error, got %#v", summary)
+	}
+	if summary.Count != 2 {
+		t.Fatalf("expected dry-run count to reflect all mail items, got %#v", summary)
+	}
+	if summary.Review == nil || summary.Review.Mail == nil || summary.Review.Mail.Subject != "First" {
+		t.Fatalf("expected first item review to remain visible with limitation, got %#v", summary.Review)
+	}
+}
+
 func TestTransportDryRunCountsAttachmentFolderAndRulePayloadShapes(t *testing.T) {
 	client := owa.NewTransport(owa.Config{
 		BaseURL:   "https://example.test",

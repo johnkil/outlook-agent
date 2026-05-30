@@ -25,6 +25,8 @@ type Transport struct {
 }
 
 const DefaultSessionTTL = 20 * time.Minute
+const owaMissingMailReviewMetadata = "send-like OWA action requires inline mail review metadata before approval"
+const owaMultipleMailItemsReviewUnsupported = "send-like OWA action has multiple mail items; split into one dry-run per item before approval"
 
 type cachedSession struct {
 	session    Session
@@ -247,6 +249,7 @@ func (client *Transport) DryRun(_ context.Context, request transport.ActionReque
 		SafetyClass:          string(class),
 		Review:               &review,
 		Warnings:             review.Limitations,
+		Error:                dryRunReviewError(request.Name, review),
 	}
 }
 
@@ -279,10 +282,42 @@ func dryRunReview(request transport.ActionRequest, class policy.SafetyClass) tra
 		Mail:               owaMailReview(request.Name, body),
 		PayloadFingerprint: transport.PayloadFingerprint(request.Payload),
 	}
+	review.Limitations = append(review.Limitations, owaSendReviewLimitations(request.Name, body)...)
 	if len(review.Targets) == 0 && review.Mutation == nil && review.Mail == nil {
 		review.Limitations = append(review.Limitations, "payload target details could not be extracted during dry-run")
 	}
 	return review
+}
+
+func dryRunReviewError(actionName string, review transport.ReviewPacket) string {
+	if !isOWASendLikeAction(actionName) {
+		return ""
+	}
+	for _, limitation := range review.Limitations {
+		if limitation == owaMissingMailReviewMetadata || limitation == owaMultipleMailItemsReviewUnsupported {
+			return limitation
+		}
+	}
+	return ""
+}
+
+func owaSendReviewLimitations(actionName string, body map[string]any) []string {
+	if !isOWASendLikeAction(actionName) {
+		return nil
+	}
+	entryCount, reviewableCount := mailItemEntryCounts(body["Items"], body["Item"])
+	switch {
+	case entryCount > 1:
+		return []string{owaMultipleMailItemsReviewUnsupported}
+	case entryCount == 0 || reviewableCount != 1:
+		return []string{owaMissingMailReviewMetadata}
+	default:
+		return nil
+	}
+}
+
+func isOWASendLikeAction(actionName string) bool {
+	return actionName == "CreateItem" || actionName == "SendItem"
 }
 
 func owaMutationReview(actionName string, body map[string]any) *transport.MutationReview {
@@ -421,6 +456,29 @@ func firstPayloadMap(value any) map[string]any {
 	default:
 		return nil
 	}
+}
+
+func mailItemEntryCounts(values ...any) (int, int) {
+	var entryCount int
+	var reviewableCount int
+	for _, value := range values {
+		switch typed := value.(type) {
+		case []any:
+			entryCount += len(typed)
+			for _, child := range typed {
+				if _, ok := child.(map[string]any); ok {
+					reviewableCount++
+				}
+			}
+		case map[string]any:
+			entryCount++
+			reviewableCount++
+		case nil:
+		default:
+			entryCount++
+		}
+	}
+	return entryCount, reviewableCount
 }
 
 func firstString(values map[string]any, keys ...string) string {
