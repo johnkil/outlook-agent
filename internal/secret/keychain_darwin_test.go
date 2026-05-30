@@ -5,7 +5,6 @@ package secret
 import (
 	"context"
 	"errors"
-	"slices"
 	"strings"
 	"testing"
 )
@@ -69,31 +68,19 @@ func TestKeychainStorePutStoresGenericPassword(t *testing.T) {
 	}
 }
 
-func TestKeychainStorePutDoesNotPassSecretInCommandArguments(t *testing.T) {
-	original := securityRunAddGenericPassword
-	t.Cleanup(func() { securityRunAddGenericPassword = original })
+func TestKeychainStorePutDoesNotLeakSecretThroughErrors(t *testing.T) {
+	original := securityAddGenericPassword
+	t.Cleanup(func() { securityAddGenericPassword = original })
 
-	var gotArgs []string
-	var gotStdin string
-	securityRunAddGenericPassword = func(_ context.Context, args []string, stdin string) error {
-		gotArgs = slices.Clone(args)
-		gotStdin = stdin
-		return nil
+	securityAddGenericPassword = func(_ context.Context, service string, account string, value Value) error {
+		return errors.New("native failure included secret-value by mistake")
 	}
 
 	err := NewKeychainStore().Put(context.Background(), Ref("keychain:svc/account"), Value("secret-value"))
-	if err != nil {
-		t.Fatalf("put keychain secret: %v", err)
+	if err == nil {
+		t.Fatal("expected keychain put error")
 	}
-	for _, arg := range gotArgs {
-		if strings.Contains(arg, "secret-value") {
-			t.Fatalf("secret leaked through command arguments: %#v", gotArgs)
-		}
-	}
-	if gotStdin != "secret-value\n" {
-		t.Fatalf("expected secret to be supplied on stdin, got %q", gotStdin)
-	}
-	if len(gotArgs) == 0 || gotArgs[len(gotArgs)-1] != "-w" {
-		t.Fatalf("expected security -w prompt flag to be last, got %#v", gotArgs)
+	if strings.Contains(err.Error(), "secret-value") {
+		t.Fatalf("keychain put error leaked secret: %q", err.Error())
 	}
 }

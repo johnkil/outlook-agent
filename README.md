@@ -145,11 +145,16 @@ that's group- or world-readable. External secrets are resolved from
 `secrets.external.<name>` config entries with an absolute command path plus an
 argv array; Outlook Agent invokes the command directly without a shell, applies
 a timeout and output cap, trims the trailing newline, and keeps command output
-out of error messages. For Graph, `auth graph-device-code` walks you through
-device-code sign-in instructions and stores + refreshes a JSON token credential
-behind your `secret_ref`. Advanced operators can override
-`settings.client_id`, `settings.scopes`, and `settings.device_code_url` in
-controlled Graph profiles; the stored credential may contain a `refresh_token`.
+out of error messages. On macOS, Keychain reads work through the platform
+store; Keychain writes require a local `darwin+cgo` build so Outlook Agent can
+use Security.framework without passing secret values through process arguments.
+If you use a `CGO_ENABLED=0` release binary, use `file:` or `external:` for
+commands that need to write refreshed credentials. For Graph,
+`auth graph-device-code` walks you through device-code sign-in instructions and
+stores + refreshes a JSON token credential behind your `secret_ref`. Advanced
+operators can override `settings.client_id`, `settings.scopes`, and
+`settings.device_code_url` in controlled Graph profiles; the stored credential
+may contain a `refresh_token`.
 
 ---
 

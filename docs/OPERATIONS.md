@@ -298,3 +298,23 @@ External command secrets must use `external:name` references plus
 and arguments must be an argv array; do not store shell strings, inline
 passwords, tokens, cookies, canary values, or captured command output in
 config.
+
+## macOS Keychain Verification
+
+On macOS, Keychain reads are available through `keychain:service/account`
+references. Keychain writes use Security.framework in `darwin+cgo` builds so
+secret values are never passed through process arguments. `darwin&&!cgo`
+builds fail Keychain writes closed; use `file:` or `external:` secret stores
+for enrollment or refresh flows that need to persist new credentials.
+
+Run the gated live check on a Mac before relying on Keychain writes:
+
+```bash
+OUTLOOK_AGENT_KEYCHAIN_INTEGRATION=1 go test ./internal/secret -run TestKeychainStoreIntegration -count=1 -v
+```
+
+The test creates a random temporary generic password, verifies an exact
+round-trip through `KeychainStore.Put` and `KeychainStore.Get`, and deletes the
+temporary item. It does not print the secret value. If this check is skipped or
+fails in an environment, prefer `file:` with `0600` permissions or an
+operator-managed `external:` provider for write-capable credential storage.

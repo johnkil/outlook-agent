@@ -32,6 +32,15 @@ version into `outlook-agent doctor` / MCP server metadata:
 
 Every archive is listed in `dist/SHA256SUMS.txt`.
 
+Release archives are built with `CGO_ENABLED=0` for reproducible cross-platform
+packaging from the hosted workflow. On macOS this means Keychain reads can use
+the `/usr/bin/security` read path, but Keychain writes intentionally fail
+closed. Operators who need `auth graph-device-code` or token refresh to persist
+directly into Keychain should run a local `darwin+cgo` build and verify it with
+`OUTLOOK_AGENT_KEYCHAIN_INTEGRATION=1 go test ./internal/secret -run
+TestKeychainStoreIntegration -count=1 -v`, or use `file:` / `external:` secret
+stores for write-capable credential storage.
+
 ## SBOM Policy
 
 Release operators must decide whether the release channel requires a Software
