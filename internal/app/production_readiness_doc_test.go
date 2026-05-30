@@ -79,7 +79,9 @@ func TestProductionBacklogTracksExternalGates(t *testing.T) {
 	for _, required := range []string{
 		"# Production Backlog",
 		"## Open External Gates",
-		"GitHub Actions billing",
+		"## Completed External Gates",
+		"Hosted GitHub Actions CI",
+		"Installed MCP release smoke determinism",
 		"organization secret scanning",
 		"enterprise distribution",
 		"Graph OAuth",
@@ -133,9 +135,9 @@ func TestProductionBacklogTracksRepositoryProtectionEvidence(t *testing.T) {
 		"## Partially Completed External Gates",
 		"organization secret scanning and repository protection",
 		"Dependabot vulnerability alerts are enabled",
-		"main branch protection is enabled",
-		"required pull request review",
+		"main branch protection requires the hosted `test` status check",
 		"conversation resolution",
+		"enforces admin rules",
 		"secret scanning is not available for this repository",
 		"GitHub plan or organization policy",
 	} {

@@ -16,7 +16,6 @@ investigated with public-safe evidence.
 
 | Gate | GitHub issue | Required evidence |
 | --- | --- | --- |
-| GitHub Actions billing unblock | https://github.com/johnkil/outlook-agent/issues/2 | Hosted CI jobs execute real workflow steps for pushes and PRs instead of failing before checkout. |
 | organization secret scanning and repository protection | https://github.com/johnkil/outlook-agent/issues/3 | Repository or organization owners enable scanning/protection and define alert ownership outside this public repository when details are private. |
 | enterprise distribution channel | https://github.com/johnkil/outlook-agent/issues/4 | Approved package or installer channel verifies release checksums, preserves the private config boundary, and names release/rollback owners. |
 | Graph OAuth and live smoke enablement | https://github.com/johnkil/outlook-agent/issues/5 | Approved Graph app/permissions, secret-store token handling, `auth check`, and controlled read-only smoke evidence. |
@@ -24,11 +23,18 @@ investigated with public-safe evidence.
 | OWA-compatible live validation and fixture recovery | https://github.com/johnkil/outlook-agent/issues/42 | Controlled private profile passes auth/session readiness, read-metadata smoke, dry-run smoke for guarded mutation classes, payload-bound approval mutation smoke, and recovery cleanup for interrupted synthetic fixtures. |
 | macOS Keychain prompt UX for release binaries | https://github.com/johnkil/outlook-agent/issues/41 | Distribution-owned signing or trust setup gives release binaries stable Keychain access without storing secrets in argv, shell history, config, logs, or public docs. |
 
+## Completed External Gates
+
+| Gate | GitHub issue | Evidence |
+| --- | --- | --- |
+| Hosted GitHub Actions CI | https://github.com/johnkil/outlook-agent/issues/2 | Hosted `test` jobs now execute real workflow steps for pull requests, and main branch protection requires the `test` status check before merge. |
+| Installed MCP release smoke determinism | https://github.com/johnkil/outlook-agent/issues/40 | `scripts/release-smoke.sh` runs the packaged host binary through the deterministic MCP stdio Go SDK smoke using `OUTLOOK_AGENT_BINARY_UNDER_TEST`, so the release gate does not depend on model final-response formatting. |
+
 ## Partially Completed External Gates
 
 | Gate | GitHub issue | Completed evidence | Remaining evidence |
 | --- | --- | --- | --- |
-| organization secret scanning and repository protection | https://github.com/johnkil/outlook-agent/issues/3 | Dependabot vulnerability alerts are enabled. The main branch protection is enabled with required pull request review, stale-review dismissal, conversation resolution, disabled force pushes, and disabled branch deletion. Required status checks are intentionally not configured until issue `#2` unblocks hosted CI. | GitHub reported that secret scanning is not available for this repository. The remaining gate needs GitHub plan or organization policy enablement for secret scanning, or an approved enterprise-equivalent scanning route with alert ownership defined outside this public repository when details are private. |
+| organization secret scanning and repository protection | https://github.com/johnkil/outlook-agent/issues/3 | Dependabot vulnerability alerts are enabled. The main branch protection requires the hosted `test` status check, requires conversation resolution, enforces admin rules, disables force pushes, and disables branch deletion. | GitHub reported that secret scanning is not available for this repository. The remaining gate needs GitHub plan or organization policy enablement for secret scanning, or an approved enterprise-equivalent scanning route with alert ownership defined outside this public repository when details are private. |
 | Graph OAuth and live smoke enablement | https://github.com/johnkil/outlook-agent/issues/5 | The refresh-capable token-cache handling is implemented and unit-tested. Device-code OAuth acquisition and secret-store persistence are implemented and unit-tested through `auth graph-device-code`. Graph profiles can pass `settings.client_id`, `settings.tenant`, `settings.scopes`, `settings.token_url`, and `settings.device_code_url`; inline OAuth tokens remain rejected in config. Graph read-only live smoke harness `TestLiveGraphReadOnlySmoke` is implemented for `auth check`, `mail.search`, `mail.fetch_metadata`, and `calendar.list`. The typed Graph `mail.rules.set_enabled` helper is unit-tested and remains outside the read-only live harness because it is a settings/rules write. | The remaining gate needs live enterprise app approval, admin consent, controlled live token storage, successful `auth check`, and controlled read-only smoke evidence from a private run. |
 | EWS enablement and live smoke validation | https://github.com/johnkil/outlook-agent/issues/6 | EWS read-metadata live smoke harness `TestLiveEWSReadMetadataSmoke` is implemented for `auth check`, metadata-only `GetFolder`, metadata-only `mail.search`, metadata-only `mail.fetch_metadata` when a message id is available, metadata-only `calendar.list`, and metadata-only `calendar.availability` when `OUTLOOK_AGENT_LIVE_EWS_AVAILABILITY_EMAIL` is set; `mail.search` is unit-tested through EWS `FindItem`, `mail.fetch_metadata` and explicit `mail.fetch_body` are unit-tested through EWS `GetItem`, `calendar.list` is unit-tested through EWS `FindItem` with `CalendarView`, and `calendar.availability` is unit-tested through EWS `GetUserAvailability`. The explicit body read remains outside the read-metadata live harness. | The remaining gate needs approved endpoint/auth method, controlled live credential storage, successful `auth check`, and controlled read-metadata smoke evidence from a private run. |
 
@@ -45,11 +51,6 @@ investigated with public-safe evidence.
   `external:name` command provider gives enterprise operators a portable route
   to 1Password, Bitwarden, Vault, or native wrapper tooling. Open a dedicated
   GitHub issue before implementing native backends for a concrete rollout.
-- Installed OpenCode smoke is tracked separately in
-  https://github.com/johnkil/outlook-agent/issues/40. The installer, checksum,
-  setup, and MCP connection path are proven by release smoke, but the
-  model-facing smoke should become deterministic before it is treated as a
-  release gate.
 
 ## Tracking Policy
 
@@ -61,9 +62,10 @@ investigated with public-safe evidence.
   and any affected runbook or enablement document.
 - Live validation evidence should use controlled fixtures, sanitized assertions,
   and skipped-by-default tests where the workflow touches real mailboxes.
-- Hosted GitHub Actions failures caused by billing or account limits are
-  infrastructure blockers, not code verification results. Keep using
-  `scripts/ci-local.sh` as the local mirror until the hosted gate is closed.
+- Hosted GitHub Actions failures caused by account or platform limits are
+  infrastructure blockers, not code verification results. Keep
+  `scripts/ci-local.sh` as the local mirror and compare it with hosted `test`
+  runs when investigating CI drift.
 
 ## Relationship To MVP
 
