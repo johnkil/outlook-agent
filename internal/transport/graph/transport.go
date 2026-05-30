@@ -324,8 +324,12 @@ func (client *Transport) DryRun(ctx context.Context, request transport.ActionReq
 		return transport.DryRunSummary{Action: request.Name, Count: len(ids), Reversible: true, RequiresConfirmation: true, SafetyClass: string(policy.ReversibleBulk), Review: &review}
 	}
 	if request.Name == "mail.send_draft" {
-		review := client.graphSendDraftReview(ctx, mailboxTarget(request.Payload), request.Name, request.Payload)
-		return transport.DryRunSummary{Action: request.Name, Count: 1, Reversible: false, RequiresConfirmation: true, SafetyClass: string(policy.SendLike), Review: &review, Warnings: review.Limitations}
+		review, err := client.graphSendDraftReview(ctx, mailboxTarget(request.Payload), request.Name, request.Payload)
+		summary := transport.DryRunSummary{Action: request.Name, Count: 1, Reversible: false, RequiresConfirmation: true, SafetyClass: string(policy.SendLike), Review: &review, Warnings: review.Limitations}
+		if err != nil {
+			summary.Error = err.Error()
+		}
+		return summary
 	}
 	if isReversibleMessageMutation(request.Name) {
 		ids := messageIDs(request.Payload)
@@ -384,7 +388,7 @@ func graphRuleSetEnabledReview(actionName string, payload map[string]any) transp
 	}
 }
 
-func (client *Transport) graphSendDraftReview(ctx context.Context, mailbox string, actionName string, payload map[string]any) transport.ReviewPacket {
+func (client *Transport) graphSendDraftReview(ctx context.Context, mailbox string, actionName string, payload map[string]any) (transport.ReviewPacket, error) {
 	draftID := strings.TrimSpace(stringValue(payload, "draft_id", ""))
 	targets := []transport.TargetRef{}
 	if draftID != "" {
@@ -402,8 +406,9 @@ func (client *Transport) graphSendDraftReview(ctx context.Context, mailbox strin
 	}
 	draft, err := client.getDraftForSendReview(ctx, mailbox, draftID)
 	if err != nil {
-		review.Limitations = append(review.Limitations, "draft metadata could not be fetched during dry-run: "+err.Error())
-		return review
+		message := "draft metadata could not be fetched during dry-run: " + err.Error()
+		review.Limitations = append(review.Limitations, message)
+		return review, fmt.Errorf("%s", message)
 	}
 	review.Mail.Subject = draft.Subject
 	review.Mail.To = recipientStrings(draft.ToRecipients)
@@ -416,7 +421,7 @@ func (client *Transport) graphSendDraftReview(ctx context.Context, mailbox strin
 	if draft.HasAttachments {
 		review.Limitations = append(review.Limitations, "draft has attachments; attachment names were not fetched during dry-run")
 	}
-	return review
+	return review, nil
 }
 
 func graphReversibleMutationReview(actionName string, payload map[string]any, ids []string, class policy.SafetyClass) transport.ReviewPacket {

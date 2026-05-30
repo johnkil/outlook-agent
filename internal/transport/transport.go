@@ -36,6 +36,7 @@ type DryRunSummary struct {
 	SafetyClass          string        `json:"safety_class,omitempty"`
 	Review               *ReviewPacket `json:"review,omitempty"`
 	Warnings             []string      `json:"warnings,omitempty"`
+	Error                string        `json:"error,omitempty"`
 }
 
 type Transport interface {

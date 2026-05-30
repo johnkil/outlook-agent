@@ -2,6 +2,8 @@ package mcpserver
 
 import (
 	"context"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
@@ -700,6 +702,37 @@ func TestDryRunDoesNotIssueTokenForDestructiveActionWithoutUnsafe(t *testing.T) 
 	}
 	if !output.RequiresUnsafe || output.Error == "" {
 		t.Fatalf("expected unsafe requirement in dry-run output: %#v", output)
+	}
+}
+
+func TestDryRunDoesNotIssueTokenWhenGraphSendDraftReviewFails(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		if request.Method != http.MethodGet || request.URL.Path != "/v1.0/me/messages/draft-1" {
+			t.Fatalf("unexpected request: %s %s", request.Method, request.URL.String())
+		}
+		response.WriteHeader(http.StatusInternalServerError)
+		_, _ = response.Write([]byte(`{"error":{"code":"InternalServerError"}}`))
+	}))
+	defer server.Close()
+
+	client := graph.NewTransport(graph.Config{
+		BaseURL:   server.URL + "/v1.0",
+		SecretRef: secret.Ref("memory:graph"),
+	}, secret.NewMemoryStore(map[string]string{"memory:graph": "token-secret"}), server.Client())
+	runtime := NewRuntime(client)
+
+	_, output, err := dryRunHandler(runtime)(context.Background(), nil, DryRunInput{
+		Action:  "mail.send_draft",
+		Payload: map[string]any{"draft_id": "draft-1"},
+	})
+	if err != nil {
+		t.Fatalf("dry-run handler: %v", err)
+	}
+	if output.OK || output.ConfirmationToken != "" {
+		t.Fatalf("expected failed draft review without confirmation token, got %#v", output)
+	}
+	if !strings.Contains(output.Error, "draft metadata") {
+		t.Fatalf("expected draft metadata error, got %#v", output)
 	}
 }
 

@@ -776,6 +776,11 @@ func mailSendDraftHandler(runtime *Runtime) func(context.Context, *mcp.CallToolR
 		}
 		payload := withMailbox(map[string]any{"draft_id": input.DraftID}, input.Mailbox)
 		summary, class, review := dryRunReviewFor(ctx, runtime.client, "mail.send_draft", payload, false)
+		if summary.Error != "" {
+			message := redact.String(summary.Error)
+			runtime.recordAudit(audit.TypeReject, "mail.send_draft", payload, runtime.profile, class, review, "blocked", summary.Count, message)
+			return nil, ActionResultOutput{OK: false, Error: message}, nil
+		}
 		pendingApproval, err := runtime.validateExternalApproval(input.ApprovalChallengeID, input.ApprovalToken, "mail.send_draft", payload, false, runtime.profile, review, class)
 		if err != nil {
 			runtime.recordAudit(audit.TypeReject, "mail.send_draft", payload, runtime.profile, class, review, "blocked", summary.Count, err.Error())
@@ -1081,6 +1086,21 @@ func dryRunHandler(runtime *Runtime) func(context.Context, *mcp.CallToolRequest,
 	return func(ctx context.Context, _ *mcp.CallToolRequest, input DryRunInput) (*mcp.CallToolResult, DryRunOutput, error) {
 		summary, class, review := dryRunReviewFor(ctx, runtime.client, input.Action, input.Payload, input.UnsafeMode)
 		requiresApproval := runtime.requiresApproval(class)
+		if summary.Error != "" {
+			message := redact.String(summary.Error)
+			runtime.recordAudit(audit.TypeReject, input.Action, input.Payload, runtime.profileOrDefault(input.Profile), class, review, "blocked", summary.Count, message)
+			return nil, DryRunOutput{
+				Action:               summary.Action,
+				OK:                   false,
+				Count:                summary.Count,
+				Reversible:           summary.Reversible,
+				RequiresConfirmation: summary.RequiresConfirmation,
+				RequiresApproval:     requiresApproval,
+				Review:               &review,
+				Warnings:             summary.Warnings,
+				Error:                message,
+			}, nil
+		}
 		decision := confirmedActionDecision(runtime.client, input.Action, input.Payload, input.UnsafeMode)
 		if !decision.Allowed {
 			runtime.recordAudit(audit.TypeReject, input.Action, input.Payload, runtime.profileOrDefault(input.Profile), class, review, "blocked", summary.Count, decision.Reason)
@@ -1129,6 +1149,11 @@ func dryRunHandler(runtime *Runtime) func(context.Context, *mcp.CallToolRequest,
 func actionConfirmHandler(runtime *Runtime) func(context.Context, *mcp.CallToolRequest, ActionConfirmInput) (*mcp.CallToolResult, ActionResultOutput, error) {
 	return func(ctx context.Context, _ *mcp.CallToolRequest, input ActionConfirmInput) (*mcp.CallToolResult, ActionResultOutput, error) {
 		summary, class, review := dryRunReviewFor(ctx, runtime.client, input.Action, input.Payload, input.UnsafeMode)
+		if summary.Error != "" {
+			message := redact.String(summary.Error)
+			runtime.recordAudit(audit.TypeReject, input.Action, input.Payload, runtime.profileOrDefault(input.Profile), class, review, "blocked", summary.Count, message)
+			return nil, ActionResultOutput{OK: false, Error: message}, nil
+		}
 		pendingApproval, err := runtime.validateExternalApproval(input.ApprovalChallengeID, input.ApprovalToken, input.Action, input.Payload, input.UnsafeMode, runtime.profileOrDefault(input.Profile), review, class)
 		if err != nil {
 			runtime.recordAudit(audit.TypeReject, input.Action, input.Payload, runtime.profileOrDefault(input.Profile), class, review, "blocked", summary.Count, err.Error())
