@@ -586,7 +586,7 @@ func TestMailRuleSetEnabledRejectsApprovalForDifferentRule(t *testing.T) {
 
 	_, output, err := mailRuleSetEnabledHandler(runtime)(context.Background(), nil, MailRuleSetEnabledInput{
 		RuleID:              "rule-2",
-		Enabled:             false,
+		Enabled:             boolPointer(false),
 		ConfirmToken:        changedConfirmToken,
 		ApprovalChallengeID: dryRun.ApprovalChallenge.ID,
 		ApprovalToken:       approvalToken,
@@ -599,6 +599,21 @@ func TestMailRuleSetEnabledRejectsApprovalForDifferentRule(t *testing.T) {
 	}
 	if client.executed {
 		t.Fatal("rule update must not execute with approval for a different rule")
+	}
+}
+
+func TestMailRuleSetEnabledRequiresExplicitEnabledState(t *testing.T) {
+	runtime := NewRuntime(fake.New())
+
+	_, output, err := mailRuleSetEnabledHandler(runtime)(context.Background(), nil, MailRuleSetEnabledInput{
+		RuleID:       "rule-1",
+		ConfirmToken: "token",
+	})
+	if err != nil {
+		t.Fatalf("rule set-enabled handler: %v", err)
+	}
+	if output.OK || !strings.Contains(output.Error, "enabled required") {
+		t.Fatalf("expected missing enabled to be rejected, got %#v", output)
 	}
 }
 
@@ -975,7 +990,7 @@ func TestMailRuleSetEnabledReturnsTransportFailureWithoutData(t *testing.T) {
 
 	_, output, err := mailRuleSetEnabledHandler(runtime)(context.Background(), nil, MailRuleSetEnabledInput{
 		RuleID:       "rule-1",
-		Enabled:      false,
+		Enabled:      boolPointer(false),
 		ConfirmToken: token,
 	})
 	if err != nil {

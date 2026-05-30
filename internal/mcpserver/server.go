@@ -200,7 +200,7 @@ type MailRulesListOutput struct {
 
 type MailRuleSetEnabledInput struct {
 	RuleID              string `json:"rule_id" jsonschema:"message rule id"`
-	Enabled             bool   `json:"enabled" jsonschema:"whether the rule should be enabled"`
+	Enabled             *bool  `json:"enabled" jsonschema:"whether the rule should be enabled"`
 	FolderID            string `json:"folder_id,omitempty" jsonschema:"optional mail folder id"`
 	ConfirmToken        string `json:"confirm_token" jsonschema:"confirmation token from outlook.action_dry_run"`
 	ApprovalChallengeID string `json:"approval_challenge_id,omitempty" jsonschema:"payload-bound external approval challenge id"`
@@ -944,12 +944,15 @@ func mailRulesListHandler(client transport.Transport) func(context.Context, *mcp
 
 func mailRuleSetEnabledHandler(runtime *Runtime) func(context.Context, *mcp.CallToolRequest, MailRuleSetEnabledInput) (*mcp.CallToolResult, ActionResultOutput, error) {
 	return func(ctx context.Context, _ *mcp.CallToolRequest, input MailRuleSetEnabledInput) (*mcp.CallToolResult, ActionResultOutput, error) {
+		if input.Enabled == nil {
+			return nil, ActionResultOutput{OK: false, Error: "enabled required"}, nil
+		}
 		if input.ConfirmToken == "" {
 			return nil, ActionResultOutput{OK: false, Error: "confirm_token required"}, nil
 		}
 		payload := withMailbox(map[string]any{
 			"id":        input.RuleID,
-			"enabled":   input.Enabled,
+			"enabled":   *input.Enabled,
 			"folder_id": input.FolderID,
 		}, input.Mailbox)
 		summary, class, review := dryRunReviewFor(ctx, runtime.client, "mail.rules.set_enabled", payload, false)
