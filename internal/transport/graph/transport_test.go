@@ -1087,6 +1087,67 @@ func TestTransportDryRunMailSendDraftFollowsAttachmentMetadataNextLink(t *testin
 	}
 }
 
+func TestTransportDryRunMailSendDraftReviewsInlineAttachmentsWhenHasAttachmentsFalse(t *testing.T) {
+	var sawAttachmentsRequest bool
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		if request.Method != http.MethodGet {
+			t.Fatalf("unexpected request: %s %s", request.Method, request.URL.String())
+		}
+		response.Header().Set("Content-Type", "application/json")
+		switch request.URL.Path {
+		case "/v1.0/me/messages/draft-1":
+			_ = json.NewEncoder(response).Encode(map[string]any{
+				"id":             "draft-1",
+				"subject":        "Draft subject",
+				"hasAttachments": false,
+				"body": map[string]any{
+					"contentType": "HTML",
+					"content":     `<p>See <img src="cid:inline-logo"></p>`,
+				},
+			})
+		case "/v1.0/me/messages/draft-1/attachments":
+			sawAttachmentsRequest = true
+			_ = json.NewEncoder(response).Encode(map[string]any{
+				"value": []any{
+					map[string]any{
+						"id":          "inline-1",
+						"name":        "logo.png",
+						"contentType": "image/png",
+						"size":        333,
+						"isInline":    true,
+					},
+				},
+			})
+		default:
+			t.Fatalf("unexpected request: %s %s", request.Method, request.URL.String())
+		}
+	}))
+	defer server.Close()
+
+	client := graph.NewTransport(graph.Config{
+		BaseURL:   server.URL + "/v1.0",
+		SecretRef: secret.Ref("memory:graph"),
+	}, secret.NewMemoryStore(map[string]string{"memory:graph": "token-secret"}), server.Client())
+
+	summary := client.DryRun(context.Background(), transport.ActionRequest{
+		Name:    "mail.send_draft",
+		Payload: map[string]any{"draft_id": "draft-1"},
+	})
+
+	if summary.Error != "" || summary.Review == nil || summary.Review.Completeness != transport.ReviewCompletenessComplete {
+		t.Fatalf("expected complete send draft review, got %#v", summary)
+	}
+	if !sawAttachmentsRequest {
+		t.Fatal("expected dry-run to fetch attachment metadata even when hasAttachments is false")
+	}
+	if got := summary.Review.Mail.AttachmentNames; strings.Join(got, ",") != "logo.png" {
+		t.Fatalf("expected inline attachment metadata in review, got %#v", got)
+	}
+	if len(summary.Review.Mail.Attachments) != 1 || summary.Review.Mail.Attachments[0].Name != "logo.png" {
+		t.Fatalf("expected inline attachment review metadata, got %#v", summary.Review.Mail.Attachments)
+	}
+}
+
 func TestTransportDryRunMailSendDraftFailsWhenAttachmentMetadataUnavailable(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
 		response.Header().Set("Content-Type", "application/json")

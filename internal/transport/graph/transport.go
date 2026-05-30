@@ -449,16 +449,14 @@ func (client *Transport) graphSendDraftReview(ctx context.Context, mailbox strin
 		review.Mail.BodyPreview = transport.RedactedPreview(draft.Body.Content, 500)
 		review.Mail.BodySHA256 = transport.BodySHA256(draft.Body.Content)
 	}
-	if draft.HasAttachments {
-		attachments, err := client.listAttachmentMetadataForReview(ctx, mailbox, draftID)
-		if err != nil {
-			message := "draft attachment metadata could not be fetched during dry-run: " + err.Error()
-			review.Limitations = append(review.Limitations, message)
-			return review, fmt.Errorf("%s", message)
-		}
-		review.Mail.Attachments = attachmentReviews(attachments)
-		review.Mail.AttachmentNames = attachmentNames(attachments)
+	attachments, err := client.listAttachmentMetadataForReview(ctx, mailbox, draftID)
+	if err != nil {
+		message := "draft attachment metadata could not be fetched during dry-run: " + err.Error()
+		review.Limitations = append(review.Limitations, message)
+		return review, fmt.Errorf("%s", message)
 	}
+	review.Mail.Attachments = attachmentReviews(attachments)
+	review.Mail.AttachmentNames = attachmentNames(attachments)
 	review.Completeness = transport.ReviewCompletenessComplete
 	return review, nil
 }
