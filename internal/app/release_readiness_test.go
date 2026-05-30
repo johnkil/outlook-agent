@@ -164,6 +164,28 @@ func TestReleaseVerifyScriptRejectsChecksumMismatch(t *testing.T) {
 	}
 }
 
+func TestReleaseVerifyScriptRejectsChecksumOnlyNonArchives(t *testing.T) {
+	distDir := t.TempDir()
+	readmeName := "README.md"
+	readmeData := []byte("not a release archive")
+	if err := os.WriteFile(filepath.Join(distDir, readmeName), readmeData, 0o644); err != nil {
+		t.Fatalf("write non-archive fixture: %v", err)
+	}
+	sum := sha256.Sum256(readmeData)
+	checksums := fmt.Sprintf("%x  %s\n", sum, readmeName)
+	if err := os.WriteFile(filepath.Join(distDir, "SHA256SUMS.txt"), []byte(checksums), 0o644); err != nil {
+		t.Fatalf("write checksums fixture: %v", err)
+	}
+
+	output, err := exec.Command("/bin/bash", filepath.Join("..", "..", "scripts", "release-verify.sh"), distDir).CombinedOutput()
+	if err == nil {
+		t.Fatalf("expected release verify to reject non-archive-only checksums:\n%s", string(output))
+	}
+	if !strings.Contains(string(output), "not a release archive") {
+		t.Fatalf("expected non-archive rejection, got:\n%s", string(output))
+	}
+}
+
 func TestDependabotReadiness(t *testing.T) {
 	path := filepath.Join("..", "..", ".github", "dependabot.yml")
 	data, err := os.ReadFile(path)

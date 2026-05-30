@@ -28,6 +28,8 @@ checksum() {
 }
 
 archive_count=0
+non_archive_count=0
+first_non_archive=""
 while IFS= read -r line || [[ -n "$line" ]]; do
   [[ -z "$line" ]] && continue
   read -r expected archive_name extra <<<"$line"
@@ -51,10 +53,24 @@ while IFS= read -r line || [[ -n "$line" ]]; do
     echo "actual   ${actual}" >&2
     exit 1
   fi
-  archive_count=$((archive_count + 1))
+  case "$archive_name" in
+    *.tar.gz|*.zip)
+      archive_count=$((archive_count + 1))
+      ;;
+    *)
+      non_archive_count=$((non_archive_count + 1))
+      if [[ -z "$first_non_archive" ]]; then
+        first_non_archive="$archive_name"
+      fi
+      ;;
+  esac
 done < "$checksum_file"
 
 if [[ "$archive_count" -eq 0 ]]; then
+  if [[ "$non_archive_count" -gt 0 ]]; then
+    echo "checksum entry is not a release archive: ${first_non_archive}" >&2
+    exit 1
+  fi
   echo "SHA256SUMS.txt did not list any archives" >&2
   exit 1
 fi
