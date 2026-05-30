@@ -355,7 +355,7 @@ func TestCalendarRespondRequiresPayloadBoundApprovalInRequiredMode(t *testing.T)
 	_, missingApproval, err := calendarRespondHandler(runtime)(context.Background(), nil, CalendarRespondInput{
 		EventID:       "evt-1",
 		Response:      "accept",
-		SendResponse:  true,
+		SendResponse:  boolPointer(true),
 		ConfirmToken:  dryRun.ConfirmationToken,
 		ApprovalToken: "",
 	})
@@ -369,7 +369,7 @@ func TestCalendarRespondRequiresPayloadBoundApprovalInRequiredMode(t *testing.T)
 	_, output, err := calendarRespondHandler(runtime)(context.Background(), nil, CalendarRespondInput{
 		EventID:             "evt-1",
 		Response:            "accept",
-		SendResponse:        true,
+		SendResponse:        boolPointer(true),
 		ConfirmToken:        dryRun.ConfirmationToken,
 		ApprovalChallengeID: dryRun.ApprovalChallenge.ID,
 		ApprovalToken:       approvalToken,
@@ -387,7 +387,7 @@ func TestCalendarRespondValidatesRequiredFields(t *testing.T) {
 
 	_, missingEvent, err := calendarRespondHandler(runtime)(context.Background(), nil, CalendarRespondInput{
 		Response:     "accept",
-		SendResponse: true,
+		SendResponse: boolPointer(true),
 		ConfirmToken: "token",
 	})
 	if err != nil {
@@ -400,7 +400,7 @@ func TestCalendarRespondValidatesRequiredFields(t *testing.T) {
 	_, badResponse, err := calendarRespondHandler(runtime)(context.Background(), nil, CalendarRespondInput{
 		EventID:      "evt-1",
 		Response:     "maybe",
-		SendResponse: true,
+		SendResponse: boolPointer(true),
 		ConfirmToken: "token",
 	})
 	if err != nil {
@@ -408,6 +408,18 @@ func TestCalendarRespondValidatesRequiredFields(t *testing.T) {
 	}
 	if badResponse.OK || !strings.Contains(badResponse.Error, "response must be") {
 		t.Fatalf("expected invalid response to be rejected, got %#v", badResponse)
+	}
+
+	_, missingSendResponse, err := calendarRespondHandler(runtime)(context.Background(), nil, CalendarRespondInput{
+		EventID:      "evt-1",
+		Response:     "accept",
+		ConfirmToken: "token",
+	})
+	if err != nil {
+		t.Fatalf("calendar respond handler: %v", err)
+	}
+	if missingSendResponse.OK || !strings.Contains(missingSendResponse.Error, "send_response required") {
+		t.Fatalf("expected missing send_response to be rejected, got %#v", missingSendResponse)
 	}
 }
 

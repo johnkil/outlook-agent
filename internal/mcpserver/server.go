@@ -234,7 +234,7 @@ type CalendarRespondInput struct {
 	EventID             string `json:"event_id" jsonschema:"calendar event id"`
 	Response            string `json:"response" jsonschema:"accept, decline, or tentative"`
 	Comment             string `json:"comment,omitempty" jsonschema:"optional response comment"`
-	SendResponse        bool   `json:"send_response" jsonschema:"whether to send the response to the organizer"`
+	SendResponse        *bool  `json:"send_response" jsonschema:"whether to send the response to the organizer"`
 	ConfirmToken        string `json:"confirm_token" jsonschema:"confirmation token from outlook.action_dry_run"`
 	ApprovalChallengeID string `json:"approval_challenge_id,omitempty" jsonschema:"payload-bound external approval challenge id"`
 	ApprovalToken       string `json:"approval_token,omitempty" jsonschema:"external approval token supplied by the host after user approval"`
@@ -1024,6 +1024,9 @@ func calendarRespondHandler(runtime *Runtime) func(context.Context, *mcp.CallToo
 		if err != nil {
 			return nil, ActionResultOutput{OK: false, Error: err.Error()}, nil
 		}
+		if input.SendResponse == nil {
+			return nil, ActionResultOutput{OK: false, Error: "send_response required"}, nil
+		}
 		if input.ConfirmToken == "" {
 			return nil, ActionResultOutput{OK: false, Error: "confirm_token required"}, nil
 		}
@@ -1031,7 +1034,7 @@ func calendarRespondHandler(runtime *Runtime) func(context.Context, *mcp.CallToo
 			"event_id":      eventID,
 			"response":      responseName,
 			"comment":       input.Comment,
-			"send_response": input.SendResponse,
+			"send_response": *input.SendResponse,
 		}, input.Mailbox)
 		summary, class, review := dryRunReviewFor(ctx, runtime.client, "calendar.respond", payload, false)
 		pendingApproval, err := runtime.validateExternalApproval(input.ApprovalChallengeID, input.ApprovalToken, "calendar.respond", payload, false, runtime.profile, review, class)
