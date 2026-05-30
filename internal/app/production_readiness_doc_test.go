@@ -239,9 +239,27 @@ func TestReadmeDocumentsGraphWriteCapableScopes(t *testing.T) {
 		"`calendar.respond`",
 		"`mail.move_to_deleted_items`",
 		"`mail.rules.set_enabled`",
-		"single exact-id organization changes",
-		"bulk organization changes",
-		"dry-run + confirm",
+	} {
+		if !strings.Contains(text, marker) {
+			t.Fatalf("expected README.md to contain %q", marker)
+		}
+	}
+}
+
+func TestReadmeKeepsWriteLadderConcise(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join("..", "..", "README.md"))
+	if err != nil {
+		t.Fatalf("read README.md: %v", err)
+	}
+	text := string(data)
+
+	if strings.Contains(text, "move/delete, archive, flag, categorize") {
+		t.Fatalf("README.md must not overstate confirmation gates for every organization change")
+	}
+	for _, marker := range []string{
+		"broad mailbox changes",
+		"broader writes ask first",
+		"Narrow exact-target changes",
 	} {
 		if !strings.Contains(text, marker) {
 			t.Fatalf("expected README.md to contain %q", marker)

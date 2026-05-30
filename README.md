@@ -60,7 +60,7 @@ Every action lands on a rung. The higher the rung, the more it asks first.
 | 👀 **Look around** | subjects, senders, times, calendar metadata, free/busy | allowed directly |
 | 📖 **Open one thing** | one message body, one attachment | requires an explicit message/attachment id |
 | ✍️ **Prepare** | create a draft / reply / forward draft | allowed; these are *save-only* and never send |
-| 🤝 **Stop & confirm** | send a draft, respond to an invite, move/delete, archive, flag, categorize, toggle a rule | dry-run first, then a one-time confirmation token; host approval in required mode |
+| 🤝 **Stop & confirm** | send a draft, respond to an invite, broad mailbox changes, toggle a rule | review first, then confirmation; host approval in required mode |
 | ⚠️ **Unsafe raw** | capability-discovered raw Graph/EWS/OWA actions | guarded escape hatch; high-level tools are always preferred |
 
 There is **no direct high-level "send"**: the normal tool path is
@@ -84,12 +84,9 @@ settings & rule metadata.
 **Prepare (save-only, never sends):** draft · reply draft · reply-all draft ·
 forward draft.
 
-**Write (reviewed/gated):** send a draft · respond to a calendar invite
-(accept/decline/tentative) · move to Deleted Items · enable/disable an existing
-rule. For single exact-id organization changes — move to a folder, archive, flag,
-categorize, mark read/unread — can execute directly when the tool has exactly
-one explicit message id and new state; bulk organization changes require
-dry-run + confirm, with host approval in required mode.
+**Write:** reviewed sends, invite responses, broad mailbox changes, and rule
+toggles ask first. Narrow exact-target changes can run directly when policy
+allows; broader writes ask first.
 
 **Escape hatch:** a single policy-guarded `raw_action` for capability-discovered
 calls, when no high-level tool fits yet.
