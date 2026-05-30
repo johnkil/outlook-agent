@@ -123,6 +123,59 @@ func TestConfigRejectsInlineSecretValues(t *testing.T) {
 	}
 }
 
+func TestLoadAllowsExternalSecretStoreNamesThatLookSensitive(t *testing.T) {
+	path := writeConfig(t, `{
+		"secrets": {
+			"external": {
+				"secret": {
+					"command": "/usr/local/bin/op",
+					"args": ["read", "op://vault/item/field"]
+				}
+			}
+		},
+		"profiles": {
+			"work": {
+				"transport": "graph",
+				"secret_ref": "external:secret"
+			}
+		}
+	}`)
+
+	loaded, _, err := config.Load(config.Options{ExplicitPath: path})
+	if err != nil {
+		t.Fatalf("load config with external secret store name: %v", err)
+	}
+
+	store := loaded.Secrets.External["secret"]
+	if store.Command != "/usr/local/bin/op" {
+		t.Fatalf("expected external secret command preserved, got %#v", store)
+	}
+}
+
+func TestConfigRejectsInlineSecretKeysInsideExternalSecretStoreConfig(t *testing.T) {
+	path := writeConfig(t, `{
+		"secrets": {
+			"external": {
+				"mail": {
+					"command": "/usr/local/bin/op",
+					"password": "do-not-store-this"
+				}
+			}
+		},
+		"profiles": {
+			"work": {
+				"transport": "graph",
+				"secret_ref": "external:mail"
+			}
+		}
+	}`)
+
+	_, _, err := config.Load(config.Options{ExplicitPath: path})
+	if err == nil {
+		t.Fatal("expected inline secret key inside external secret config to be rejected")
+	}
+}
+
 func TestConfigRejectsSecretLikeKeysAndURLUserinfo(t *testing.T) {
 	tests := []struct {
 		name string
