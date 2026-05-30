@@ -229,6 +229,8 @@ func TestReadmeDocumentsGraphWriteCapableScopes(t *testing.T) {
 
 	for _, marker := range []string{
 		"read-only Graph enrollment",
+		"`MailboxSettings.Read`",
+		"settings/rules metadata",
 		"write-capable Graph profile",
 		"`Mail.ReadWrite`",
 		"`Mail.Send`",
