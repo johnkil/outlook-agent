@@ -62,6 +62,18 @@ func TestBinaryMCPStdioUsesConfiguredDefaultProfile(t *testing.T) {
 	}
 }
 
+func TestBuildBinaryUsesBinaryUnderTestOverride(t *testing.T) {
+	binary := filepath.Join(t.TempDir(), "outlook-agent")
+	if err := os.WriteFile(binary, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+		t.Fatalf("write binary override: %v", err)
+	}
+	t.Setenv("OUTLOOK_AGENT_BINARY_UNDER_TEST", binary)
+
+	if got := buildBinary(t); got != binary {
+		t.Fatalf("expected binary override %q, got %q", binary, got)
+	}
+}
+
 func TestLiveBinaryMCPStdioCalendarAvailabilitySmoke(t *testing.T) {
 	configPath := os.Getenv("OUTLOOK_AGENT_LIVE_CONFIG")
 	mailboxEmail := os.Getenv("OUTLOOK_AGENT_LIVE_MAILBOX_EMAIL")
@@ -1119,6 +1131,9 @@ func cleanupDraftFixtureWithRawDeleteItem(t *testing.T, ctx context.Context, ses
 
 func buildBinary(t *testing.T) string {
 	t.Helper()
+	if binary := os.Getenv("OUTLOOK_AGENT_BINARY_UNDER_TEST"); binary != "" {
+		return binary
+	}
 	binary := filepath.Join(t.TempDir(), "outlook-agent")
 	command := exec.Command("go", "build", "-o", binary, ".")
 	if output, err := command.CombinedOutput(); err != nil {

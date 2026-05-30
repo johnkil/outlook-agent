@@ -74,6 +74,7 @@ if [[ -f "$host_archive" ]]; then
   version_output="$("$host_binary" version)"
   doctor_output="$("$host_binary" doctor)"
   setup_output="$(cd "$project_dir" && "$host_binary" setup opencode plan --config .local/outlook-agent.json)"
+  OUTLOOK_AGENT_BINARY_UNDER_TEST="$host_binary" go test ./cmd/outlook-agent -run '^TestBinaryMCPStdioUsesConfiguredDefaultProfile$' -count=1
   rm -rf "$run_dir" "$project_dir"
   if ! grep -Fq '"version": "smoke"' <<<"$version_output"; then
     echo "host archive version output did not include embedded smoke version" >&2
