@@ -6,8 +6,8 @@ import (
 	"crypto/sha256"
 	"crypto/subtle"
 	"encoding/base64"
-	"encoding/json"
 	"errors"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -25,6 +25,8 @@ const (
 	LegacyTokenEnv = "OUTLOOK_AGENT_APPROVAL_TOKEN"
 )
 
+const SigningPayloadVersion = "outlook-agent-approval-v1"
+
 type Mode string
 
 type Binding struct {
@@ -38,10 +40,12 @@ type Binding struct {
 }
 
 type Challenge struct {
-	ID        string    `json:"id"`
-	Binding   Binding   `json:"binding"`
-	ExpiresAt time.Time `json:"expires_at"`
-	IssuedAt  time.Time `json:"issued_at"`
+	ID                    string    `json:"id"`
+	Binding               Binding   `json:"binding"`
+	ExpiresAt             time.Time `json:"expires_at"`
+	IssuedAt              time.Time `json:"issued_at"`
+	SigningPayloadVersion string    `json:"signing_payload_version"`
+	SigningPayload        string    `json:"signing_payload"`
 }
 
 type Policy struct {
@@ -111,11 +115,13 @@ func (store *Store) Issue(binding Binding, ttl time.Duration) (Challenge, error)
 	}
 	now := store.now()
 	challenge := Challenge{
-		ID:        id,
-		Binding:   binding,
-		IssuedAt:  now,
-		ExpiresAt: now.Add(ttl),
+		ID:                    id,
+		Binding:               binding,
+		IssuedAt:              now,
+		ExpiresAt:             now.Add(ttl),
+		SigningPayloadVersion: SigningPayloadVersion,
 	}
+	challenge.SigningPayload = BuildSigningPayload(challenge)
 	store.mu.Lock()
 	defer store.mu.Unlock()
 	store.records[id] = record{challenge: challenge}
@@ -155,19 +161,53 @@ func (store *Store) validateLocked(challengeID string, token string, secret stri
 }
 
 func SignChallenge(secret string, challenge Challenge) (string, error) {
+	signingPayload := strings.TrimSpace(challenge.SigningPayload)
+	if signingPayload == "" {
+		signingPayload = BuildSigningPayload(challenge)
+	} else if signingPayload != BuildSigningPayload(challenge) {
+		return "", errors.New("approval signing payload does not match challenge")
+	}
+	return SignPayload(secret, signingPayload)
+}
+
+func SignPayload(secret string, signingPayload string) (string, error) {
 	secret = strings.TrimSpace(secret)
 	if secret == "" {
 		return "", errors.New("approval secret required")
 	}
-	payload, err := json.Marshal(challenge)
-	if err != nil {
-		return "", err
+	if signingPayload == "" {
+		return "", errors.New("approval signing payload required")
 	}
 	mac := hmac.New(sha256.New, []byte(secret))
-	if _, err := mac.Write(payload); err != nil {
+	if _, err := mac.Write([]byte(signingPayload)); err != nil {
 		return "", err
 	}
 	return base64.RawURLEncoding.EncodeToString(mac.Sum(nil)), nil
+}
+
+func BuildSigningPayload(challenge Challenge) string {
+	version := strings.TrimSpace(challenge.SigningPayloadVersion)
+	if version == "" {
+		version = SigningPayloadVersion
+	}
+	lines := []string{
+		version,
+		"id=" + challenge.ID,
+		"issued_at=" + challenge.IssuedAt.UTC().Format(time.RFC3339Nano),
+		"expires_at=" + challenge.ExpiresAt.UTC().Format(time.RFC3339Nano),
+		"action=" + encodeSigningField(challenge.Binding.Action),
+		"transport=" + encodeSigningField(challenge.Binding.Transport),
+		"profile=" + encodeSigningField(challenge.Binding.Profile),
+		"unsafe_mode=" + strconv.FormatBool(challenge.Binding.UnsafeMode),
+		"safety_class=" + encodeSigningField(challenge.Binding.SafetyClass),
+		"payload_fingerprint=" + strings.ToLower(challenge.Binding.PayloadFingerprint),
+		"review_fingerprint=" + strings.ToLower(challenge.Binding.ReviewFingerprint),
+	}
+	return strings.Join(lines, "\n")
+}
+
+func encodeSigningField(value string) string {
+	return base64.RawURLEncoding.EncodeToString([]byte(value))
 }
 
 func ValidateChallengeToken(secret string, challenge Challenge, token string) error {

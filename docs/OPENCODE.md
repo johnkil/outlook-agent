@@ -217,10 +217,15 @@ or `unsafe_dry_run_confirm`. For gated actions, the expected flow is:
 2. If direct execution is not allowed, call `outlook.action_dry_run`.
 3. Show or reason over the dry-run review packet.
 4. If `requires_approval=true`, wait for the host to sign the returned
-   `approval_challenge`; do not ask the user for the approval secret.
+   `approval_challenge.signing_payload`; do not ask the user for the approval
+   secret.
 5. Execute only the exact payload with `outlook.action_confirm`, passing
    `approval_challenge_id` and `approval_token` only when the host supplies
    them.
+
+The host approval signing contract is documented in
+`docs/APPROVAL_HOST_INTEGRATION.md`. Agents must not sign challenges themselves
+unless they are running as the trusted host integration.
 
 Prompt shape for destructive or broad work:
 

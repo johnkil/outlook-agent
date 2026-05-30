@@ -1,0 +1,115 @@
+# Approval Host Integration
+
+Outlook Agent separates agent execution from human approval for high-risk
+actions. The agent can request a dry-run and confirmation token, but a trusted
+host integration must show the review packet to a human and sign the exact
+approval challenge before confirmation.
+
+## Modes
+
+Approval mode is controlled by `OUTLOOK_AGENT_APPROVAL_MODE`:
+
+- `dev`: no host approval is required. This is the default only for fake/test
+  transports.
+- `optional`: payload-bound approval can be bypassed with the legacy static
+  `OUTLOOK_AGENT_APPROVAL_TOKEN`. This is compatibility mode, not
+  production-grade approval.
+- `required`: high-risk actions require payload/review-bound host approval. This
+  is the default for non-fake transports such as Graph, OWA, and EWS.
+
+The approval HMAC secret is read from `OUTLOOK_AGENT_APPROVAL_SECRET`. The agent
+must not know or print this secret. Store it only in the trusted host/operator
+environment.
+
+## Dry-Run Flow
+
+1. The agent calls `outlook.action_dry_run` for the exact high-risk action and
+   payload.
+2. Outlook Agent returns `review`, `confirmation_token`, and, when approval is
+   required, `approval_challenge`.
+3. The host shows the `review` packet to a human.
+4. If the human approves, the host signs
+   `approval_challenge.signing_payload`.
+5. The agent calls `outlook.action_confirm` with the original payload,
+   `confirm_token`, `approval_challenge_id`, and `approval_token`.
+
+The approval challenge and confirmation token are single-use and TTL-bound.
+`Validate` does not consume a challenge; successful `Consume` does.
+
+## Signing Payload
+
+Hosts must sign `approval_challenge.signing_payload` exactly as returned. The
+current `approval_challenge.signing_payload_version` is
+`outlook-agent-approval-v1`.
+
+The v1 payload is newline-delimited and deterministic:
+
+```text
+outlook-agent-approval-v1
+id=<challenge_id>
+issued_at=<UTC RFC3339Nano>
+expires_at=<UTC RFC3339Nano>
+action=<base64url(action)>
+transport=<base64url(transport)>
+profile=<base64url(profile)>
+unsafe_mode=<true|false>
+safety_class=<base64url(safety_class)>
+payload_fingerprint=<lowercase_hex_sha256>
+review_fingerprint=<lowercase_hex_sha256>
+```
+
+String fields use base64url raw encoding without `=` padding. `issued_at` and
+`expires_at` are UTC timestamps formatted with RFC3339Nano. Field order is part
+of the v1 contract; any incompatible future change requires a new payload
+version.
+
+## Token Format
+
+The approval token is:
+
+```text
+base64url_raw(HMAC-SHA256(OUTLOOK_AGENT_APPROVAL_SECRET, signing_payload))
+```
+
+Pseudo-code:
+
+```text
+dryRun = call("outlook.action_dry_run", action, payload)
+show(dryRun.review)
+if user_approves:
+    token = base64url_raw(hmac_sha256(secret, dryRun.approval_challenge.signing_payload))
+    call("outlook.action_confirm", {
+        action,
+        payload,
+        confirm_token: dryRun.confirmation_token,
+        approval_challenge_id: dryRun.approval_challenge.id,
+        approval_token: token,
+    })
+```
+
+## Logging Rules
+
+Safe to log:
+
+- challenge id;
+- signing payload version;
+- payload and review fingerprints;
+- approval decision;
+- challenge expiration time.
+
+Do not log:
+
+- `OUTLOOK_AGENT_APPROVAL_SECRET`;
+- raw approval tokens;
+- message bodies, attachment bytes, cookies, canary values, OAuth tokens, or
+  other secrets.
+
+## Failure Modes
+
+- Missing `approval_challenge_id` or `approval_token` in required mode:
+  confirmation is rejected.
+- Expired challenge: confirmation is rejected and the challenge is removed.
+- Changed action, payload, review, safety class, profile, transport, unsafe
+  mode, id, or timestamps: token validation fails.
+- Reused challenge: confirmation is rejected after the first successful consume.
+- Legacy static token in required mode: rejected.
