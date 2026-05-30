@@ -63,8 +63,10 @@ Every action lands on a rung. The higher the rung, the more it asks first.
 | 🤝 **Stop & confirm** | send a draft, respond to an invite, move/delete, archive, flag, categorize, toggle a rule | dry-run first, then a one-time confirmation token; host approval in required mode |
 | ⚠️ **Unsafe raw** | capability-discovered raw Graph/EWS/OWA actions | guarded escape hatch; high-level tools are always preferred |
 
-There is **no direct "send"** anywhere — the only way mail leaves is
-`create_draft` → reviewed `send_draft`. Under the hood: mail search returns
+There is **no direct high-level "send"**: the normal tool path is
+`create_draft` → reviewed `send_draft`. Raw Graph/EWS/OWA escape hatches can
+still represent send-like actions, but only behind raw/unsafe policy plus
+dry-run, confirmation, and approval gates. Under the hood: mail search returns
 metadata via a strict field allow-list (never bodies), raw outputs are
 size-bounded and redacted, transports refuse unsafe redirects, and every
 dry-run / confirm / execute / reject can be audited. The agent does the busywork;
