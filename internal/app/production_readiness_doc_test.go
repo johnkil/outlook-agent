@@ -82,7 +82,7 @@ func TestProductionBacklogTracksExternalGates(t *testing.T) {
 		"## Completed External Gates",
 		"Hosted GitHub Actions CI",
 		"Installed MCP release smoke determinism",
-		"organization secret scanning",
+		"Repository secret scanning and protection",
 		"enterprise distribution",
 		"Graph OAuth",
 		"EWS enablement",
@@ -132,14 +132,14 @@ func TestProductionBacklogTracksRepositoryProtectionEvidence(t *testing.T) {
 	text := string(data)
 
 	for _, required := range []string{
-		"## Partially Completed External Gates",
-		"organization secret scanning and repository protection",
-		"Dependabot vulnerability alerts are enabled",
+		"## Completed External Gates",
+		"Repository secret scanning and protection",
+		"Dependabot security updates are enabled",
+		"secret scanning is enabled",
+		"push protection is enabled",
 		"main branch protection requires the hosted `test` status check",
 		"conversation resolution",
 		"enforces admin rules",
-		"secret scanning is not available for this repository",
-		"GitHub plan or organization policy",
 	} {
 		if !strings.Contains(text, required) {
 			t.Fatalf("expected production backlog to contain %q", required)
