@@ -5,28 +5,29 @@
 Giving an AI agent access to your mailbox is useful — and a little scary. You
 want it to summarize your inbox, find the right thread, check your calendar, and
 draft replies. You do **not** want it quietly sending mail, deleting messages,
-or rewriting your rules. 😬
+or rewriting your rules behind your back. 😬
 
 Outlook Agent sits in the middle. Agents reach Outlook through MCP, but every
 action runs through one small rule:
 
 > **Metadata is cheap. Content is explicit. Writes are gated. Raw access is unsafe.**
 
-It runs locally, works with OpenCode / Codex / any MCP-capable agent, and is an
-honest **MVP** — built to keep a *well-meaning* agent from costly mistakes, not
-to be a hard sandbox against one that has another way into your mailbox.
+It runs locally and works with OpenCode / Codex / any MCP-capable agent. The
+core is production-leaning — strict CI, bounded raw outputs, audit logging, and
+payload-bound host approvals — but read the honesty box below: it guards a
+*cooperative* agent, and an enterprise rollout is documented, not turnkey.
 
 ---
 
 ## 🤔 Is this for you?
 
 A good fit if you want an assistant that can triage your inbox, summarize
-threads, prepare draft replies, check your schedule, and do small mailbox
-cleanups **with confirmation** — all inside guardrails you can actually see.
+threads, prepare and send reviewed replies, respond to calendar invites, and
+tidy your mailbox — with every risky write passing through a gate you can see.
 
-Not the right fit *yet* if you want a fully autonomous bot that sends and deletes
-on its own, enterprise policy enforcement across many users, or a hard sandbox.
-Think **seatbelt, not vault**. 🪢
+Not the right fit if you want a fully autonomous bot that acts with no
+confirmation step, or a hard sandbox against an agent that *also* has its own
+unrestricted path to your mailbox. Outlook Agent is a **seatbelt, not a vault**. 🪢
 
 ---
 
@@ -38,11 +39,15 @@ You ask your agent:
 
 - 👀 It **looks around** — subjects, senders, times, your schedule.
 - 📖 It **opens** Daria's message body, because you pointed at that one.
-- ✍️ It **drafts** a reply and hands it back. It does **not** send it.
+- ✍️ It **drafts** a reply and hands it back.
 
-Then you say *"clear out these three newsletters."* Outlook Agent runs a
-**dry-run** ("here are the 3 I'd move to Deleted Items"), returns a one-time
-confirm token, and does nothing until that token comes back. 🤝
+It does **not** send it on its own. Sending is its own gated step: the agent
+calls a dry-run, the host can show you the review packet, and mail only leaves
+after a one-time confirmation. In required approval mode, the host also signs a
+payload-bound approval challenge that the agent cannot mint by itself.
+
+Same story for *"clear out these three newsletters"* — dry-run first, then your
+confirm, then the move. 🤝
 
 ---
 
@@ -52,15 +57,38 @@ Every action lands on a rung. The higher the rung, the more it asks first.
 
 | Rung | Examples | Behavior |
 | --- | --- | --- |
-| 👀 **Look around** | subjects, senders, times, calendar metadata | allowed directly |
-| 📖 **Open one thing** | one message body, one attachment | requires an explicit target — no "read everything" |
-| ✍️ **Prepare** | create a draft | allowed; sending is separate |
-| 🤝 **Stop & confirm** | move to Deleted Items, toggle a rule | dry-run first, then a one-time confirmation token |
-| ⚠️ **Unsafe raw** | raw Graph/EWS/OWA, destructive/unknown actions | requires `unsafe` mode; high-risk ones still need dry-run + confirm |
+| 👀 **Look around** | subjects, senders, times, calendar metadata, free/busy | allowed directly |
+| 📖 **Open one thing** | one message body, one attachment | requires an explicit message/attachment id |
+| ✍️ **Prepare** | create a draft / reply / forward draft | allowed; these are *save-only* and never send |
+| 🤝 **Stop & confirm** | send a draft, respond to an invite, move/delete, archive, flag, categorize, toggle a rule | dry-run first, then a one-time confirmation token; host approval in required mode |
+| ⚠️ **Unsafe raw** | capability-discovered raw Graph/EWS/OWA actions | guarded escape hatch; high-level tools are always preferred |
 
-Under the hood: mail search returns metadata via a strict field allow-list (never
-bodies), raw outputs are size-bounded and redacted, and transports refuse unsafe
-redirects. The agent does the busywork; **you keep the keys.** 🔑
+There is **no direct "send"** anywhere — the only way mail leaves is
+`create_draft` → reviewed `send_draft`. Under the hood: mail search returns
+metadata via a strict field allow-list (never bodies), raw outputs are
+size-bounded and redacted, transports refuse unsafe redirects, and every
+dry-run / confirm / execute / reject can be audited. The agent does the busywork;
+**you keep the keys.** 🔑
+
+---
+
+## 🧰 What it can actually do
+
+**Read (direct):** search mail metadata · paginate with safe cursors
+(`search_next`) · explicit body reads with `mail.fetch_body` by id · list &
+fetch attachments by id · list calendar events · check free/busy · read mailbox
+settings & rule metadata.
+
+**Prepare (save-only, never sends):** draft · reply draft · reply-all draft ·
+forward draft.
+
+**Write (dry-run + confirm; host approval in required mode):** send a draft ·
+respond to a calendar invite (accept/decline/tentative) · move to Deleted Items ·
+move to a folder · archive · flag · categorize · mark read/unread ·
+enable/disable an existing rule.
+
+**Escape hatch:** a single policy-guarded `raw_action` for capability-discovered
+calls, when no high-level tool fits yet.
 
 ---
 
@@ -88,7 +116,7 @@ mkdir -p bin
 go build -o ./bin/outlook-agent ./cmd/outlook-agent
 ```
 
-When you're ready, point at a config and start the MCP server:
+When you're ready, point at a config and wire it into OpenCode:
 
 ```bash
 outlook-agent --config .local/outlook-agent.json auth check
@@ -98,12 +126,11 @@ outlook-agent setup opencode apply --binary outlook-agent --config .local/outloo
 outlook-agent --config .local/outlook-agent.json mcp
 ```
 
-This writes public OpenCode project config and skills without reading secrets.
-Then let the bundled
-[`skills/`](./skills) drive ordinary requests:
-
-For scripts that only need the MCP JSON snippet, the compatibility command
+The setup command writes public OpenCode project config and bundled skills
+without reading secrets. For scripts that only need the MCP JSON snippet,
 `outlook-agent setup opencode --print` still prints the local server block.
+
+Then let the bundled [`skills/`](./skills) drive ordinary requests:
 
 - [`outlook-mail`](./skills/outlook-mail) — metadata-first inspection & draft prep
 - [`outlook-mail-inbox-triage`](./skills/outlook-mail-inbox-triage) — inbox buckets & follow-ups
@@ -117,40 +144,45 @@ when they want client-local skill discovery.
 
 ## 🔌 Backends
 
-Same tools and same safety ladder, whichever door you use:
+Same safety ladder, different coverage:
 
 - **Microsoft Graph** — the primary, most complete path. Device-code sign-in,
-  self-refreshing tokens, the full tool surface. Start with a read-only Graph enrollment; use a write-capable Graph profile with `Mail.ReadWrite` and
+  self-refreshing tokens, safe cursors, rich review packets, and the broadest
+  high-level tool surface. Start with a read-only Graph enrollment; use a
+  write-capable Graph profile with `Mail.ReadWrite` and
   `MailboxSettings.ReadWrite` only when you want guarded writes. ✅
-- **EWS** — earlier and narrower; metadata-first reads plus guarded raw SOAP.
-  For Exchange/on-prem where Graph isn't available. 🌱
-- **OWA** — experimental, for locked-down setups where the others are blocked.
-  Uses OWA service discovery, so it's useful but inherently more fragile. 🧗
+- **EWS** — narrower compatibility backend; metadata-first reads plus guarded
+  raw SOAP for Exchange/on-prem setups where Graph is not available. 🌱
+- **OWA** — experimental fallback for locked-down setups where the others are
+  blocked. It uses OWA service discovery, so it is useful but inherently more
+  fragile than Graph. 🧗
 
 ---
 
 ## 🔐 Secrets
 
 Your config **never holds secrets** — only references to them. Inline passwords,
-tokens, and cookies are rejected on purpose.
+tokens, cookies, and canary values are rejected on purpose.
 
 ```text
-keychain:service/account     # macOS Keychain
-file:/absolute/path          # cross-platform, for CI/dev
+keychain:service/account     # macOS Keychain; writes require darwin+cgo
+file:/absolute/path          # cross-platform local/CI/dev secrets
 external:name                # operator-managed command provider
 ```
 
 File secrets must be **user-only** (`0600`); Outlook Agent refuses to read one
 that's group- or world-readable. External secrets are resolved from
 `secrets.external.<name>` config entries with an absolute command path plus an
-argv array; Outlook Agent invokes the command directly without a shell, applies
+argv array. Outlook Agent invokes the command directly without a shell, applies
 a timeout and output cap, trims the trailing newline, and keeps command output
-out of error messages. On macOS, Keychain reads work through the platform
-store; Keychain writes require a local `darwin+cgo` build so Outlook Agent can
-use Security.framework without passing secret values through process arguments.
-If you use a `CGO_ENABLED=0` release binary, use `file:` or `external:` for
-commands that need to write refreshed credentials. For Graph,
-`auth graph-device-code` walks you through device-code sign-in instructions and
+out of error messages.
+
+On macOS, Keychain reads use the platform store. Keychain writes require a local
+`darwin+cgo` build so Outlook Agent can use Security.framework without passing
+secret values through process arguments. If you use a `CGO_ENABLED=0` release
+binary, use `file:` or `external:` for enrollment and refreshed credentials.
+
+For Graph, `auth graph-device-code` prints device-code sign-in instructions and
 stores + refreshes a JSON token credential behind your `secret_ref`. Advanced
 operators can override `settings.client_id`, `settings.scopes`, and
 `settings.device_code_url` in controlled Graph profiles; the stored credential
@@ -163,8 +195,8 @@ may contain a `refresh_token`.
 There are two confirmation layers:
 
 1. **Dry-run token** — one-time, payload-bound, generated by Outlook Agent.
-2. **Host approval challenge** — payload/review-bound, signed by your host
-   integration for high-risk actions when approval mode requires it.
+2. **Host approval challenge** — payload/review-bound, signed by your host for
+   high-risk actions when approval mode requires it.
 
 ```bash
 OUTLOOK_AGENT_APPROVAL_MODE="required"   # dev | optional | required
@@ -172,67 +204,73 @@ OUTLOOK_AGENT_APPROVAL_SECRET="host-held-hmac-secret"
 ```
 
 In required mode, high-risk actions return `requires_approval=true` plus an
-`approval_challenge` from dry-run. The host signs
-`approval_challenge.signing_payload` only after showing the review packet to a
-human, then passes
+`approval_challenge` from dry-run. The host shows the review packet to a human,
+signs `approval_challenge.signing_payload`, then passes
 `approval_challenge_id` and `approval_token` back at confirmation. In a properly
-wired host, the **agent never sees the secret**. Save-only draft creation
-(`mail.create_draft`, reply/reply-all/forward draft helpers) does not send mail
-and does not use the confirmation flow. Sending an existing draft
-(`mail.send_draft`) is send-like and always goes through dry-run review, exact
-confirmation, and required host approval. 🔒
+wired host, the **agent never sees the approval secret**. Save-only draft
+creation does not send mail and does not use the confirmation flow; sending an
+existing draft (`mail.send_draft`) is send-like and always goes through dry-run
+review, exact confirmation, and required host approval. 🔒
 
-`outlook-agent doctor` and `outlook.capabilities` expose approval readiness
-metadata so hosts can check whether required approval mode, signing payload
-version, challenge TTL, and secret presence are configured before live
-high-risk work. Dry-run responses also include an `approval` object that says
-whether approval is required for that exact action and whether a challenge was
-issued.
+`outlook-agent doctor`, `outlook.capabilities`, and dry-run responses expose
+approval readiness metadata so hosts can check whether required mode, signing
+payload version, challenge TTL, and secret presence are configured before live
+high-risk work.
 
 Review packets carry `completeness` and warning metadata. Typed Graph reviews
-include bounded context such as draft attachment names/sizes, rule old → new
-state, and calendar organizer/attendee/location metadata; raw Graph/EWS/OWA
-reviews are explicitly marked minimal when their semantics are not fully known.
+include bounded context such as draft recipients, subject, body preview/hash,
+attachment names/sizes, rule old → new state, and calendar organizer/attendee/
+location metadata. Raw Graph/EWS/OWA reviews are explicitly marked minimal when
+their semantics are not fully known.
 
-`OUTLOOK_AGENT_APPROVAL_TOKEN` remains as a legacy static token for optional
-mode compatibility. It is not considered production-grade because it is not
-bound to the dry-run payload or review.
+`OUTLOOK_AGENT_APPROVAL_TOKEN` remains only as a legacy static token for optional
+mode compatibility. It is not production-grade because it is not bound to the
+dry-run payload or review.
 
-See [Approval Host Integration](docs/APPROVAL_HOST_INTEGRATION.md) for the
-canonical signing payload, HMAC token format, TTL, and replay rules.
+See [`docs/APPROVAL_HOST_INTEGRATION.md`](./docs/APPROVAL_HOST_INTEGRATION.md)
+for the canonical signing payload, HMAC token format, TTL, replay rules, and the
+[`examples/approval-host-signer`](./examples/approval-host-signer) reference
+signer.
 
-Optional redacted audit logging can be enabled by the host/operator:
+---
+
+## 🧾 Audit log
+
+Off by default. Turn it on to get one JSON line per decision — `dry_run` /
+`confirm` / `execute` / `reject` — with action metadata and payload/review
+**fingerprints, never message content**:
 
 ```bash
-OUTLOOK_AGENT_AUDIT_LOG="stderr"
-OUTLOOK_AGENT_AUDIT_LOG_FILE="/absolute/path/outlook-agent-audit.jsonl"
+OUTLOOK_AGENT_AUDIT_LOG_FILE=/absolute/path/audit.jsonl   # append to a 0600 file
+OUTLOOK_AGENT_AUDIT_LOG=stderr                            # or stream to stderr
 ```
 
-Audit events are JSONL records for dry-run, confirm, execute, and reject
-decisions. They include action metadata plus payload/review fingerprints, never
-raw payloads, message bodies, attachment bytes, cookies, canary values, or
-tokens. File audit logs are created `0600`.
+Audit events never include raw payloads, message bodies, attachment bytes,
+cookies, canary values, approval secrets, or tokens.
 
 ---
 
 ## 🛡️ Honest things
 
-The write surface is **deliberately small** today: `mail.create_draft`,
-reply/reply-all/forward draft helpers, `mail.send_draft`,
-`mail.move_to_deleted_items`, reversible message organization helpers
-(`mail.move_to_folder`, `mail.archive`, `mail.flag`, `mail.categorize`,
-`mail.mark_read`), and `mail.rules.set_enabled` for enabling or disabling an
-existing rule with dry-run confirmation. `calendar.respond` handles
-accept/decline/tentative meeting responses as a send-like reviewed operation.
-Single explicit message organization changes can execute directly when the tool
-has the exact id and new state; bulk message organization changes require
-dry-run review and exact confirmation. For explicit body reads, use
-`mail.fetch_body`; everything higher-stakes beyond sending a reviewed draft and
-responding to an exact event — reschedule, cancel, or broader rule/settings
-writes — is intentionally not a high-level tool yet.
+Outlook Agent protects a **cooperative** agent working *through* this gateway. It
+cannot help if that same agent has another unrestricted path to your mailbox, if
+raw credentials leak elsewhere, or if a human intentionally confirms unsafe raw
+actions without reviewing them.
 
-The model protects a **cooperative** agent working *through* this gateway; it
-can't help if that same agent has another unrestricted path to your mailbox.
+The high-level write surface is deliberately bounded: save-only
+`mail.create_draft`, reviewed `mail.send_draft`, calendar invite responses,
+reversible message organization such as `mail.move_to_deleted_items`, and
+`mail.rules.set_enabled` for enabling or disabling an existing rule with
+dry-run confirmation. Broader settings/rule writes, arbitrary mailbox
+automation, calendar reschedule/cancel, and equal feature depth across all
+backends are not shipped as high-level tools yet.
+
+The public core is a local safety-gated runtime with CI gates for formatting,
+tests, race detection, vet, staticcheck, govulncheck, public-safety checks, and
+action-coverage smoke. The **enterprise rollout** — multi-user policy, tenant
+wiring, centralized approval, and release evidence for your environment — is
+documented as a target, not shipped turnkey. Treat those docs as a rollout path,
+not a guarantee.
 
 ---
 
@@ -241,8 +279,12 @@ can't help if that same agent has another unrestricted path to your mailbox.
 - [`docs/SECURITY_MODEL.md`](./docs/SECURITY_MODEL.md) — safety classes & confirmation flow
 - [`docs/MCP_COMPATIBILITY.md`](./docs/MCP_COMPATIBILITY.md) — MCP tool surface & versioning
 - [`docs/ACTION_COVERAGE.md`](./docs/ACTION_COVERAGE.md) — backend / action coverage
+- [`docs/APPROVAL_HOST_INTEGRATION.md`](./docs/APPROVAL_HOST_INTEGRATION.md) — wiring host approvals
 - [`docs/OPERATIONS.md`](./docs/OPERATIONS.md) — running it day to day
 - [`docs/OPENCODE.md`](./docs/OPENCODE.md) — OpenCode setup
+- [`docs/RELEASE.md`](./docs/RELEASE.md) — release build, verification, and dependency manifest
+- [`docs/RELEASE_EVIDENCE.md`](./docs/RELEASE_EVIDENCE.md) — per-release evidence template
+- [`docs/ENTERPRISE_ENABLEMENT.md`](./docs/ENTERPRISE_ENABLEMENT.md) — enterprise rollout target, not turnkey
 - [`SECURITY.md`](./SECURITY.md) — reporting a vulnerability (please don't paste real tokens or message bodies)
 
 ---
