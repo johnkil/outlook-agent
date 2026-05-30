@@ -320,3 +320,11 @@ round-trip through `KeychainStore.Put` and `KeychainStore.Get`, and deletes the
 temporary item. It does not print the secret value. If this check is skipped or
 fails in an environment, prefer `file:` with `0600` permissions or an
 operator-managed `external:` provider for write-capable credential storage.
+
+For release channels that expect non-interactive Keychain reads, document the
+binary identity and trust setup as part of the distribution process. Ad-hoc
+local builds and separately downloaded release binaries may appear as different
+applications to macOS, which can cause repeated prompts. Do not work around
+that by putting passwords in shell arguments or config files; use a signed
+distribution identity, an operator-managed Keychain ACL/trust setup, or an
+`external:` provider that owns its own credential prompt behavior.

@@ -112,4 +112,7 @@ Status: implemented initial slice.
 - Signed checksums.
 - Admin/operator docs.
 - Live opt-in smoke test profile.
+- Deterministic installed-release smoke for OpenCode setup and MCP connection.
+- macOS Keychain trust guidance for signed release binaries.
+- OWA-compatible live validation evidence with interrupted-fixture recovery.
 - Backward-compatible MCP tool versioning.

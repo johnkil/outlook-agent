@@ -45,7 +45,9 @@ Go version:
 - Release URL:
 - macOS keychain integration:
 - live Graph read-only smoke:
+- live OWA-compatible smoke:
 - published install path smoke:
+- installed OpenCode MCP smoke:
 
 ### Artifacts
 
