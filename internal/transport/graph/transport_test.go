@@ -1016,6 +1016,77 @@ func TestTransportDryRunMailSendDraftBuildsReview(t *testing.T) {
 	}
 }
 
+func TestTransportDryRunMailSendDraftFollowsAttachmentMetadataNextLink(t *testing.T) {
+	var sawSecondPage bool
+	var server *httptest.Server
+	server = httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		if request.Method != http.MethodGet {
+			t.Fatalf("unexpected request: %s %s", request.Method, request.URL.String())
+		}
+		response.Header().Set("Content-Type", "application/json")
+		switch request.URL.Path {
+		case "/v1.0/me/messages/draft-1":
+			_ = json.NewEncoder(response).Encode(map[string]any{
+				"id":             "draft-1",
+				"subject":        "Draft subject",
+				"hasAttachments": true,
+			})
+		case "/v1.0/me/messages/draft-1/attachments":
+			if request.URL.Query().Get("$skiptoken") == "next" {
+				sawSecondPage = true
+				_ = json.NewEncoder(response).Encode(map[string]any{
+					"value": []any{
+						map[string]any{
+							"id":          "att-2",
+							"name":        "second.pdf",
+							"contentType": "application/pdf",
+							"size":        222,
+						},
+					},
+				})
+				return
+			}
+			_ = json.NewEncoder(response).Encode(map[string]any{
+				"@odata.nextLink": server.URL + "/v1.0/me/messages/draft-1/attachments?$skiptoken=next",
+				"value": []any{
+					map[string]any{
+						"id":          "att-1",
+						"name":        "first.pdf",
+						"contentType": "application/pdf",
+						"size":        111,
+					},
+				},
+			})
+		default:
+			t.Fatalf("unexpected request: %s %s", request.Method, request.URL.String())
+		}
+	}))
+	defer server.Close()
+
+	client := graph.NewTransport(graph.Config{
+		BaseURL:   server.URL + "/v1.0",
+		SecretRef: secret.Ref("memory:graph"),
+	}, secret.NewMemoryStore(map[string]string{"memory:graph": "token-secret"}), server.Client())
+
+	summary := client.DryRun(context.Background(), transport.ActionRequest{
+		Name:    "mail.send_draft",
+		Payload: map[string]any{"draft_id": "draft-1"},
+	})
+
+	if summary.Error != "" || summary.Review == nil || summary.Review.Completeness != transport.ReviewCompletenessComplete {
+		t.Fatalf("expected complete send draft review, got %#v", summary)
+	}
+	if !sawSecondPage {
+		t.Fatal("expected dry-run to fetch second attachment metadata page")
+	}
+	if got := summary.Review.Mail.AttachmentNames; strings.Join(got, ",") != "first.pdf,second.pdf" {
+		t.Fatalf("expected both attachment pages in review, got %#v", got)
+	}
+	if len(summary.Review.Mail.Attachments) != 2 || summary.Review.Mail.Attachments[1].Name != "second.pdf" {
+		t.Fatalf("expected attachment metadata from both pages, got %#v", summary.Review.Mail.Attachments)
+	}
+}
+
 func TestTransportDryRunMailSendDraftFailsWhenAttachmentMetadataUnavailable(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
 		response.Header().Set("Content-Type", "application/json")

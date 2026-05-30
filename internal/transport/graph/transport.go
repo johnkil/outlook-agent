@@ -699,7 +699,8 @@ type attachment struct {
 }
 
 type attachmentList struct {
-	Value []attachment `json:"value"`
+	NextLink string       `json:"@odata.nextLink"`
+	Value    []attachment `json:"value"`
 }
 
 type recipient struct {
@@ -787,6 +788,7 @@ const messageMetadataSelect = "id,subject,from,receivedDateTime,importance,isRea
 const messageBodySelect = "id,body"
 const draftSendReviewSelect = "id,subject,body,toRecipients,ccRecipients,bccRecipients,hasAttachments"
 const eventMetadataSelect = "id,subject,start,end,location,organizer,attendees,responseStatus"
+const maxReviewAttachmentPages = 10
 
 func (client *Transport) getMailFolder(ctx context.Context, mailbox string, folderID string) (mailFolder, error) {
 	requestURL, err := client.mailFolderURL(mailbox, folderID)
@@ -900,14 +902,22 @@ func (client *Transport) listAttachmentMetadataForReview(ctx context.Context, ma
 	if err != nil {
 		return nil, err
 	}
-	var response attachmentList
-	if err := client.getJSON(ctx, requestURL, &response); err != nil {
-		return nil, err
+	attachments := []attachment{}
+	for page := 0; page < maxReviewAttachmentPages; page++ {
+		var response attachmentList
+		if err := client.getJSON(ctx, requestURL, &response); err != nil {
+			return nil, err
+		}
+		attachments = append(attachments, response.Value...)
+		if strings.TrimSpace(response.NextLink) == "" {
+			return attachments, nil
+		}
+		requestURL, err = client.validAttachmentsNextLink(response.NextLink)
+		if err != nil {
+			return nil, err
+		}
 	}
-	if response.Value == nil {
-		return []attachment{}, nil
-	}
-	return response.Value, nil
+	return nil, fmt.Errorf("draft attachment metadata has more than %d pages", maxReviewAttachmentPages)
 }
 
 func (client *Transport) getMessageRuleForReview(ctx context.Context, mailbox string, folderID string, ruleID string) (messageRule, error) {
@@ -1649,6 +1659,54 @@ func isAllowedMessagesNextPath(relativePath string) bool {
 		return true
 	}
 	if strings.HasPrefix(relativePath, "/users/") && strings.Contains(relativePath, "/messages") {
+		return true
+	}
+	return false
+}
+
+func (client *Transport) validAttachmentsNextLink(nextLink string) (string, error) {
+	return client.validGraphNextLink(nextLink, isAllowedAttachmentsNextPath, "attachment next_link")
+}
+
+func (client *Transport) validGraphNextLink(nextLink string, allowedPath func(string) bool, label string) (string, error) {
+	raw := strings.TrimSpace(nextLink)
+	if raw == "" {
+		return "", fmt.Errorf("%s is empty", label)
+	}
+	parsed, err := url.Parse(raw)
+	if err != nil || !parsed.IsAbs() {
+		return "", fmt.Errorf("invalid %s", label)
+	}
+	if parsed.User != nil {
+		return "", fmt.Errorf("invalid %s userinfo", label)
+	}
+	baseRaw, err := client.config.normalizedBaseURL()
+	if err != nil {
+		return "", err
+	}
+	base, err := url.Parse(baseRaw)
+	if err != nil {
+		return "", err
+	}
+	if parsed.Scheme != base.Scheme || parsed.Host != base.Host {
+		return "", fmt.Errorf("%s host is not allowed", label)
+	}
+	basePath := strings.TrimRight(base.EscapedPath(), "/")
+	relativePath := strings.TrimPrefix(parsed.EscapedPath(), basePath)
+	if !strings.HasPrefix(relativePath, "/") {
+		return "", fmt.Errorf("%s path is outside Graph base", label)
+	}
+	if !allowedPath(relativePath) {
+		return "", fmt.Errorf("%s path is not allowed", label)
+	}
+	return parsed.String(), nil
+}
+
+func isAllowedAttachmentsNextPath(relativePath string) bool {
+	if strings.HasPrefix(relativePath, "/me/messages/") && strings.Contains(relativePath, "/attachments") {
+		return true
+	}
+	if strings.HasPrefix(relativePath, "/users/") && strings.Contains(relativePath, "/messages/") && strings.Contains(relativePath, "/attachments") {
 		return true
 	}
 	return false
