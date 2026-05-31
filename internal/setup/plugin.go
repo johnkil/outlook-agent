@@ -18,6 +18,7 @@ type PluginOptions struct {
 	Binary     string
 	ConfigPath string
 	Local      bool
+	Force      bool
 }
 
 type PluginPlan struct {
@@ -25,6 +26,7 @@ type PluginPlan struct {
 	Client     Client            `json:"client"`
 	Output     string            `json:"output"`
 	Local      bool              `json:"local"`
+	Force      bool              `json:"force,omitempty"`
 	Operations []PluginOperation `json:"operations"`
 }
 
@@ -72,6 +74,7 @@ func BuildPluginExportPlan(fsys fs.FS, options PluginOptions) (PluginPlan, error
 		Client:  options.Client,
 		Output:  output,
 		Local:   options.Local,
+		Force:   options.Force,
 	}
 	manifestPath, manifestContent, err := buildPluginManifest(options.Client, skills)
 	if err != nil {
@@ -95,10 +98,16 @@ func BuildPluginExportPlan(fsys fs.FS, options PluginOptions) (PluginPlan, error
 	sort.Slice(plan.Operations, func(left int, right int) bool {
 		return plan.Operations[left].TargetPath < plan.Operations[right].TargetPath
 	})
+	if err := validatePluginOutputForWrites(plan); err != nil {
+		return PluginPlan{}, err
+	}
 	return plan, nil
 }
 
 func ApplyPluginExportPlan(plan PluginPlan) error {
+	if err := validatePluginOutputForWrites(plan); err != nil {
+		return err
+	}
 	for _, operation := range plan.Operations {
 		if operation.Kind == OperationSkip {
 			continue
@@ -114,6 +123,36 @@ func ApplyPluginExportPlan(plan PluginPlan) error {
 		}
 	}
 	return nil
+}
+
+func validatePluginOutputForWrites(plan PluginPlan) error {
+	if plan.Force {
+		return nil
+	}
+	nonEmpty, err := dirIsNonEmpty(plan.Output)
+	if err != nil {
+		return err
+	}
+	if !nonEmpty {
+		return nil
+	}
+	for _, operation := range plan.Operations {
+		if operation.Kind != OperationSkip {
+			return fmt.Errorf("plugin output is non-empty; pass --force to write generated files: %s", plan.Output)
+		}
+	}
+	return nil
+}
+
+func dirIsNonEmpty(path string) (bool, error) {
+	entries, err := os.ReadDir(path)
+	if os.IsNotExist(err) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("read plugin output %s: %w", path, err)
+	}
+	return len(entries) > 0, nil
 }
 
 func addPluginOperation(plan *PluginPlan, output string, relativePath string, content []byte) error {
@@ -157,14 +196,10 @@ func buildPluginManifest(client Client, skills []Skill) (string, []byte, error) 
 		return filepath.Join(".codex-plugin", "plugin.json"), ensureNewline(content), err
 	case ClientClaudeCode:
 		payload := map[string]any{
-			"schema_version": "v1",
-			"name":           "outlook-agent",
-			"description":    "Portable Outlook Agent MCP and skills package.",
-			"mcp": map[string]string{
-				"path": "./.mcp.json",
-			},
-			"skills": "./skills/",
-			"host":   "claude-code",
+			"name":        "outlook-agent",
+			"description": "Portable Outlook Agent MCP and skills package.",
+			"skills":      "./skills/",
+			"mcpServers":  "./.mcp.json",
 		}
 		content, err := json.MarshalIndent(payload, "", "  ")
 		return filepath.Join(".claude-plugin", "plugin.json"), ensureNewline(content), err

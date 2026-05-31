@@ -14,6 +14,8 @@ func TestSetupDocsDocumentPortableAgentSetup(t *testing.T) {
 			"docs/SETUP_AGENT.md",
 			"docs/PLUGIN_PACKAGING.md",
 			"docs/BOOTSTRAP_CONTRACT.md",
+			"canonical source of truth",
+			"untrusted data",
 		},
 		filepath.Join("docs", "SETUP_SKILLS.md"): {
 			"outlook-agent setup skills plan",
@@ -21,15 +23,21 @@ func TestSetupDocsDocumentPortableAgentSetup(t *testing.T) {
 			"--client codex",
 			"--client claude-code",
 			"--allow-duplicates",
+			".opencode/skills",
+			".agents/skills",
+			".claude/skills",
 		},
 		filepath.Join("docs", "SETUP_AGENT.md"): {
 			"outlook-agent setup agent plan",
 			"--config .local/outlook-agent.json",
 			"does not read, copy, inline, or validate the private config file contents",
+			"untrusted data",
 		},
 		filepath.Join("docs", "PLUGIN_PACKAGING.md"): {
 			"outlook-agent setup plugin export",
+			"--force",
 			"--local",
+			"mcpServers",
 			"not a runtime safety",
 		},
 		filepath.Join("docs", "BOOTSTRAP_CONTRACT.md"): {

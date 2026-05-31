@@ -295,21 +295,25 @@ func skillsTargetRoot(client Client, scope Scope, projectDir string, homeDir str
 
 func detectDuplicateSkills(skills []Skill, clients []Client, plannedScope Scope, projectDir string, homeDir string) []DuplicateSkill {
 	duplicates := make([]DuplicateSkill, 0)
+	plannedRoots := plannedSkillRoots(clients, plannedScope, projectDir, homeDir)
 	for _, client := range clients {
-		projectRoot, _ := skillsTargetRoot(client, ScopeProject, projectDir, homeDir)
-		userRoot, _ := skillsTargetRoot(client, ScopeUser, projectDir, homeDir)
+		visibleRoots := skillsRuntimeVisibleRoots(client, projectDir, homeDir)
 		for _, skill := range skills {
-			locations := make([]string, 0, 2)
-			for _, root := range []string{projectRoot, userRoot} {
+			locations := make([]string, 0, len(visibleRoots)+len(plannedRoots))
+			for _, root := range visibleRoots {
 				path := filepath.Join(root, skill.Name, "SKILL.md")
 				if _, err := os.Stat(path); err == nil {
 					locations = append(locations, path)
 				}
 			}
-			plannedRoot, _ := skillsTargetRoot(client, plannedScope, projectDir, homeDir)
-			plannedPath := filepath.Join(plannedRoot, skill.Name, "SKILL.md")
-			if !stringSliceContains(locations, plannedPath) {
-				locations = append(locations, plannedPath)
+			for _, plannedRoot := range plannedRoots {
+				if !stringSliceContains(visibleRoots, plannedRoot) {
+					continue
+				}
+				plannedPath := filepath.Join(plannedRoot, skill.Name, "SKILL.md")
+				if !stringSliceContains(locations, plannedPath) {
+					locations = append(locations, plannedPath)
+				}
 			}
 			if len(locations) > 1 {
 				sort.Strings(locations)
@@ -329,6 +333,46 @@ func detectDuplicateSkills(skills []Skill, clients []Client, plannedScope Scope,
 		return duplicates[left].Client < duplicates[right].Client
 	})
 	return duplicates
+}
+
+func plannedSkillRoots(clients []Client, scope Scope, projectDir string, homeDir string) []string {
+	roots := make([]string, 0, len(clients))
+	for _, client := range clients {
+		root, err := skillsTargetRoot(client, scope, projectDir, homeDir)
+		if err != nil {
+			continue
+		}
+		if !stringSliceContains(roots, root) {
+			roots = append(roots, root)
+		}
+	}
+	return roots
+}
+
+func skillsRuntimeVisibleRoots(client Client, projectDir string, homeDir string) []string {
+	switch client {
+	case ClientOpenCode:
+		return []string{
+			filepath.Join(projectDir, ".opencode", "skills"),
+			filepath.Join(projectDir, ".agents", "skills"),
+			filepath.Join(projectDir, ".claude", "skills"),
+			filepath.Join(homeDir, ".config", "opencode", "skills"),
+			filepath.Join(homeDir, ".agents", "skills"),
+			filepath.Join(homeDir, ".claude", "skills"),
+		}
+	case ClientCodex:
+		return []string{
+			filepath.Join(projectDir, ".agents", "skills"),
+			filepath.Join(homeDir, ".agents", "skills"),
+		}
+	case ClientClaudeCode:
+		return []string{
+			filepath.Join(projectDir, ".claude", "skills"),
+			filepath.Join(homeDir, ".claude", "skills"),
+		}
+	default:
+		return nil
+	}
 }
 
 func sortSkillPlan(plan *SkillsPlan) {

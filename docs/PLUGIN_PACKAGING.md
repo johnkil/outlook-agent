@@ -24,12 +24,17 @@ Codex exports use manifest component pointers (`skills` and `mcpServers`) that
 point at `./skills/` and `./.mcp.json`. The bundled Codex `.mcp.json` uses a
 direct server map with `outlook-agent` as the server name.
 
-Claude Code exports use a manifest `skills` path pointer to `./skills/` and a
-bundled `.mcp.json` path pointer.
+Claude Code exports use the same manifest component pointers: `skills` points
+at `./skills/` and `mcpServers` points at `./.mcp.json`. The bundled Claude
+Code `.mcp.json` uses the standard `mcpServers` wrapper.
 
 Template exports do not include a binary, private config path, config contents,
 tokens, cookies, canaries, approval secrets, mailbox data, internal domains, or
 message bodies.
+
+Export refuses to write generated files into a non-empty output directory unless
+`--force` is passed. Re-running export against an identical generated package is
+allowed and produces only skipped operations.
 
 ## Local Export
 

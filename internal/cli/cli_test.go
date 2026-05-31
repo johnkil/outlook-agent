@@ -629,6 +629,48 @@ func TestSetupPluginExportUsesLeadingGlobalConfigForLocalExport(t *testing.T) {
 	}
 }
 
+func TestSetupPluginExportRequiresForceForNonEmptyOutput(t *testing.T) {
+	outputDir := filepath.Join(t.TempDir(), "plugin")
+	if err := os.MkdirAll(outputDir, 0o755); err != nil {
+		t.Fatalf("create output dir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(outputDir, "README.md"), []byte("notes\n"), 0o644); err != nil {
+		t.Fatalf("write existing file: %v", err)
+	}
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+
+	code := Run([]string{"setup", "plugin", "export", "--client", "codex", "--output", outputDir}, &stdout, &stderr)
+
+	if code == 0 {
+		t.Fatalf("expected non-zero exit without --force, stdout=%s", stdout.String())
+	}
+	if !strings.Contains(stderr.String(), "--force") {
+		t.Fatalf("expected --force error, got %s", stderr.String())
+	}
+}
+
+func TestSetupPluginExportForceAllowsNonEmptyOutput(t *testing.T) {
+	outputDir := filepath.Join(t.TempDir(), "plugin")
+	if err := os.MkdirAll(outputDir, 0o755); err != nil {
+		t.Fatalf("create output dir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(outputDir, "README.md"), []byte("notes\n"), 0o644); err != nil {
+		t.Fatalf("write existing file: %v", err)
+	}
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+
+	code := Run([]string{"setup", "plugin", "export", "--client", "codex", "--output", outputDir, "--force"}, &stdout, &stderr)
+
+	if code != 0 {
+		t.Fatalf("expected exit code 0 with --force, got %d, stderr=%s", code, stderr.String())
+	}
+	if _, err := os.Stat(filepath.Join(outputDir, ".codex-plugin", "plugin.json")); err != nil {
+		t.Fatalf("expected plugin manifest to be written: %v", err)
+	}
+}
+
 func TestSetupOpencodeApplyRequiresYes(t *testing.T) {
 	root := t.TempDir()
 	writeCLISkill(t, root, "outlook-mail", "# Mail\n")

@@ -50,4 +50,10 @@ Codex user skill with the same name are reported as duplicates because the
 client may see both. Different clients do not conflict merely because they have
 the same skill name.
 
+OpenCode can see overlapping project roots (`.opencode/skills`,
+`.agents/skills`, and `.claude/skills`) plus the matching user roots. A project
+install for `opencode`, or an `all` install that also writes Codex/Claude
+skills, is checked against that full visible set so duplicate skill names are
+reported before apply.
+
 If duplicates are intentional, pass `--allow-duplicates` to `apply`.

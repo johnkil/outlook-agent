@@ -1,11 +1,14 @@
 package setup
 
 import (
+	"bytes"
 	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	skillassets "github.com/johnkil/outlook-agent/skills"
 )
 
 func TestPluginExportCreatesCodexTemplatePackage(t *testing.T) {
@@ -88,6 +91,25 @@ func TestPluginExportCreatesClaudeTemplatePackage(t *testing.T) {
 	if manifest["skills"] != "./skills/" {
 		t.Fatalf("expected Claude manifest skills path pointer, got %s", string(manifestData))
 	}
+	if manifest["mcpServers"] != "./.mcp.json" {
+		t.Fatalf("expected Claude manifest MCP component pointer, got %s", string(manifestData))
+	}
+	for _, customField := range []string{"mcp", "host", "schema_version"} {
+		if _, ok := manifest[customField]; ok {
+			t.Fatalf("expected Claude manifest to omit non-component field %q, got %s", customField, string(manifestData))
+		}
+	}
+	mcpData, err := os.ReadFile(filepath.Join(outputDir, ".mcp.json"))
+	if err != nil {
+		t.Fatalf("read MCP package file: %v", err)
+	}
+	var mcp map[string]any
+	if err := json.Unmarshal(mcpData, &mcp); err != nil {
+		t.Fatalf("plugin MCP config is not JSON: %v; content=%s", err, string(mcpData))
+	}
+	if _, ok := mcp["mcpServers"].(map[string]any); !ok {
+		t.Fatalf("expected Claude plugin MCP file to use standard mcpServers config, got %s", string(mcpData))
+	}
 }
 
 func TestLocalPluginExportIncludesOnlyConfigPathString(t *testing.T) {
@@ -125,6 +147,110 @@ func TestLocalPluginExportIncludesOnlyConfigPathString(t *testing.T) {
 	}
 }
 
+func TestPluginExportCopiesCanonicalSkillsByteForByte(t *testing.T) {
+	outputDir := filepath.Join(t.TempDir(), "codex-plugin")
+	skills, err := LoadCanonicalSkills(skillassets.FS)
+	if err != nil {
+		t.Fatalf("LoadCanonicalSkills returned error: %v", err)
+	}
+	plan, err := BuildPluginExportPlan(skillassets.FS, PluginOptions{
+		Client: ClientCodex,
+		Output: outputDir,
+		Binary: "outlook-agent",
+	})
+	if err != nil {
+		t.Fatalf("BuildPluginExportPlan returned error: %v", err)
+	}
+	if err := ApplyPluginExportPlan(plan); err != nil {
+		t.Fatalf("ApplyPluginExportPlan returned error: %v", err)
+	}
+
+	for _, skill := range skills {
+		target := filepath.Join(outputDir, "skills", skill.Name, "SKILL.md")
+		data, err := os.ReadFile(target)
+		if err != nil {
+			t.Fatalf("read exported skill %s: %v", skill.Name, err)
+		}
+		if !bytes.Equal(data, skill.Content) {
+			t.Fatalf("exported skill %s differs from canonical source", skill.Name)
+		}
+	}
+	assertNoPrivateGeneratedMarkers(t, outputDir)
+}
+
+func TestPluginExportRefusesNonEmptyOutputWithoutForce(t *testing.T) {
+	outputDir := filepath.Join(t.TempDir(), "codex-plugin")
+	if err := os.MkdirAll(outputDir, 0o755); err != nil {
+		t.Fatalf("create output dir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(outputDir, "README.md"), []byte("operator notes\n"), 0o644); err != nil {
+		t.Fatalf("write existing file: %v", err)
+	}
+
+	_, err := BuildPluginExportPlan(testSkillFS(), PluginOptions{
+		Client: ClientCodex,
+		Output: outputDir,
+		Binary: "outlook-agent",
+	})
+	if err == nil || !strings.Contains(err.Error(), "--force") {
+		t.Fatalf("expected non-empty output to require --force, got %v", err)
+	}
+}
+
+func TestPluginExportAllowsIdenticalExistingOutputWithoutForce(t *testing.T) {
+	outputDir := filepath.Join(t.TempDir(), "codex-plugin")
+	plan, err := BuildPluginExportPlan(testSkillFS(), PluginOptions{
+		Client: ClientCodex,
+		Output: outputDir,
+		Binary: "outlook-agent",
+	})
+	if err != nil {
+		t.Fatalf("BuildPluginExportPlan returned error: %v", err)
+	}
+	if err := ApplyPluginExportPlan(plan); err != nil {
+		t.Fatalf("ApplyPluginExportPlan returned error: %v", err)
+	}
+
+	plan, err = BuildPluginExportPlan(testSkillFS(), PluginOptions{
+		Client: ClientCodex,
+		Output: outputDir,
+		Binary: "outlook-agent",
+	})
+	if err != nil {
+		t.Fatalf("expected identical generated output to be reusable without --force: %v", err)
+	}
+	for _, operation := range plan.Operations {
+		if operation.Kind != OperationSkip {
+			t.Fatalf("expected identical output to skip all operations, got %#v", plan.Operations)
+		}
+	}
+}
+
+func TestPluginExportAllowsNonEmptyOutputWithForce(t *testing.T) {
+	outputDir := filepath.Join(t.TempDir(), "codex-plugin")
+	if err := os.MkdirAll(filepath.Join(outputDir, "skills", "outlook-mail"), 0o755); err != nil {
+		t.Fatalf("create skill dir: %v", err)
+	}
+	staleSkill := filepath.Join(outputDir, "skills", "outlook-mail", "SKILL.md")
+	if err := os.WriteFile(staleSkill, []byte("stale\n"), 0o644); err != nil {
+		t.Fatalf("write stale skill: %v", err)
+	}
+
+	plan, err := BuildPluginExportPlan(testSkillFS(), PluginOptions{
+		Client: ClientCodex,
+		Output: outputDir,
+		Binary: "outlook-agent",
+		Force:  true,
+	})
+	if err != nil {
+		t.Fatalf("BuildPluginExportPlan returned error: %v", err)
+	}
+	if err := ApplyPluginExportPlan(plan); err != nil {
+		t.Fatalf("ApplyPluginExportPlan returned error: %v", err)
+	}
+	assertFileContent(t, staleSkill, testSkillContent("outlook-mail"))
+}
+
 func TestPluginExportRejectsUnsafeRelativeOutputTraversal(t *testing.T) {
 	_, err := BuildPluginExportPlan(testSkillFS(), PluginOptions{
 		Client: ClientCodex,
@@ -132,6 +258,41 @@ func TestPluginExportRejectsUnsafeRelativeOutputTraversal(t *testing.T) {
 	})
 	if err == nil || !strings.Contains(err.Error(), "output") {
 		t.Fatalf("expected output traversal rejection, got %v", err)
+	}
+}
+
+func assertNoPrivateGeneratedMarkers(t *testing.T, root string) {
+	t.Helper()
+	forbidden := []string{
+		"access_token",
+		"refresh_token",
+		"x-owa-canary",
+		"approval_secret",
+		"/users/",
+		"alfabank",
+		"alfaintra",
+		"moscow\\",
+	}
+	if err := filepath.WalkDir(root, func(path string, entry os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if entry.IsDir() {
+			return nil
+		}
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		lower := strings.ToLower(string(data))
+		for _, marker := range forbidden {
+			if strings.Contains(lower, marker) {
+				t.Fatalf("generated plugin file %s contains private marker %q", path, marker)
+			}
+		}
+		return nil
+	}); err != nil {
+		t.Fatalf("walk generated plugin package: %v", err)
 	}
 }
 
