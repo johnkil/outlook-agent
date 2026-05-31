@@ -90,6 +90,27 @@ platform archives, verifies the dependency manifest and `SHA256SUMS.txt`, runs
 runnable, checks the embedded `doctor` version, and removes the temporary output unless
 `OUTLOOK_AGENT_KEEP_RELEASE_SMOKE=1` is set.
 
+## GoReleaser snapshot parity
+
+GoReleaser is available as an additive snapshot/parity builder. It does not
+replace the tag release workflow yet. Existing release scripts remain the
+release safety gates and fallback publishing path.
+
+Run:
+
+```bash
+GOPATH=$PWD/.cache/go GOCACHE=$PWD/.cache/go-build GOMODCACHE=$PWD/.cache/go-mod scripts/goreleaser-snapshot-smoke.sh
+```
+
+The smoke runs `goreleaser release --snapshot --clean --skip=publish`, keeps the
+current archive naming contract, generates the dependency manifest with
+`scripts/release-sbom.sh`, adds it to `SHA256SUMS.txt`, and verifies the result
+with `scripts/release-verify.sh dist`.
+
+A future PR may switch tag publishing to GoReleaser only after snapshot parity
+and a real release verify the artifact contract. Keep later distribution work in
+`docs/RELEASE_DISTRIBUTION_ROADMAP.md`.
+
 ## Signed Checksums
 
 Set `OUTLOOK_AGENT_SIGN_RELEASE=1` to create a detached armored GPG signature:
