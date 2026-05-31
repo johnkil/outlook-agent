@@ -1,6 +1,15 @@
 ---
 name: outlook-mail-inbox-triage
 description: Triage an Outlook inbox into urgency and follow-up buckets using Outlook Agent MCP tools.
+license: Apache-2.0
+compatibility:
+  clients:
+    - opencode
+    - codex
+    - claude-code
+metadata:
+  mcp_server: outlook-agent
+  tool_prefix: outlook.
 ---
 
 # Outlook Mail Inbox Triage

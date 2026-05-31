@@ -1,6 +1,15 @@
 ---
 name: outlook-mail
 description: Work with Outlook mail through Outlook Agent MCP tools. Use when the user asks to inspect mail, summarize threads, draft replies, extract tasks, clean up subscriptions, or organize mailbox follow-up work.
+license: Apache-2.0
+compatibility:
+  clients:
+    - opencode
+    - codex
+    - claude-code
+metadata:
+  mcp_server: outlook-agent
+  tool_prefix: outlook.
 ---
 
 # Outlook Mail

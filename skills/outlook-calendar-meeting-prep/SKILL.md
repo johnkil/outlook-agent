@@ -1,6 +1,15 @@
 ---
 name: outlook-calendar-meeting-prep
 description: Prepare for an Outlook Calendar meeting using event and nearby mail context.
+license: Apache-2.0
+compatibility:
+  clients:
+    - opencode
+    - codex
+    - claude-code
+metadata:
+  mcp_server: outlook-agent
+  tool_prefix: outlook.
 ---
 
 # Outlook Calendar Meeting Prep

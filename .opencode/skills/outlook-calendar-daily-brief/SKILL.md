@@ -1,6 +1,15 @@
 ---
 name: outlook-calendar-daily-brief
 description: Build a one-day Outlook Calendar brief from Outlook Agent calendar tools.
+license: Apache-2.0
+compatibility:
+  clients:
+    - opencode
+    - codex
+    - claude-code
+metadata:
+  mcp_server: outlook-agent
+  tool_prefix: outlook.
 ---
 
 # Outlook Calendar Daily Brief

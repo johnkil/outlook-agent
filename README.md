@@ -117,19 +117,23 @@ mkdir -p bin
 go build -o ./bin/outlook-agent ./cmd/outlook-agent
 ```
 
-When you're ready, point at a config and wire it into OpenCode:
+When you're ready, point at a config and wire Outlook Agent into an agent
+client:
 
 ```bash
 outlook-agent --config .local/outlook-agent.json auth check
-outlook-agent setup opencode plan --binary outlook-agent --config .local/outlook-agent.json
-outlook-agent setup opencode diff --binary outlook-agent --config .local/outlook-agent.json
-outlook-agent setup opencode apply --binary outlook-agent --config .local/outlook-agent.json --yes --backup
+outlook-agent setup skills plan --client opencode --scope project
+outlook-agent setup agent plan --client opencode --scope project --config .local/outlook-agent.json
+outlook-agent setup agent diff --client opencode --scope project --config .local/outlook-agent.json
+outlook-agent setup agent apply --client opencode --scope project --config .local/outlook-agent.json --yes --backup
 outlook-agent --config .local/outlook-agent.json mcp
 ```
 
-The setup command writes public OpenCode project config and bundled skills
-without reading secrets. For scripts that only need the MCP JSON snippet,
-`outlook-agent setup opencode --print` still prints the local server block.
+The setup commands write public client config and bundled skills without
+reading secrets. OpenCode, Codex, and Claude Code are supported by
+`setup skills`; `setup agent` wires one client at a time. The older
+`outlook-agent setup opencode ...` command remains available for compatibility;
+`outlook-agent setup opencode --print` still prints the OpenCode MCP block.
 
 Then let the bundled [`skills/`](./skills) drive ordinary requests:
 
@@ -138,8 +142,10 @@ Then let the bundled [`skills/`](./skills) drive ordinary requests:
 - [`outlook-calendar`](./skills/outlook-calendar) — schedule & availability
 - [`outlook-calendar-daily-brief`](./skills/outlook-calendar-daily-brief) — today/tomorrow at a glance
 
-OpenCode users can also keep these workflows synced under `.opencode/skills`
-when they want client-local skill discovery.
+See [`docs/SETUP_SKILLS.md`](./docs/SETUP_SKILLS.md) and
+[`docs/SETUP_AGENT.md`](./docs/SETUP_AGENT.md) for client-specific paths,
+duplicate-skill warnings, and config-path safety. OpenCode project installs
+continue to use `.opencode/skills`.
 
 ---
 
@@ -287,6 +293,10 @@ not a guarantee.
 - [`docs/APPROVAL_HOST_INTEGRATION.md`](./docs/APPROVAL_HOST_INTEGRATION.md) — wiring host approvals
 - [`docs/OPERATIONS.md`](./docs/OPERATIONS.md) — running it day to day
 - [`docs/OPENCODE.md`](./docs/OPENCODE.md) — OpenCode setup
+- [`docs/SETUP_SKILLS.md`](./docs/SETUP_SKILLS.md) — portable skill installation
+- [`docs/SETUP_AGENT.md`](./docs/SETUP_AGENT.md) — MCP config + skills setup
+- [`docs/PLUGIN_PACKAGING.md`](./docs/PLUGIN_PACKAGING.md) — Codex / Claude Code plugin preview export
+- [`docs/BOOTSTRAP_CONTRACT.md`](./docs/BOOTSTRAP_CONTRACT.md) — generic internal bootstrap contract
 - [`docs/RELEASE.md`](./docs/RELEASE.md) — release build, verification, and dependency manifest
 - [`docs/RELEASE_EVIDENCE.md`](./docs/RELEASE_EVIDENCE.md) — per-release evidence template
 - [`docs/ENTERPRISE_ENABLEMENT.md`](./docs/ENTERPRISE_ENABLEMENT.md) — enterprise rollout target, not turnkey

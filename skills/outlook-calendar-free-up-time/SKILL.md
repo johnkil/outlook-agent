@@ -1,6 +1,15 @@
 ---
 name: outlook-calendar-free-up-time
 description: Find ways to open focus time in an Outlook calendar.
+license: Apache-2.0
+compatibility:
+  clients:
+    - opencode
+    - codex
+    - claude-code
+metadata:
+  mcp_server: outlook-agent
+  tool_prefix: outlook.
 ---
 
 # Outlook Calendar Free Up Time

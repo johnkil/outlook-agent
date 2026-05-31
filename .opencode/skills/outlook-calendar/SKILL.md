@@ -1,6 +1,15 @@
 ---
 name: outlook-calendar
 description: Work with Outlook Calendar through Outlook Agent MCP tools. Use for schedule review, availability, meeting prep, and safe calendar changes.
+license: Apache-2.0
+compatibility:
+  clients:
+    - opencode
+    - codex
+    - claude-code
+metadata:
+  mcp_server: outlook-agent
+  tool_prefix: outlook.
 ---
 
 # Outlook Calendar
