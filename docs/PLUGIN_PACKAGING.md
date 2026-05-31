@@ -53,7 +53,16 @@ Install it from GitHub with sparse checkout paths:
 
 ```bash
 codex plugin marketplace add johnkil/outlook-agent --sparse .agents/plugins --sparse plugins
+codex plugin marketplace list
 ```
+
+`list` prints the marketplace names and root paths in Codex versions that
+include that subcommand. Older local Codex CLI builds may only expose `add`,
+`upgrade`, and `remove`.
+
+After adding the marketplace, open Codex Plugins, select the Outlook Agent
+marketplace, install or enable `outlook-agent`, and restart the session so
+skills and MCP metadata reload.
 
 Refresh or remove the marketplace source with:
 

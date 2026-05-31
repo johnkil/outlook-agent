@@ -139,8 +139,11 @@ func TestCodexMarketplaceDocsUseAvailableCLICommands(t *testing.T) {
 	text := string(data)
 	for _, required := range []string{
 		"codex plugin marketplace add johnkil/outlook-agent --sparse .agents/plugins --sparse plugins",
+		"codex plugin marketplace list",
 		"codex plugin marketplace upgrade outlook-agent",
 		"codex plugin marketplace remove outlook-agent",
+		"open Codex Plugins",
+		"install or enable `outlook-agent`",
 		"Marketplace updates refresh plugin metadata, skills, and MCP packaging only.",
 		"does not update the `outlook-agent` binary",
 	} {
@@ -148,8 +151,8 @@ func TestCodexMarketplaceDocsUseAvailableCLICommands(t *testing.T) {
 			t.Fatalf("expected docs to contain %q", required)
 		}
 	}
-	if strings.Contains(text, "codex plugin marketplace list") {
-		t.Fatalf("current Codex CLI does not provide marketplace list; docs must not advertise it")
+	if strings.Contains(text, "current Codex CLI does not provide marketplace list") {
+		t.Fatalf("docs must not pin marketplace list guidance to an older local Codex CLI")
 	}
 }
 
