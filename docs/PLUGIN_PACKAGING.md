@@ -46,4 +46,3 @@ canonical `skills/` and should match byte-for-byte.
 
 If a host CLI provides plugin validation, run it manually against the generated
 directory before distribution.
-

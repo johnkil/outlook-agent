@@ -30,4 +30,3 @@ history, plugin package, generated skill file, or public documentation.
 
 Approval secrets should stay in a trusted host/operator environment and should
 not be exposed to the agent conversation context.
-

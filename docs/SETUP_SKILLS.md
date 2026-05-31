@@ -51,4 +51,3 @@ client may see both. Different clients do not conflict merely because they have
 the same skill name.
 
 If duplicates are intentional, pass `--allow-duplicates` to `apply`.
-
