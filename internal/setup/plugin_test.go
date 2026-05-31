@@ -28,9 +28,33 @@ func TestPluginExportCreatesCodexTemplatePackage(t *testing.T) {
 	assertJSONFile(t, filepath.Join(outputDir, ".codex-plugin", "plugin.json"))
 	assertJSONFile(t, filepath.Join(outputDir, ".mcp.json"))
 	assertFileContent(t, filepath.Join(outputDir, "skills", "outlook-mail", "SKILL.md"), testSkillContent("outlook-mail"))
+	manifestData, err := os.ReadFile(filepath.Join(outputDir, ".codex-plugin", "plugin.json"))
+	if err != nil {
+		t.Fatalf("read plugin manifest: %v", err)
+	}
+	var manifest map[string]any
+	if err := json.Unmarshal(manifestData, &manifest); err != nil {
+		t.Fatalf("plugin manifest is not JSON: %v; content=%s", err, string(manifestData))
+	}
+	if manifest["skills"] != "./skills/" || manifest["mcpServers"] != "./.mcp.json" {
+		t.Fatalf("expected Codex manifest component pointers, got %s", string(manifestData))
+	}
+	if _, hasCustomMCP := manifest["mcp"]; hasCustomMCP {
+		t.Fatalf("expected Codex manifest to omit custom mcp object, got %s", string(manifestData))
+	}
 	mcpData, err := os.ReadFile(filepath.Join(outputDir, ".mcp.json"))
 	if err != nil {
 		t.Fatalf("read MCP package file: %v", err)
+	}
+	var mcp map[string]any
+	if err := json.Unmarshal(mcpData, &mcp); err != nil {
+		t.Fatalf("plugin MCP config is not JSON: %v; content=%s", err, string(mcpData))
+	}
+	if _, ok := mcp["outlook-agent"].(map[string]any); !ok {
+		t.Fatalf("expected Codex plugin MCP file to use a direct server map, got %s", string(mcpData))
+	}
+	if _, hasMCPServers := mcp["mcpServers"]; hasMCPServers {
+		t.Fatalf("expected Codex plugin MCP file to omit mcpServers wrapper, got %s", string(mcpData))
 	}
 	if strings.Contains(string(mcpData), ".local/outlook-agent.json") || strings.Contains(string(mcpData), "/Users/") {
 		t.Fatalf("template plugin must not include local config paths: %s", string(mcpData))

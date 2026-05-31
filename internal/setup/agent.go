@@ -209,6 +209,9 @@ func mcpTargetPath(client Client, scope Scope, projectDir string, homeDir string
 			}
 			return filepath.Join(projectDir, "opencode.json"), projectDir, nil
 		case ClientCodex, ClientClaudeCode:
+			if client == ClientCodex {
+				return filepath.Join(projectDir, ".codex", "config.toml"), projectDir, nil
+			}
 			return filepath.Join(projectDir, ".mcp.json"), projectDir, nil
 		}
 	case ScopeUser:
@@ -225,7 +228,7 @@ func mcpTargetPath(client Client, scope Scope, projectDir string, homeDir string
 			}
 			return filepath.Join(homeDir, ".config", "opencode", "opencode.json"), homeDir, nil
 		case ClientCodex:
-			return filepath.Join(homeDir, ".codex", "mcp.json"), homeDir, nil
+			return filepath.Join(homeDir, ".codex", "config.toml"), homeDir, nil
 		case ClientClaudeCode:
 			return filepath.Join(homeDir, ".claude", "mcp.json"), homeDir, nil
 		}
@@ -236,20 +239,6 @@ func mcpTargetPath(client Client, scope Scope, projectDir string, homeDir string
 }
 
 func buildMCPConfigContent(client Client, targetPath string, currentContent []byte, binary string, configPath string) ([]byte, error) {
-	payload := map[string]any{}
-	if len(bytes.TrimSpace(currentContent)) > 0 {
-		data := currentContent
-		if strings.HasSuffix(targetPath, ".jsonc") {
-			var err error
-			data, err = hujson.Standardize(append([]byte(nil), currentContent...))
-			if err != nil {
-				return nil, fmt.Errorf("parse existing MCP config: %w", err)
-			}
-		}
-		if err := json.Unmarshal(data, &payload); err != nil {
-			return nil, fmt.Errorf("parse existing MCP config: %w", err)
-		}
-	}
 	command := []string{binary}
 	args := []string{}
 	if configPath != "" {
@@ -261,6 +250,10 @@ func buildMCPConfigContent(client Client, targetPath string, currentContent []by
 
 	switch client {
 	case ClientOpenCode:
+		payload, err := parseJSONConfig(targetPath, currentContent)
+		if err != nil {
+			return nil, err
+		}
 		server := map[string]any{
 			"type":    "local",
 			"command": command,
@@ -280,7 +273,25 @@ func buildMCPConfigContent(client Client, targetPath string, currentContent []by
 			}
 			return ensureNewline(content), nil
 		}
-	case ClientCodex, ClientClaudeCode:
+		content, err := json.MarshalIndent(payload, "", "  ")
+		if err != nil {
+			return nil, fmt.Errorf("marshal MCP config: %w", err)
+		}
+		return ensureNewline(content), nil
+	case ClientCodex:
+		if strings.HasSuffix(targetPath, ".toml") {
+			return buildCodexConfigTOMLContent(currentContent, binary, args), nil
+		}
+		content, err := buildCodexMCPJSONContent(currentContent, binary, args)
+		if err != nil {
+			return nil, err
+		}
+		return content, nil
+	case ClientClaudeCode:
+		payload, err := parseJSONConfig(targetPath, currentContent)
+		if err != nil {
+			return nil, err
+		}
 		servers, _ := payload["mcpServers"].(map[string]any)
 		if servers == nil {
 			servers = map[string]any{}
@@ -290,14 +301,113 @@ func buildMCPConfigContent(client Client, targetPath string, currentContent []by
 			"args":    args,
 		}
 		payload["mcpServers"] = servers
+		content, err := json.MarshalIndent(payload, "", "  ")
+		if err != nil {
+			return nil, fmt.Errorf("marshal MCP config: %w", err)
+		}
+		return ensureNewline(content), nil
 	default:
 		return nil, fmt.Errorf("unsupported client: %s", client)
+	}
+}
+
+func parseJSONConfig(targetPath string, currentContent []byte) (map[string]any, error) {
+	payload := map[string]any{}
+	if len(bytes.TrimSpace(currentContent)) == 0 {
+		return payload, nil
+	}
+	data := currentContent
+	if strings.HasSuffix(targetPath, ".jsonc") {
+		var err error
+		data, err = hujson.Standardize(append([]byte(nil), currentContent...))
+		if err != nil {
+			return nil, fmt.Errorf("parse existing MCP config: %w", err)
+		}
+	}
+	if err := json.Unmarshal(data, &payload); err != nil {
+		return nil, fmt.Errorf("parse existing MCP config: %w", err)
+	}
+	return payload, nil
+}
+
+func buildCodexMCPJSONContent(currentContent []byte, binary string, args []string) ([]byte, error) {
+	payload := map[string]any{}
+	if len(bytes.TrimSpace(currentContent)) > 0 {
+		if err := json.Unmarshal(currentContent, &payload); err != nil {
+			return nil, fmt.Errorf("parse existing MCP config: %w", err)
+		}
+	}
+	payload["outlook-agent"] = map[string]any{
+		"command": binary,
+		"args":    args,
 	}
 	content, err := json.MarshalIndent(payload, "", "  ")
 	if err != nil {
 		return nil, fmt.Errorf("marshal MCP config: %w", err)
 	}
 	return ensureNewline(content), nil
+}
+
+func buildCodexConfigTOMLContent(currentContent []byte, binary string, args []string) []byte {
+	base := strings.TrimRight(removeCodexMCPServerTOMLTable(string(currentContent)), "\n")
+	block := codexMCPServerTOMLBlock(binary, args)
+	if strings.TrimSpace(base) == "" {
+		return ensureNewline([]byte(block))
+	}
+	return ensureNewline([]byte(base + "\n\n" + block))
+}
+
+func removeCodexMCPServerTOMLTable(content string) string {
+	lines := strings.Split(content, "\n")
+	filtered := make([]string, 0, len(lines))
+	skipping := false
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if isTOMLHeader(trimmed) {
+			if isCodexOutlookAgentTOMLTable(trimmed) {
+				skipping = true
+				continue
+			}
+			skipping = false
+		}
+		if skipping {
+			continue
+		}
+		filtered = append(filtered, line)
+	}
+	return strings.Join(filtered, "\n")
+}
+
+func isTOMLHeader(trimmed string) bool {
+	return strings.HasPrefix(trimmed, "[") && strings.Contains(trimmed, "]")
+}
+
+func isCodexOutlookAgentTOMLTable(trimmed string) bool {
+	return trimmed == "[mcp_servers.outlook-agent]" ||
+		trimmed == `[mcp_servers."outlook-agent"]` ||
+		trimmed == `[mcp_servers.'outlook-agent']`
+}
+
+func codexMCPServerTOMLBlock(binary string, args []string) string {
+	return "[mcp_servers.outlook-agent]\n" +
+		"command = " + tomlString(binary) + "\n" +
+		"args = " + tomlStringArray(args) + "\n"
+}
+
+func tomlStringArray(values []string) string {
+	parts := make([]string, 0, len(values))
+	for _, value := range values {
+		parts = append(parts, tomlString(value))
+	}
+	return "[" + strings.Join(parts, ", ") + "]"
+}
+
+func tomlString(value string) string {
+	encoded, err := json.Marshal(value)
+	if err != nil {
+		return `""`
+	}
+	return string(encoded)
 }
 
 func patchOpenCodeJSONCMCPConfig(content []byte, server map[string]any) ([]byte, error) {

@@ -522,7 +522,7 @@ func TestSetupAgentPlanReportsMCPAndSkillsTargets(t *testing.T) {
 	if payload.Command != "setup agent plan" || payload.Client != "codex" {
 		t.Fatalf("unexpected setup agent plan identity: %#v", payload)
 	}
-	if payload.MCP.TargetPath != filepath.Join(projectDir, ".mcp.json") {
+	if payload.MCP.TargetPath != filepath.Join(projectDir, ".codex", "config.toml") {
 		t.Fatalf("expected MCP target under project, got %#v", payload.MCP)
 	}
 	if len(payload.Skills.Operations) == 0 || !strings.Contains(stdout.String(), filepath.Join(".agents", "skills", "outlook-mail", "SKILL.md")) {

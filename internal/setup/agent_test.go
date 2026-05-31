@@ -25,7 +25,7 @@ func TestBuildAgentPlanIncludesMCPConfigAndSkills(t *testing.T) {
 	if plan.Command != "setup agent plan" || plan.Client != ClientCodex || plan.Scope != ScopeProject {
 		t.Fatalf("unexpected plan identity: %#v", plan)
 	}
-	if plan.MCP.TargetPath != filepath.Join(projectDir, ".mcp.json") {
+	if plan.MCP.TargetPath != filepath.Join(projectDir, ".codex", "config.toml") {
 		t.Fatalf("expected Codex project MCP target, got %#v", plan.MCP)
 	}
 	if !plan.PrivatePathReferenceWritten {
@@ -34,7 +34,81 @@ func TestBuildAgentPlanIncludesMCPConfigAndSkills(t *testing.T) {
 	if len(plan.Skills.Operations) != 2 {
 		t.Fatalf("expected composed skills operations, got %#v", plan.Skills.Operations)
 	}
-	if !strings.Contains(string(plan.MCP.content), ".local/outlook-agent.json") {
+	text := string(plan.MCP.content)
+	for _, required := range []string{`[mcp_servers.outlook-agent]`, `command = "outlook-agent"`, `.local/outlook-agent.json`} {
+		if !strings.Contains(text, required) {
+			t.Fatalf("expected Codex config.toml content to include %q, got %s", required, text)
+		}
+	}
+	if strings.Contains(text, "mcpServers") {
+		t.Fatalf("expected Codex config.toml content, got JSON-style MCP config: %s", text)
+	}
+}
+
+func TestBuildAgentPlanPreservesExistingCodexConfigTOML(t *testing.T) {
+	projectDir := t.TempDir()
+	targetPath := filepath.Join(projectDir, ".codex", "config.toml")
+	if err := os.MkdirAll(filepath.Dir(targetPath), 0o755); err != nil {
+		t.Fatalf("create codex config dir: %v", err)
+	}
+	existing := `# Project settings.
+model = "gpt-5"
+
+[mcp_servers.context7]
+command = "context7-mcp"
+args = ["--stdio"]
+
+[mcp_servers.outlook-agent]
+command = "old-outlook-agent"
+args = ["old"]
+`
+	if err := os.WriteFile(targetPath, []byte(existing), 0o644); err != nil {
+		t.Fatalf("write existing codex config: %v", err)
+	}
+
+	plan, err := BuildAgentPlan(testSkillFS(), AgentOptions{
+		Client:     ClientCodex,
+		Scope:      ScopeProject,
+		ProjectDir: projectDir,
+		HomeDir:    t.TempDir(),
+		ConfigPath: ".local/outlook-agent.json",
+		Binary:     "outlook-agent",
+	})
+	if err != nil {
+		t.Fatalf("BuildAgentPlan returned error: %v", err)
+	}
+
+	text := string(plan.MCP.content)
+	for _, required := range []string{`# Project settings.`, `[mcp_servers.context7]`, `[mcp_servers.outlook-agent]`, `command = "outlook-agent"`, `.local/outlook-agent.json`} {
+		if !strings.Contains(text, required) {
+			t.Fatalf("expected planned Codex config to preserve/include %q, got %s", required, text)
+		}
+	}
+	if strings.Contains(text, "old-outlook-agent") {
+		t.Fatalf("expected existing outlook-agent server config to be replaced, got %s", text)
+	}
+	if strings.Count(text, "[mcp_servers.outlook-agent]") != 1 {
+		t.Fatalf("expected one outlook-agent server table, got %s", text)
+	}
+}
+
+func TestBuildAgentPlanUsesUserCodexConfigTOML(t *testing.T) {
+	homeDir := t.TempDir()
+	plan, err := BuildAgentPlan(testSkillFS(), AgentOptions{
+		Client:     ClientCodex,
+		Scope:      ScopeUser,
+		ProjectDir: t.TempDir(),
+		HomeDir:    homeDir,
+		ConfigPath: filepath.Join(homeDir, ".config", "outlook-agent", "config.json"),
+		Binary:     "outlook-agent",
+	})
+	if err != nil {
+		t.Fatalf("BuildAgentPlan returned error: %v", err)
+	}
+	if plan.MCP.TargetPath != filepath.Join(homeDir, ".codex", "config.toml") {
+		t.Fatalf("expected Codex user config.toml target, got %#v", plan.MCP)
+	}
+	if !strings.Contains(string(plan.MCP.content), "[mcp_servers.outlook-agent]") {
 		t.Fatalf("expected MCP content to include config path string, got %s", string(plan.MCP.content))
 	}
 }
@@ -210,7 +284,7 @@ func TestApplyAgentPlanRefusesDuplicatesBeforeWritingMCP(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "duplicate") {
 		t.Fatalf("expected duplicate refusal, got %v", err)
 	}
-	if _, statErr := os.Stat(filepath.Join(homeDir, ".codex", "mcp.json")); !os.IsNotExist(statErr) {
+	if _, statErr := os.Stat(filepath.Join(homeDir, ".codex", "config.toml")); !os.IsNotExist(statErr) {
 		t.Fatalf("expected no MCP write after duplicate refusal, stat err=%v", statErr)
 	}
 }

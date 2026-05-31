@@ -20,6 +20,10 @@ skills/*/SKILL.md
 .claude-plugin/plugin.json     # Claude Code
 ```
 
+Codex exports use manifest component pointers (`skills` and `mcpServers`) that
+point at `./skills/` and `./.mcp.json`. The bundled Codex `.mcp.json` uses a
+direct server map with `outlook-agent` as the server name.
+
 Template exports do not include a binary, private config path, config contents,
 tokens, cookies, canaries, approval secrets, mailbox data, internal domains, or
 message bodies.

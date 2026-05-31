@@ -80,7 +80,7 @@ func BuildPluginExportPlan(fsys fs.FS, options PluginOptions) (PluginPlan, error
 	if err := addPluginOperation(&plan, output, manifestPath, manifestContent); err != nil {
 		return PluginPlan{}, err
 	}
-	mcpContent, err := buildMCPConfigContent(options.Client, ".mcp.json", nil, options.Binary, pluginConfigPath(options))
+	mcpContent, err := buildPluginMCPConfigContent(options.Client, options.Binary, pluginConfigPath(options))
 	if err != nil {
 		return PluginPlan{}, err
 	}
@@ -145,33 +145,54 @@ func addPluginOperation(plan *PluginPlan, output string, relativePath string, co
 }
 
 func buildPluginManifest(client Client, skills []Skill) (string, []byte, error) {
-	skillEntries := make([]map[string]string, 0, len(skills))
-	for _, skill := range skills {
-		skillEntries = append(skillEntries, map[string]string{
-			"name": skill.Name,
-			"path": "./" + filepath.ToSlash(filepath.Join("skills", skill.Name, "SKILL.md")),
-		})
-	}
-	payload := map[string]any{
-		"schema_version": "v1",
-		"name":           "outlook-agent",
-		"description":    "Portable Outlook Agent MCP and skills package.",
-		"mcp": map[string]string{
-			"path": "./.mcp.json",
-		},
-		"skills": skillEntries,
-	}
 	switch client {
 	case ClientCodex:
-		payload["host"] = "codex"
+		payload := map[string]any{
+			"name":        "outlook-agent",
+			"description": "Portable Outlook Agent MCP and skills package.",
+			"skills":      "./skills/",
+			"mcpServers":  "./.mcp.json",
+		}
 		content, err := json.MarshalIndent(payload, "", "  ")
 		return filepath.Join(".codex-plugin", "plugin.json"), ensureNewline(content), err
 	case ClientClaudeCode:
-		payload["host"] = "claude-code"
+		skillEntries := make([]map[string]string, 0, len(skills))
+		for _, skill := range skills {
+			skillEntries = append(skillEntries, map[string]string{
+				"name": skill.Name,
+				"path": "./" + filepath.ToSlash(filepath.Join("skills", skill.Name, "SKILL.md")),
+			})
+		}
+		payload := map[string]any{
+			"schema_version": "v1",
+			"name":           "outlook-agent",
+			"description":    "Portable Outlook Agent MCP and skills package.",
+			"mcp": map[string]string{
+				"path": "./.mcp.json",
+			},
+			"skills": skillEntries,
+			"host":   "claude-code",
+		}
 		content, err := json.MarshalIndent(payload, "", "  ")
 		return filepath.Join(".claude-plugin", "plugin.json"), ensureNewline(content), err
 	default:
 		return "", nil, fmt.Errorf("unsupported plugin client: %s", client)
+	}
+}
+
+func buildPluginMCPConfigContent(client Client, binary string, configPath string) ([]byte, error) {
+	switch client {
+	case ClientCodex:
+		args := []string{}
+		if configPath != "" {
+			args = append(args, "--config", configPath)
+		}
+		args = append(args, "mcp")
+		return buildCodexMCPJSONContent(nil, binary, args)
+	case ClientClaudeCode:
+		return buildMCPConfigContent(client, ".mcp.json", nil, binary, configPath)
+	default:
+		return nil, fmt.Errorf("unsupported plugin client: %s", client)
 	}
 }
 
