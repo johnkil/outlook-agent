@@ -881,6 +881,74 @@ func TestLiveBinaryMCPStdioRawReversibleConfirmCleanupSmoke(t *testing.T) {
 	rawCleanupDone = true
 }
 
+func TestLiveBinaryMCPStdioInterruptedDraftRecoveryCleanupSmoke(t *testing.T) {
+	configPath := os.Getenv("OUTLOOK_AGENT_LIVE_CONFIG")
+	if configPath == "" {
+		t.Skip("OUTLOOK_AGENT_LIVE_CONFIG is not set")
+	}
+	if os.Getenv("OUTLOOK_AGENT_LIVE_MUTATION_SMOKE") != "1" {
+		t.Skip("OUTLOOK_AGENT_LIVE_MUTATION_SMOKE=1 is not set")
+	}
+	requireLiveApprovalSecret(t)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+	defer cancel()
+
+	args := []string{"--config", configPath}
+	if profile := os.Getenv("OUTLOOK_AGENT_LIVE_PROFILE"); profile != "" {
+		args = append(args, "--profile", profile)
+	}
+	args = append(args, "mcp")
+
+	session := connectLiveMCPSession(t, ctx, args, "stdio-live-interrupted-recovery-create")
+	authLiveMCPSession(t, ctx, session)
+
+	stamp := time.Now().UTC().Format("20060102T150405.000000000Z")
+	createDraft, err := session.CallTool(ctx, &mcp.CallToolParams{
+		Name: "outlook.mail_create_draft",
+		Arguments: map[string]any{
+			"subject": "outlook-agent interrupted recovery smoke draft " + stamp,
+			"body":    "Created by an opt-in Outlook Agent interrupted recovery live smoke.",
+			"to":      []string{},
+		},
+	})
+	if err != nil {
+		t.Fatalf("call mail_create_draft: %v", err)
+	}
+	if createDraft.IsError {
+		t.Fatalf("expected mail_create_draft success envelope, got %#v", createDraft)
+	}
+	var draftOutput struct {
+		Draft any `json:"draft"`
+	}
+	decodeStructuredContent(t, createDraft, &draftOutput)
+	draftID := messageIDFromToolValue(draftOutput.Draft)
+	if draftID == "" {
+		t.Fatalf("expected draft id in sanitized output, got %#v", draftOutput.Draft)
+	}
+
+	cleanupDone := false
+	defer func() {
+		if cleanupDone {
+			return
+		}
+		recoverySession := connectLiveMCPSession(t, ctx, args, "stdio-live-interrupted-recovery-deferred-cleanup")
+		defer recoverySession.Close()
+		authLiveMCPSession(t, ctx, recoverySession)
+		cleanupDraftFixture(t, ctx, recoverySession, draftID)
+	}()
+
+	if err := session.Close(); err != nil {
+		t.Fatalf("close interrupted create session: %v", err)
+	}
+
+	recoverySession := connectLiveMCPSession(t, ctx, args, "stdio-live-interrupted-recovery-cleanup")
+	defer recoverySession.Close()
+	authLiveMCPSession(t, ctx, recoverySession)
+	cleanupDraftFixture(t, ctx, recoverySession, draftID)
+	cleanupDone = true
+}
+
 func TestBinaryMCPStdioRejectsMissingExplicitConfig(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
@@ -926,6 +994,35 @@ func requireLiveApprovalSecret(t *testing.T) {
 	t.Helper()
 	if strings.TrimSpace(os.Getenv(approval.SecretEnv)) == "" {
 		t.Skip("OUTLOOK_AGENT_APPROVAL_SECRET is required for mutation smoke fixture cleanup")
+	}
+}
+
+func connectLiveMCPSession(t *testing.T, ctx context.Context, args []string, name string) *mcp.ClientSession {
+	t.Helper()
+	command := exec.CommandContext(ctx, buildBinary(t), args...)
+	client := mcp.NewClient(&mcp.Implementation{Name: name, Version: "0.0.1"}, nil)
+	session, err := client.Connect(ctx, &mcp.CommandTransport{Command: command, TerminateDuration: time.Second}, nil)
+	if err != nil {
+		t.Fatalf("connect to live stdio MCP server: %v", err)
+	}
+	return session
+}
+
+func authLiveMCPSession(t *testing.T, ctx context.Context, session *mcp.ClientSession) {
+	t.Helper()
+	auth, err := session.CallTool(ctx, &mcp.CallToolParams{Name: "outlook.auth_check"})
+	if err != nil {
+		t.Fatalf("call auth_check: %v", err)
+	}
+	if auth.IsError {
+		t.Fatalf("expected auth_check success, got %#v", auth)
+	}
+	var authOutput struct {
+		OK bool `json:"ok"`
+	}
+	decodeStructuredContent(t, auth, &authOutput)
+	if !authOutput.OK {
+		t.Fatalf("expected live auth_check ok output, got %#v", authOutput)
 	}
 }
 
