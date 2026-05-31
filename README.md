@@ -303,7 +303,7 @@ not a guarantee.
 - [`docs/OPENCODE.md`](./docs/OPENCODE.md) — OpenCode setup
 - [`docs/SETUP_SKILLS.md`](./docs/SETUP_SKILLS.md) — portable skill installation
 - [`docs/SETUP_AGENT.md`](./docs/SETUP_AGENT.md) — MCP config + skills setup
-- [`docs/PLUGIN_PACKAGING.md`](./docs/PLUGIN_PACKAGING.md) — Codex / Claude Code plugin preview export
+- [`docs/PLUGIN_PACKAGING.md`](./docs/PLUGIN_PACKAGING.md) — Codex marketplace package and plugin export
 - [`docs/BOOTSTRAP_CONTRACT.md`](./docs/BOOTSTRAP_CONTRACT.md) — generic internal bootstrap contract
 - [`docs/RELEASE.md`](./docs/RELEASE.md) — release build, verification, and dependency manifest
 - [`docs/RELEASE_EVIDENCE.md`](./docs/RELEASE_EVIDENCE.md) — per-release evidence template

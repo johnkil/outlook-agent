@@ -1,0 +1,37 @@
+{
+  "author": {
+    "name": "johnkil",
+    "url": "https://github.com/johnkil"
+  },
+  "description": "Safety-gated MCP bridge for Outlook mail and calendar.",
+  "homepage": "https://github.com/johnkil/outlook-agent",
+  "interface": {
+    "capabilities": [
+      "Read",
+      "Write"
+    ],
+    "category": "Productivity",
+    "defaultPrompt": [
+      "Use Outlook Agent to summarize today's inbox and calendar without opening message bodies unless needed.",
+      "Use Outlook Agent to draft a reply, then show the review packet before sending."
+    ],
+    "developerName": "johnkil",
+    "displayName": "Outlook Agent",
+    "longDescription": "Use Outlook Agent to let Codex inspect Outlook mail and calendar metadata, fetch explicit content, prepare drafts, and execute reviewed writes through dry-run, confirmation, and host approval gates.",
+    "shortDescription": "Safety-gated Outlook mail and calendar access for Codex."
+  },
+  "keywords": [
+    "outlook",
+    "mcp",
+    "model-context-protocol",
+    "email-agent",
+    "calendar-agent",
+    "agent-safety"
+  ],
+  "license": "Apache-2.0",
+  "mcpServers": "./.mcp.json",
+  "name": "outlook-agent",
+  "repository": "https://github.com/johnkil/outlook-agent",
+  "skills": "./skills/",
+  "version": "0.3.0"
+}
