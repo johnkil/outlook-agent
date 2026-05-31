@@ -398,14 +398,10 @@ func detectOpenCodeVisibleDuplicateWarnings(skills []Skill, clients []Client, sc
 	}
 
 	warnings := make([]string, 0)
-	openCodeProjectRoots := []string{
-		filepath.Join(projectDir, ".opencode", "skills"),
-		filepath.Join(projectDir, ".agents", "skills"),
-		filepath.Join(projectDir, ".claude", "skills"),
-	}
+	openCodeVisibleRoots := skillsRuntimeVisibleRoots(ClientOpenCode, projectDir, homeDir)
 	for _, skill := range skills {
-		locations := make([]string, 0, len(openCodeProjectRoots)+len(plannedRoots))
-		for _, root := range openCodeProjectRoots {
+		locations := make([]string, 0, len(openCodeVisibleRoots)+len(plannedRoots))
+		for _, root := range openCodeVisibleRoots {
 			path := filepath.Join(root, skill.Name, "SKILL.md")
 			if _, err := os.Stat(path); err == nil {
 				locations = append(locations, path)
@@ -429,7 +425,7 @@ func detectOpenCodeVisibleDuplicateWarnings(skills []Skill, clients []Client, sc
 
 func formatOpenCodeVisibleDuplicateWarning(skillName string, locations []string) string {
 	return fmt.Sprintf(
-		"OpenCode may see duplicate skill %q in this repository. OpenCode scans .opencode/skills, .agents/skills, and .claude/skills. Use one project-local skill root per repository unless duplicates are intentional. Locations: %s",
+		"OpenCode may see duplicate skill %q. OpenCode scans project .opencode/skills, .agents/skills, .claude/skills, and matching user skill roots. Use one OpenCode-visible skill root unless duplicates are intentional. Locations: %s",
 		skillName,
 		strings.Join(locations, ", "),
 	)

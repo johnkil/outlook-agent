@@ -245,6 +245,37 @@ func TestCodexProjectInstallWarnsWhenOpenCodeSkillsAlreadyExist(t *testing.T) {
 	}
 }
 
+func TestCodexProjectInstallWarnsWhenOpenCodeUserSkillsAlreadyExist(t *testing.T) {
+	projectDir := t.TempDir()
+	homeDir := t.TempDir()
+	existingOpenCodeSkill := filepath.Join(homeDir, ".config", "opencode", "skills", "outlook-mail", "SKILL.md")
+	if err := os.MkdirAll(filepath.Dir(existingOpenCodeSkill), 0o755); err != nil {
+		t.Fatalf("create opencode user skill dir: %v", err)
+	}
+	if err := os.WriteFile(existingOpenCodeSkill, []byte(testSkillContent("outlook-mail")), 0o644); err != nil {
+		t.Fatalf("write opencode user skill: %v", err)
+	}
+
+	plan, err := BuildSkillsPlan(testSkillFS(), SkillsOptions{
+		Client:     ClientCodex,
+		Scope:      ScopeProject,
+		ProjectDir: projectDir,
+		HomeDir:    homeDir,
+	})
+	if err != nil {
+		t.Fatalf("BuildSkillsPlan returned error: %v", err)
+	}
+	if len(plan.Duplicates) != 0 {
+		t.Fatalf("expected Codex install not to block on OpenCode-only user visibility warning, got %#v", plan.Duplicates)
+	}
+	assertWarningContains(t, plan.Warnings, "OpenCode may see duplicate skill \"outlook-mail\"")
+	assertWarningContains(t, plan.Warnings, filepath.Join(homeDir, ".config", "opencode", "skills", "outlook-mail", "SKILL.md"))
+	assertWarningContains(t, plan.Warnings, filepath.Join(projectDir, ".agents", "skills", "outlook-mail", "SKILL.md"))
+	if err := ApplySkillsPlan(plan, ApplyOptions{Yes: true}); err != nil {
+		t.Fatalf("expected warning-only duplicate plan to apply without allow-duplicates: %v", err)
+	}
+}
+
 func TestClaudeProjectInstallWarnsWhenOpenCodeSkillsAlreadyExist(t *testing.T) {
 	projectDir := t.TempDir()
 	homeDir := t.TempDir()
