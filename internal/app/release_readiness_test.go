@@ -147,11 +147,12 @@ func TestReleaseReadinessArtifactsExist(t *testing.T) {
 			"windows",
 			"amd64",
 			"arm64",
-			"github.com/johnkil/outlook-agent/internal/buildinfo.Version={{ .Version }}",
+			"github.com/johnkil/outlook-agent/internal/buildinfo.Version={{ .Tag }}",
 			"github.com/johnkil/outlook-agent/internal/buildinfo.Commit={{ .Commit }}",
 			"github.com/johnkil/outlook-agent/internal/buildinfo.Date={{ .Date }}",
+			"github.com/johnkil/outlook-agent/internal/buildinfo.Dirty={{ .IsGitDirty }}",
 			"github.com/johnkil/outlook-agent/internal/buildinfo.BuiltBy=goreleaser",
-			"outlook-agent_{{ .Version }}_{{ .Os }}_{{ .Arch }}",
+			"outlook-agent_{{ .Tag }}_{{ .Os }}_{{ .Arch }}",
 			"wrap_in_directory: true",
 			"format_overrides",
 			"goos: windows",
@@ -236,6 +237,23 @@ func TestGoReleaserConfigIsPublicSafe(t *testing.T) {
 	} {
 		if strings.Contains(text, forbidden) {
 			t.Fatalf("GoReleaser config contains forbidden marker %q", forbidden)
+		}
+	}
+}
+
+func TestGoReleaserConfigPreservesTagPrefix(t *testing.T) {
+	path := filepath.Join("..", "..", ".goreleaser.yaml")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read GoReleaser config %s: %v", path, err)
+	}
+	text := string(data)
+	for _, forbidden := range []string{
+		"buildinfo.Version={{ .Version }}",
+		"outlook-agent_{{ .Version }}_{{ .Os }}_{{ .Arch }}",
+	} {
+		if strings.Contains(text, forbidden) {
+			t.Fatalf("GoReleaser config uses tag-stripping .Version in release contract marker %q", forbidden)
 		}
 	}
 }

@@ -16,16 +16,17 @@ builds:
       - arm64
     ldflags:
       - -s -w
-      - -X github.com/johnkil/outlook-agent/internal/buildinfo.Version={{ .Version }}
+      - -X github.com/johnkil/outlook-agent/internal/buildinfo.Version={{ .Tag }}
       - -X github.com/johnkil/outlook-agent/internal/buildinfo.Commit={{ .Commit }}
       - -X github.com/johnkil/outlook-agent/internal/buildinfo.Date={{ .Date }}
+      - -X github.com/johnkil/outlook-agent/internal/buildinfo.Dirty={{ .IsGitDirty }}
       - -X github.com/johnkil/outlook-agent/internal/buildinfo.BuiltBy=goreleaser
 
 archives:
   - id: outlook-agent
     ids:
       - outlook-agent
-    name_template: "outlook-agent_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    name_template: "outlook-agent_{{ .Tag }}_{{ .Os }}_{{ .Arch }}"
     wrap_in_directory: true
     formats:
       - tar.gz
