@@ -186,15 +186,12 @@ func ApplySkillsPlan(plan SkillsPlan, options ApplyOptions) error {
 	if len(plan.Duplicates) > 0 && !options.AllowDuplicates {
 		return errors.New("duplicate skills detected; pass --allow-duplicates if intentional")
 	}
+	if err := validateSkillsApply(plan, options); err != nil {
+		return err
+	}
 	for _, operation := range plan.Operations {
 		if operation.Kind == OperationSkip {
 			continue
-		}
-		if operation.Kind == OperationUpdate && !options.Backup {
-			return fmt.Errorf("changed target requires --backup: %s", operation.TargetPath)
-		}
-		if err := rejectChildPathSymlinks(operation.rootPath, operation.TargetPath); err != nil {
-			return err
 		}
 		if err := os.MkdirAll(filepath.Dir(operation.TargetPath), 0o755); err != nil {
 			return fmt.Errorf("create target dir %s: %w", operation.TargetPath, err)
@@ -209,6 +206,21 @@ func ApplySkillsPlan(plan SkillsPlan, options ApplyOptions) error {
 			}
 		}
 		if err := atomicWriteFile(operation.TargetPath, operation.content, 0o644); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func validateSkillsApply(plan SkillsPlan, options ApplyOptions) error {
+	for _, operation := range plan.Operations {
+		if operation.Kind == OperationSkip {
+			continue
+		}
+		if operation.Kind == OperationUpdate && !options.Backup {
+			return fmt.Errorf("changed target requires --backup: %s", operation.TargetPath)
+		}
+		if err := rejectChildPathSymlinks(operation.rootPath, operation.TargetPath); err != nil {
 			return err
 		}
 	}

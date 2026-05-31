@@ -131,6 +131,9 @@ func TestApplySkillsPlanBacksUpChangedTargets(t *testing.T) {
 	if err := ApplySkillsPlan(plan, ApplyOptions{Yes: true}); err == nil {
 		t.Fatal("expected changed target to require backup")
 	}
+	if _, err := os.Stat(filepath.Join(projectDir, ".opencode", "skills", "outlook-calendar", "SKILL.md")); !os.IsNotExist(err) {
+		t.Fatalf("expected apply refusal before writing other skill files, stat err=%v", err)
+	}
 
 	if err := ApplySkillsPlan(plan, ApplyOptions{Yes: true, Backup: true}); err != nil {
 		t.Fatalf("ApplySkillsPlan returned error: %v", err)

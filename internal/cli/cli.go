@@ -91,7 +91,12 @@ func RunWithRuntime(args []string, stdout io.Writer, stderr io.Writer, runtime R
 		return runSetupSkills(setupArgs, stdout, stderr)
 	}
 	if setupArgs, ok := setupAgentArgsFromRaw(args); ok {
-		return runSetupAgent(setupArgs, stdout, stderr)
+		options, _, err := parseOptionsBeforeCommand(args)
+		if err != nil {
+			fmt.Fprintln(stderr, err)
+			return 1
+		}
+		return runSetupAgent(setupArgs, options, stdout, stderr)
 	}
 	if setupArgs, ok := setupPluginArgsFromRaw(args); ok {
 		return runSetupPlugin(setupArgs, stdout, stderr)
@@ -1133,11 +1138,14 @@ func runSetupSkills(args []string, stdout io.Writer, stderr io.Writer) int {
 	}
 }
 
-func runSetupAgent(args []string, stdout io.Writer, stderr io.Writer) int {
+func runSetupAgent(args []string, options Options, stdout io.Writer, stderr io.Writer) int {
 	settings, err := parseSetupAgentArgs(args)
 	if err != nil {
 		fmt.Fprintln(stderr, err)
 		return 1
+	}
+	if settings.ConfigPath == "" {
+		settings.ConfigPath = options.ConfigPath
 	}
 	plan, err := setupcore.BuildAgentPlan(skillassets.FS, setupcore.AgentOptions{
 		Client:     settings.Client,

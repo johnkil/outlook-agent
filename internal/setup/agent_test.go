@@ -139,7 +139,7 @@ func TestAgentPlanUsesExistingOpenCodeJSONCTarget(t *testing.T) {
 		t.Fatalf("expected existing opencode.jsonc target, got %#v", plan.MCP)
 	}
 	text := string(plan.MCP.content)
-	for _, required := range []string{`"custom": true`, `"other"`, `"outlook-agent"`} {
+	for _, required := range []string{`// Existing local config.`, `"custom": true`, `"other"`, `"outlook-agent"`} {
 		if !strings.Contains(text, required) {
 			t.Fatalf("expected planned JSONC content to preserve %q, got %s", required, text)
 		}

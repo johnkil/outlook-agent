@@ -530,6 +530,22 @@ func TestSetupAgentPlanReportsMCPAndSkillsTargets(t *testing.T) {
 	}
 }
 
+func TestSetupAgentUsesLeadingGlobalConfigWhenNoLocalConfig(t *testing.T) {
+	projectDir := t.TempDir()
+	homeDir := t.TempDir()
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+
+	code := Run([]string{"--config", ".local/outlook-agent.json", "setup", "agent", "diff", "--client", "codex", "--scope", "project", "--project-dir", projectDir, "--home-dir", homeDir, "--binary", "outlook-agent"}, &stdout, &stderr)
+
+	if code != 0 {
+		t.Fatalf("expected exit code 0, got %d, stderr=%s", code, stderr.String())
+	}
+	if !strings.Contains(stdout.String(), `"--config"`) || !strings.Contains(stdout.String(), `".local/outlook-agent.json"`) {
+		t.Fatalf("expected setup agent diff to include leading global config, got %s", stdout.String())
+	}
+}
+
 func TestSetupAgentApplyRequiresYesAndWritesMCPAndSkills(t *testing.T) {
 	projectDir := t.TempDir()
 	homeDir := t.TempDir()

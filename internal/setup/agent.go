@@ -125,15 +125,8 @@ func ApplyAgentPlan(plan AgentPlan, options ApplyOptions) error {
 	if len(plan.Skills.Duplicates) > 0 && !options.AllowDuplicates {
 		return errors.New("duplicate skills detected; pass --allow-duplicates if intentional")
 	}
-	for _, operation := range plan.Skills.Operations {
-		if operation.Kind == OperationUpdate && !options.Backup {
-			return fmt.Errorf("changed target requires --backup: %s", operation.TargetPath)
-		}
-		if operation.Kind != OperationSkip {
-			if err := rejectChildPathSymlinks(operation.rootPath, operation.TargetPath); err != nil {
-				return err
-			}
-		}
+	if err := validateSkillsApply(plan.Skills, options); err != nil {
+		return err
 	}
 	if plan.MCP.Kind == OperationUpdate && !options.Backup {
 		return fmt.Errorf("changed MCP target requires --backup: %s", plan.MCP.TargetPath)
@@ -268,17 +261,25 @@ func buildMCPConfigContent(client Client, targetPath string, currentContent []by
 
 	switch client {
 	case ClientOpenCode:
+		server := map[string]any{
+			"type":    "local",
+			"command": command,
+			"enabled": true,
+		}
 		payload["$schema"] = "https://opencode.ai/config.json"
 		mcp, _ := payload["mcp"].(map[string]any)
 		if mcp == nil {
 			mcp = map[string]any{}
 		}
-		mcp["outlook-agent"] = map[string]any{
-			"type":    "local",
-			"command": command,
-			"enabled": true,
-		}
+		mcp["outlook-agent"] = server
 		payload["mcp"] = mcp
+		if strings.HasSuffix(targetPath, ".jsonc") && len(bytes.TrimSpace(currentContent)) > 0 {
+			content, err := patchOpenCodeJSONCMCPConfig(currentContent, server)
+			if err != nil {
+				return nil, fmt.Errorf("patch MCP config: %w", err)
+			}
+			return ensureNewline(content), nil
+		}
 	case ClientCodex, ClientClaudeCode:
 		servers, _ := payload["mcpServers"].(map[string]any)
 		if servers == nil {
@@ -297,6 +298,107 @@ func buildMCPConfigContent(client Client, targetPath string, currentContent []by
 		return nil, fmt.Errorf("marshal MCP config: %w", err)
 	}
 	return ensureNewline(content), nil
+}
+
+func patchOpenCodeJSONCMCPConfig(content []byte, server map[string]any) ([]byte, error) {
+	value, err := hujson.Parse(content)
+	if err != nil {
+		return nil, err
+	}
+	operations := []map[string]any{}
+	schemaValue := "https://opencode.ai/config.json"
+	if found := value.Find("/$schema"); found == nil || !hujsonValueEqualGo(found, schemaValue) {
+		operations = append(operations, map[string]any{
+			"op":    jsoncPatchOp(&value, "/$schema"),
+			"path":  "/$schema",
+			"value": schemaValue,
+		})
+	}
+	if !hujsonObjectAt(&value, "/mcp") {
+		operations = append(operations, map[string]any{
+			"op":    jsoncPatchOp(&value, "/mcp"),
+			"path":  "/mcp",
+			"value": map[string]any{"outlook-agent": server},
+		})
+	} else if !hujsonObjectAt(&value, "/mcp/outlook-agent") {
+		operations = append(operations, map[string]any{
+			"op":    jsoncPatchOp(&value, "/mcp/outlook-agent"),
+			"path":  "/mcp/outlook-agent",
+			"value": server,
+		})
+	} else {
+		for _, key := range []string{"type", "command", "enabled"} {
+			path := "/mcp/outlook-agent/" + escapeJSONPointerToken(key)
+			if found := value.Find(path); found != nil && hujsonValueEqualGo(found, server[key]) {
+				continue
+			}
+			operations = append(operations, map[string]any{
+				"op":    jsoncPatchOp(&value, path),
+				"path":  path,
+				"value": server[key],
+			})
+		}
+	}
+	if len(operations) == 0 {
+		return append([]byte(nil), content...), nil
+	}
+	patch, err := json.Marshal(operations)
+	if err != nil {
+		return nil, err
+	}
+	if err := value.Patch(patch); err != nil {
+		return nil, err
+	}
+	return value.Pack(), nil
+}
+
+func jsoncPatchOp(value *hujson.Value, path string) string {
+	if value.Find(path) == nil {
+		return "add"
+	}
+	return "replace"
+}
+
+func hujsonObjectAt(value *hujson.Value, path string) bool {
+	found := value.Find(path)
+	if found == nil {
+		return false
+	}
+	_, ok := found.Value.(*hujson.Object)
+	return ok
+}
+
+func hujsonValueEqualGo(value *hujson.Value, expected any) bool {
+	actual, err := hujson.Standardize(append([]byte(nil), value.Pack()...))
+	if err != nil {
+		return false
+	}
+	expectedJSON, err := json.Marshal(expected)
+	if err != nil {
+		return false
+	}
+	actualCompact, err := compactJSON(actual)
+	if err != nil {
+		return false
+	}
+	expectedCompact, err := compactJSON(expectedJSON)
+	if err != nil {
+		return false
+	}
+	return bytes.Equal(actualCompact, expectedCompact)
+}
+
+func compactJSON(content []byte) ([]byte, error) {
+	var buffer bytes.Buffer
+	if err := json.Compact(&buffer, content); err != nil {
+		return nil, err
+	}
+	return buffer.Bytes(), nil
+}
+
+func escapeJSONPointerToken(token string) string {
+	token = strings.ReplaceAll(token, "~", "~0")
+	return strings.ReplaceAll(token, "/", "~1")
 }
 
 func projectConfigWarnings(scope Scope, configPath string) []string {
