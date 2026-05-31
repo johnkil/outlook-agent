@@ -209,14 +209,11 @@ func testSkillContent(name string) string {
 		"name: " + name + "\n" +
 		"description: Test skill " + name + ".\n" +
 		"license: Apache-2.0\n" +
-		"compatibility:\n" +
-		"  clients:\n" +
-		"    - opencode\n" +
-		"    - codex\n" +
-		"    - claude-code\n" +
+		"compatibility: OpenCode, Codex, and Claude Code with the outlook-agent MCP server configured.\n" +
 		"metadata:\n" +
-		"  mcp_server: outlook-agent\n" +
-		"  tool_prefix: outlook.\n" +
+		"  outlook_agent_mcp_server: outlook-agent\n" +
+		"  outlook_agent_tool_prefix: outlook.\n" +
+		"  outlook_agent_clients: opencode,codex,claude-code\n" +
 		"---\n" +
 		"\n" +
 		"# " + name + "\n"

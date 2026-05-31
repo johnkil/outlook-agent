@@ -31,12 +31,13 @@ type Skill struct {
 }
 
 type SkillMetadata struct {
-	Name        string
-	Description string
-	License     string
-	Clients     []Client
-	MCPServer   string
-	ToolPrefix  string
+	Name          string
+	Description   string
+	License       string
+	Compatibility string
+	Clients       []Client
+	MCPServer     string
+	ToolPrefix    string
 }
 
 func LoadCanonicalSkills(fsys fs.FS) ([]Skill, error) {
@@ -103,12 +104,21 @@ func parseSkillMetadata(content []byte) (SkillMetadata, error) {
 			section, subsection = "", ""
 		case trimmed == "compatibility:":
 			section, subsection = "compatibility", ""
+		case strings.HasPrefix(trimmed, "compatibility:"):
+			metadata.Compatibility = strings.TrimSpace(strings.TrimPrefix(trimmed, "compatibility:"))
+			section, subsection = "", ""
 		case section == "compatibility" && trimmed == "clients:":
 			subsection = "clients"
 		case section == "compatibility" && subsection == "clients" && strings.HasPrefix(trimmed, "- "):
 			metadata.Clients = append(metadata.Clients, Client(strings.TrimSpace(strings.TrimPrefix(trimmed, "- "))))
 		case trimmed == "metadata:":
 			section, subsection = "metadata", ""
+		case section == "metadata" && strings.HasPrefix(trimmed, "outlook_agent_mcp_server:"):
+			metadata.MCPServer = strings.TrimSpace(strings.TrimPrefix(trimmed, "outlook_agent_mcp_server:"))
+		case section == "metadata" && strings.HasPrefix(trimmed, "outlook_agent_tool_prefix:"):
+			metadata.ToolPrefix = strings.TrimSpace(strings.TrimPrefix(trimmed, "outlook_agent_tool_prefix:"))
+		case section == "metadata" && strings.HasPrefix(trimmed, "outlook_agent_clients:"):
+			metadata.Clients = parseSkillClients(strings.TrimSpace(strings.TrimPrefix(trimmed, "outlook_agent_clients:")))
 		case section == "metadata" && strings.HasPrefix(trimmed, "mcp_server:"):
 			metadata.MCPServer = strings.TrimSpace(strings.TrimPrefix(trimmed, "mcp_server:"))
 		case section == "metadata" && strings.HasPrefix(trimmed, "tool_prefix:"):
@@ -136,4 +146,15 @@ func parseSkillMetadata(content []byte) (SkillMetadata, error) {
 		return SkillMetadata{}, fmt.Errorf("missing tool_prefix")
 	}
 	return metadata, nil
+}
+
+func parseSkillClients(value string) []Client {
+	clients := make([]Client, 0)
+	for _, part := range strings.Split(value, ",") {
+		client := strings.TrimSpace(part)
+		if client != "" {
+			clients = append(clients, Client(client))
+		}
+	}
+	return clients
 }
