@@ -230,7 +230,7 @@ func mcpTargetPath(client Client, scope Scope, projectDir string, homeDir string
 		case ClientCodex:
 			return filepath.Join(homeDir, ".codex", "config.toml"), homeDir, nil
 		case ClientClaudeCode:
-			return filepath.Join(homeDir, ".claude", "mcp.json"), homeDir, nil
+			return filepath.Join(homeDir, ".claude.json"), homeDir, nil
 		}
 	default:
 		return "", "", fmt.Errorf("unsupported scope: %s", scope)
@@ -379,13 +379,25 @@ func removeCodexMCPServerTOMLTable(content string) string {
 }
 
 func isTOMLHeader(trimmed string) bool {
-	return strings.HasPrefix(trimmed, "[") && strings.Contains(trimmed, "]")
+	return tomlHeader(trimmed) != ""
 }
 
 func isCodexOutlookAgentTOMLTable(trimmed string) bool {
-	return trimmed == "[mcp_servers.outlook-agent]" ||
-		trimmed == `[mcp_servers."outlook-agent"]` ||
-		trimmed == `[mcp_servers.'outlook-agent']`
+	header := tomlHeader(trimmed)
+	return header == "[mcp_servers.outlook-agent]" ||
+		header == `[mcp_servers."outlook-agent"]` ||
+		header == `[mcp_servers.'outlook-agent']`
+}
+
+func tomlHeader(trimmed string) string {
+	if !strings.HasPrefix(trimmed, "[") {
+		return ""
+	}
+	end := strings.Index(trimmed, "]")
+	if end < 0 {
+		return ""
+	}
+	return strings.TrimSpace(trimmed[:end+1])
 }
 
 func codexMCPServerTOMLBlock(binary string, args []string) string {

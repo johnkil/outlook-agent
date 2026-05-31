@@ -25,11 +25,11 @@ Use `--binary <path-or-command>` when `outlook-agent` is not on `PATH`.
 | `codex` | `project` | `.codex/config.toml` |
 | `codex` | `user` | `~/.codex/config.toml` |
 | `claude-code` | `project` | `.mcp.json` |
-| `claude-code` | `user` | `~/.claude/mcp.json` |
+| `claude-code` | `user` | `~/.claude.json` |
 
 Codex uses `config.toml` with `[mcp_servers.outlook-agent]`. Claude Code
-continues to use `.mcp.json`. Review `diff` before applying to shared project
-configuration.
+uses `.mcp.json` for project scope and `~/.claude.json` for user scope. Review
+`diff` before applying to shared project configuration.
 
 ## Config Path Safety
 

@@ -92,6 +92,43 @@ args = ["old"]
 	}
 }
 
+func TestBuildAgentPlanReplacesCommentedCodexMCPTable(t *testing.T) {
+	projectDir := t.TempDir()
+	targetPath := filepath.Join(projectDir, ".codex", "config.toml")
+	if err := os.MkdirAll(filepath.Dir(targetPath), 0o755); err != nil {
+		t.Fatalf("create codex config dir: %v", err)
+	}
+	existing := `model = "gpt-5"
+
+[mcp_servers.outlook-agent] # Outlook Agent.
+command = "old-outlook-agent"
+args = ["old"]
+`
+	if err := os.WriteFile(targetPath, []byte(existing), 0o644); err != nil {
+		t.Fatalf("write existing codex config: %v", err)
+	}
+
+	plan, err := BuildAgentPlan(testSkillFS(), AgentOptions{
+		Client:     ClientCodex,
+		Scope:      ScopeProject,
+		ProjectDir: projectDir,
+		HomeDir:    t.TempDir(),
+		ConfigPath: ".local/outlook-agent.json",
+		Binary:     "outlook-agent",
+	})
+	if err != nil {
+		t.Fatalf("BuildAgentPlan returned error: %v", err)
+	}
+
+	text := string(plan.MCP.content)
+	if strings.Contains(text, "old-outlook-agent") {
+		t.Fatalf("expected commented outlook-agent table to be replaced, got %s", text)
+	}
+	if strings.Count(text, "[mcp_servers.outlook-agent]") != 1 {
+		t.Fatalf("expected one outlook-agent table after replacement, got %s", text)
+	}
+}
+
 func TestBuildAgentPlanUsesUserCodexConfigTOML(t *testing.T) {
 	homeDir := t.TempDir()
 	plan, err := BuildAgentPlan(testSkillFS(), AgentOptions{
@@ -110,6 +147,32 @@ func TestBuildAgentPlanUsesUserCodexConfigTOML(t *testing.T) {
 	}
 	if !strings.Contains(string(plan.MCP.content), "[mcp_servers.outlook-agent]") {
 		t.Fatalf("expected MCP content to include config path string, got %s", string(plan.MCP.content))
+	}
+}
+
+func TestBuildAgentPlanUsesUserClaudeConfigJSON(t *testing.T) {
+	homeDir := t.TempDir()
+	plan, err := BuildAgentPlan(testSkillFS(), AgentOptions{
+		Client:     ClientClaudeCode,
+		Scope:      ScopeUser,
+		ProjectDir: t.TempDir(),
+		HomeDir:    homeDir,
+		ConfigPath: filepath.Join(homeDir, ".config", "outlook-agent", "config.json"),
+		Binary:     "outlook-agent",
+	})
+	if err != nil {
+		t.Fatalf("BuildAgentPlan returned error: %v", err)
+	}
+	if plan.MCP.TargetPath != filepath.Join(homeDir, ".claude.json") {
+		t.Fatalf("expected Claude Code user MCP target, got %#v", plan.MCP)
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(plan.MCP.content, &payload); err != nil {
+		t.Fatalf("Claude user MCP config is not JSON: %v; content=%s", err, string(plan.MCP.content))
+	}
+	servers, _ := payload["mcpServers"].(map[string]any)
+	if _, ok := servers["outlook-agent"].(map[string]any); !ok {
+		t.Fatalf("expected Claude user config to include outlook-agent MCP server, got %s", string(plan.MCP.content))
 	}
 }
 
