@@ -384,9 +384,20 @@ func isTOMLHeader(trimmed string) bool {
 
 func isCodexOutlookAgentTOMLTable(trimmed string) bool {
 	header := tomlHeader(trimmed)
-	return header == "[mcp_servers.outlook-agent]" ||
-		header == `[mcp_servers."outlook-agent"]` ||
-		header == `[mcp_servers.'outlook-agent']`
+	if header == "" {
+		return false
+	}
+	table := strings.TrimSuffix(strings.TrimPrefix(header, "["), "]")
+	for _, managedTable := range []string{
+		"mcp_servers.outlook-agent",
+		`mcp_servers."outlook-agent"`,
+		`mcp_servers.'outlook-agent'`,
+	} {
+		if table == managedTable || strings.HasPrefix(table, managedTable+".") {
+			return true
+		}
+	}
+	return false
 }
 
 func tomlHeader(trimmed string) string {

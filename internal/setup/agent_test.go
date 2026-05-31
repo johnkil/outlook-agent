@@ -129,6 +129,54 @@ args = ["old"]
 	}
 }
 
+func TestBuildAgentPlanReplacesNestedCodexMCPSubtables(t *testing.T) {
+	projectDir := t.TempDir()
+	targetPath := filepath.Join(projectDir, ".codex", "config.toml")
+	if err := os.MkdirAll(filepath.Dir(targetPath), 0o755); err != nil {
+		t.Fatalf("create codex config dir: %v", err)
+	}
+	existing := `model = "gpt-5"
+
+[mcp_servers.outlook-agent]
+command = "old-outlook-agent"
+args = ["old"]
+
+[mcp_servers.outlook-agent.env]
+OWA_BASE_URL = "https://old.example.invalid"
+
+[mcp_servers.context7]
+command = "context7-mcp"
+`
+	if err := os.WriteFile(targetPath, []byte(existing), 0o644); err != nil {
+		t.Fatalf("write existing codex config: %v", err)
+	}
+
+	plan, err := BuildAgentPlan(testSkillFS(), AgentOptions{
+		Client:     ClientCodex,
+		Scope:      ScopeProject,
+		ProjectDir: projectDir,
+		HomeDir:    t.TempDir(),
+		ConfigPath: ".local/outlook-agent.json",
+		Binary:     "outlook-agent",
+	})
+	if err != nil {
+		t.Fatalf("BuildAgentPlan returned error: %v", err)
+	}
+
+	text := string(plan.MCP.content)
+	for _, stale := range []string{"old-outlook-agent", "[mcp_servers.outlook-agent.env]", "OWA_BASE_URL", "old.example.invalid"} {
+		if strings.Contains(text, stale) {
+			t.Fatalf("expected stale outlook-agent subtable content %q to be removed, got %s", stale, text)
+		}
+	}
+	if !strings.Contains(text, "[mcp_servers.context7]") {
+		t.Fatalf("expected unrelated MCP server table to be preserved, got %s", text)
+	}
+	if strings.Count(text, "[mcp_servers.outlook-agent]") != 1 {
+		t.Fatalf("expected one regenerated outlook-agent table, got %s", text)
+	}
+}
+
 func TestBuildAgentPlanUsesUserCodexConfigTOML(t *testing.T) {
 	homeDir := t.TempDir()
 	plan, err := BuildAgentPlan(testSkillFS(), AgentOptions{
