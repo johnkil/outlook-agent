@@ -1,0 +1,8 @@
+{
+  "outlook-agent": {
+    "args": [
+      "mcp"
+    ],
+    "command": "outlook-agent"
+  }
+}
