@@ -958,7 +958,7 @@ Usage:
   outlook-agent setup agent plan --client <opencode|codex|claude-code> --scope <project|user> --config <path>
   outlook-agent setup agent diff --client <opencode|codex|claude-code> --scope <project|user> --config <path>
   outlook-agent setup agent apply --client <opencode|codex|claude-code> --scope <project|user> --config <path> --yes [--backup] [--allow-duplicates]
-  outlook-agent setup plugin export --client <codex|claude-code> --output <path> [--local --config <path>] [--binary <path>]
+  outlook-agent setup plugin export --client <codex|claude-code> --output <path> [--local --config <path>] [--binary <path>] [--force]
   outlook-agent mcp --config <path>
 
 Agent workflow:
@@ -1096,6 +1096,7 @@ type setupPluginArgs struct {
 	ConfigPath string
 	Binary     string
 	Local      bool
+	Force      bool
 }
 
 func runSetupSkills(args []string, stdout io.Writer, stderr io.Writer) int {
@@ -1210,6 +1211,7 @@ func runSetupPlugin(args []string, options Options, stdout io.Writer, stderr io.
 			Binary:     settings.Binary,
 			ConfigPath: settings.ConfigPath,
 			Local:      settings.Local,
+			Force:      settings.Force,
 		})
 		if err != nil {
 			fmt.Fprintln(stderr, err)
@@ -1515,6 +1517,8 @@ func parseSetupPluginArgs(args []string) (setupPluginArgs, error) {
 			settings.Binary = args[index]
 		case "--local":
 			settings.Local = true
+		case "--force":
+			settings.Force = true
 		default:
 			return setupPluginArgs{}, fmt.Errorf("unknown setup plugin argument: %s", args[index])
 		}

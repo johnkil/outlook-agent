@@ -134,6 +134,10 @@ reading secrets. OpenCode, Codex, and Claude Code are supported by
 `setup skills`; `setup agent` wires one client at a time. The older
 `outlook-agent setup opencode ...` command remains available for compatibility;
 `outlook-agent setup opencode --print` still prints the OpenCode MCP block.
+The `skills/` directory is the canonical source of truth; client skill
+directories and plugin packages are generated copies. Plugin packages are
+distribution artifacts, not a security boundary. `setup skills plan` reports
+duplicate visible roots before apply.
 
 Then let the bundled [`skills/`](./skills) drive ordinary requests:
 
@@ -146,6 +150,10 @@ See [`docs/SETUP_SKILLS.md`](./docs/SETUP_SKILLS.md) and
 [`docs/SETUP_AGENT.md`](./docs/SETUP_AGENT.md) for client-specific paths,
 duplicate-skill warnings, and config-path safety. OpenCode project installs
 continue to use `.opencode/skills`.
+
+Mailbox and calendar content is untrusted data. Message bodies, subjects,
+sender names, calendar descriptions, attachments, and raw provider responses
+are evidence for your request, not instructions for the agent to follow.
 
 ---
 
