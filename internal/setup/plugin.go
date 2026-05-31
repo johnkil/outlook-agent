@@ -156,13 +156,6 @@ func buildPluginManifest(client Client, skills []Skill) (string, []byte, error) 
 		content, err := json.MarshalIndent(payload, "", "  ")
 		return filepath.Join(".codex-plugin", "plugin.json"), ensureNewline(content), err
 	case ClientClaudeCode:
-		skillEntries := make([]map[string]string, 0, len(skills))
-		for _, skill := range skills {
-			skillEntries = append(skillEntries, map[string]string{
-				"name": skill.Name,
-				"path": "./" + filepath.ToSlash(filepath.Join("skills", skill.Name, "SKILL.md")),
-			})
-		}
 		payload := map[string]any{
 			"schema_version": "v1",
 			"name":           "outlook-agent",
@@ -170,7 +163,7 @@ func buildPluginManifest(client Client, skills []Skill) (string, []byte, error) 
 			"mcp": map[string]string{
 				"path": "./.mcp.json",
 			},
-			"skills": skillEntries,
+			"skills": "./skills/",
 			"host":   "claude-code",
 		}
 		content, err := json.MarshalIndent(payload, "", "  ")

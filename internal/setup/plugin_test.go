@@ -77,6 +77,17 @@ func TestPluginExportCreatesClaudeTemplatePackage(t *testing.T) {
 	assertJSONFile(t, filepath.Join(outputDir, ".claude-plugin", "plugin.json"))
 	assertJSONFile(t, filepath.Join(outputDir, ".mcp.json"))
 	assertFileContent(t, filepath.Join(outputDir, "skills", "outlook-calendar", "SKILL.md"), testSkillContent("outlook-calendar"))
+	manifestData, err := os.ReadFile(filepath.Join(outputDir, ".claude-plugin", "plugin.json"))
+	if err != nil {
+		t.Fatalf("read plugin manifest: %v", err)
+	}
+	var manifest map[string]any
+	if err := json.Unmarshal(manifestData, &manifest); err != nil {
+		t.Fatalf("plugin manifest is not JSON: %v; content=%s", err, string(manifestData))
+	}
+	if manifest["skills"] != "./skills/" {
+		t.Fatalf("expected Claude manifest skills path pointer, got %s", string(manifestData))
+	}
 }
 
 func TestLocalPluginExportIncludesOnlyConfigPathString(t *testing.T) {
