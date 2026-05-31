@@ -402,8 +402,11 @@ func escapeJSONPointerToken(token string) string {
 }
 
 func projectConfigWarnings(scope Scope, configPath string) []string {
-	if scope != ScopeProject || configPath == "" || filepath.IsAbs(configPath) {
+	if scope != ScopeProject || configPath == "" {
 		return nil
+	}
+	if filepath.IsAbs(configPath) {
+		return []string{"project-scope config paths should usually live under .local/ and .local/ should be gitignored"}
 	}
 	clean := filepath.ToSlash(filepath.Clean(configPath))
 	if clean == ".local" || strings.HasPrefix(clean, ".local/") {

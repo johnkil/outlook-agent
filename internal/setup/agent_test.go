@@ -163,6 +163,23 @@ func TestAgentPlanWarnsForProjectConfigOutsideLocal(t *testing.T) {
 	}
 }
 
+func TestAgentPlanWarnsForAbsoluteProjectConfig(t *testing.T) {
+	plan, err := BuildAgentPlan(testSkillFS(), AgentOptions{
+		Client:     ClientCodex,
+		Scope:      ScopeProject,
+		ProjectDir: t.TempDir(),
+		HomeDir:    t.TempDir(),
+		ConfigPath: "/home/alice/.config/outlook-agent/config.json",
+		Binary:     "outlook-agent",
+	})
+	if err != nil {
+		t.Fatalf("BuildAgentPlan returned error: %v", err)
+	}
+	if len(plan.Warnings) == 0 || !strings.Contains(strings.Join(plan.Warnings, "\n"), ".local") {
+		t.Fatalf("expected .local warning for absolute project config, got %#v", plan.Warnings)
+	}
+}
+
 func TestApplyAgentPlanRefusesDuplicatesBeforeWritingMCP(t *testing.T) {
 	projectDir := t.TempDir()
 	homeDir := t.TempDir()
