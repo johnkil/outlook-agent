@@ -56,4 +56,10 @@ install for `opencode`, or an `all` install that also writes Codex/Claude
 skills, is checked against that full visible set so duplicate skill names are
 reported before apply.
 
+Installing Codex or Claude Code project skills can also warn with
+`OpenCode may see duplicate skill` when another OpenCode-visible project root already has the
+same skill name. That warning is informational for the selected client, but it
+is a strong hint to keep one project-local skill root per repository unless the
+duplicate is intentional.
+
 If duplicates are intentional, pass `--allow-duplicates` to `apply`.

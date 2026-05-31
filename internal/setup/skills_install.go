@@ -154,6 +154,7 @@ func BuildSkillsPlan(fsys fs.FS, options SkillsOptions) (SkillsPlan, error) {
 		plan.DuplicateOverrideRequired = true
 		plan.Warnings = append(plan.Warnings, "duplicate skills detected for at least one selected client")
 	}
+	plan.Warnings = append(plan.Warnings, detectOpenCodeVisibleDuplicateWarnings(skills, clients, options.Scope, projectDir, homeDir)...)
 	return plan, nil
 }
 
@@ -373,6 +374,65 @@ func skillsRuntimeVisibleRoots(client Client, projectDir string, homeDir string)
 	default:
 		return nil
 	}
+}
+
+func detectOpenCodeVisibleDuplicateWarnings(skills []Skill, clients []Client, scope Scope, projectDir string, homeDir string) []string {
+	if scope != ScopeProject {
+		return nil
+	}
+	plannedRoots := make([]string, 0, 2)
+	for _, client := range clients {
+		if client != ClientCodex && client != ClientClaudeCode {
+			continue
+		}
+		root, err := skillsTargetRoot(client, scope, projectDir, homeDir)
+		if err != nil {
+			continue
+		}
+		if !stringSliceContains(plannedRoots, root) {
+			plannedRoots = append(plannedRoots, root)
+		}
+	}
+	if len(plannedRoots) == 0 {
+		return nil
+	}
+
+	warnings := make([]string, 0)
+	openCodeProjectRoots := []string{
+		filepath.Join(projectDir, ".opencode", "skills"),
+		filepath.Join(projectDir, ".agents", "skills"),
+		filepath.Join(projectDir, ".claude", "skills"),
+	}
+	for _, skill := range skills {
+		locations := make([]string, 0, len(openCodeProjectRoots)+len(plannedRoots))
+		for _, root := range openCodeProjectRoots {
+			path := filepath.Join(root, skill.Name, "SKILL.md")
+			if _, err := os.Stat(path); err == nil {
+				locations = append(locations, path)
+			}
+		}
+		for _, root := range plannedRoots {
+			path := filepath.Join(root, skill.Name, "SKILL.md")
+			if !stringSliceContains(locations, path) {
+				locations = append(locations, path)
+			}
+		}
+		if len(locations) < 2 {
+			continue
+		}
+		sort.Strings(locations)
+		warnings = append(warnings, formatOpenCodeVisibleDuplicateWarning(skill.Name, locations))
+	}
+	sort.Strings(warnings)
+	return warnings
+}
+
+func formatOpenCodeVisibleDuplicateWarning(skillName string, locations []string) string {
+	return fmt.Sprintf(
+		"OpenCode may see duplicate skill %q in this repository. OpenCode scans .opencode/skills, .agents/skills, and .claude/skills. Use one project-local skill root per repository unless duplicates are intentional. Locations: %s",
+		skillName,
+		strings.Join(locations, ", "),
+	)
 }
 
 func sortSkillPlan(plan *SkillsPlan) {

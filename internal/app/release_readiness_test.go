@@ -24,6 +24,9 @@ func TestReleaseReadinessArtifactsExist(t *testing.T) {
 			"SBOM",
 			"go mod tidy",
 			"OUTLOOK_AGENT_SIGN_RELEASE",
+			"Only tag commits with green hosted CI",
+			"CI run URL for the exact commit",
+			"Create an annotated version tag",
 		},
 		filepath.Join("..", "..", "scripts", "ci-local.sh"): {
 			"-path \"./.cache\"",
@@ -48,7 +51,7 @@ func TestReleaseReadinessArtifactsExist(t *testing.T) {
 			"expected_archives=6",
 			"GOHOSTOS",
 			"GOHOSTARCH",
-			"\"version\": \"smoke\"",
+			"smoke_version=\"v0.0.0-smoke\"",
 			"\"built_by\": \"release-build\"",
 			"OUTLOOK_AGENT_BINARY_UNDER_TEST",
 			"TestBinaryMCPStdioUsesConfiguredDefaultProfile",
@@ -66,7 +69,8 @@ func TestReleaseReadinessArtifactsExist(t *testing.T) {
 		filepath.Join("..", "..", "scripts", "release-build.sh"): {
 			"GOOS",
 			"GOARCH",
-			"invalid release version",
+			"release-version.sh",
+			"validate_release_version",
 			"scripts/release-sbom.sh",
 			"buildinfo_pkg",
 			".Version=",
@@ -78,10 +82,17 @@ func TestReleaseReadinessArtifactsExist(t *testing.T) {
 			"OUTLOOK_AGENT_SIGN_RELEASE",
 		},
 		filepath.Join("..", "..", "scripts", "release-sbom.sh"): {
+			"release-version.sh",
+			"validate_release_version",
 			"outlook-agent-dependency-manifest-v1",
 			"go list -m",
 			"go version",
 			"dependency-manifest.json",
+		},
+		filepath.Join("..", "..", "scripts", "release-version.sh"): {
+			"validate_release_version",
+			"invalid release version",
+			"v<major>.<minor>.<patch>[-suffix]",
 		},
 		filepath.Join("..", "..", "scripts", "public-safety-check.sh"): {
 			"OUTLOOK_AGENT_PUBLIC_SAFETY_PATTERN",
@@ -121,6 +132,8 @@ func TestReleaseReadinessArtifactsExist(t *testing.T) {
 			"Tag workflow gates",
 			"Operator-only evidence",
 			"Do not mark a gate as passed from local static review",
+			"Tag commit has green hosted CI",
+			"Commit SHA",
 			"Never paste tenant URLs",
 			"CI run URL",
 			"macOS keychain integration",
@@ -256,11 +269,11 @@ func TestReleaseVerifyScriptRequiresDependencyManifest(t *testing.T) {
 func TestReleaseSBOMScriptWritesDependencyManifest(t *testing.T) {
 	distDir := t.TempDir()
 
-	output, err := exec.Command("/bin/bash", filepath.Join("..", "..", "scripts", "release-sbom.sh"), "vtest", distDir).CombinedOutput()
+	output, err := exec.Command("/bin/bash", filepath.Join("..", "..", "scripts", "release-sbom.sh"), "v0.0.0-smoke", distDir).CombinedOutput()
 	if err != nil {
 		t.Fatalf("release sbom failed unexpectedly: %v\n%s", err, string(output))
 	}
-	manifestPath := filepath.Join(distDir, "outlook-agent_vtest_dependency-manifest.json")
+	manifestPath := filepath.Join(distDir, "outlook-agent_v0.0.0-smoke_dependency-manifest.json")
 	data, err := os.ReadFile(manifestPath)
 	if err != nil {
 		t.Fatalf("read dependency manifest: %v", err)
@@ -276,7 +289,7 @@ func TestReleaseSBOMScriptWritesDependencyManifest(t *testing.T) {
 	if err := json.Unmarshal(data, &manifest); err != nil {
 		t.Fatalf("dependency manifest is not JSON: %v\n%s", err, string(data))
 	}
-	if manifest.Schema != "outlook-agent-dependency-manifest-v1" || manifest.Version != "vtest" || manifest.GoVersion == "" {
+	if manifest.Schema != "outlook-agent-dependency-manifest-v1" || manifest.Version != "v0.0.0-smoke" || manifest.GoVersion == "" {
 		t.Fatalf("unexpected dependency manifest metadata: %#v", manifest)
 	}
 	if len(manifest.Modules) == 0 {
@@ -284,6 +297,55 @@ func TestReleaseSBOMScriptWritesDependencyManifest(t *testing.T) {
 	}
 	if strings.Contains(string(data), "password") || strings.Contains(string(data), "access_token") {
 		t.Fatalf("dependency manifest contains forbidden secret marker:\n%s", string(data))
+	}
+}
+
+func TestReleaseBuildRejectsInvalidVersionStringsBeforeBuild(t *testing.T) {
+	for _, version := range []string{"v1.0/bad", "v1.0 beta", "../v1.0", "vbanana"} {
+		t.Run(version, func(t *testing.T) {
+			cmd := exec.Command("/bin/bash", filepath.Join("..", "..", "scripts", "release-build.sh"), version)
+			cmd.Env = append(os.Environ(),
+				"PATH=/usr/bin:/bin",
+				"OUTLOOK_AGENT_DIST_DIR="+t.TempDir(),
+			)
+			output, err := cmd.CombinedOutput()
+			if err == nil {
+				t.Fatalf("expected release-build to reject %q", version)
+			}
+			if !strings.Contains(string(output), "invalid release version") {
+				t.Fatalf("expected invalid release version error for %q, got:\n%s", version, string(output))
+			}
+		})
+	}
+}
+
+func TestReleaseSBOMRejectsInvalidVersionStringsBeforeGoList(t *testing.T) {
+	for _, version := range []string{"v1.0/bad", "v1.0 beta", "../v1.0", "vbanana"} {
+		t.Run(version, func(t *testing.T) {
+			cmd := exec.Command("/bin/bash", filepath.Join("..", "..", "scripts", "release-sbom.sh"), version, t.TempDir())
+			cmd.Env = append(os.Environ(), "PATH=/usr/bin:/bin")
+			output, err := cmd.CombinedOutput()
+			if err == nil {
+				t.Fatalf("expected release-sbom to reject %q", version)
+			}
+			if !strings.Contains(string(output), "invalid release version") {
+				t.Fatalf("expected invalid release version error for %q, got:\n%s", version, string(output))
+			}
+		})
+	}
+}
+
+func TestReleaseSmokeUsesSemverLikeSmokeVersion(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join("..", "..", "scripts", "release-smoke.sh"))
+	if err != nil {
+		t.Fatalf("read release smoke: %v", err)
+	}
+	text := string(data)
+	if !strings.Contains(text, "v0.0.0-smoke") {
+		t.Fatalf("expected release smoke to use a SemVer-like smoke version")
+	}
+	if strings.Contains(text, "release-build.sh smoke") {
+		t.Fatalf("expected release smoke not to use bare smoke version")
 	}
 }
 

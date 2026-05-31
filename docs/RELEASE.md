@@ -17,7 +17,7 @@ HTML, raw JavaScript, or tenant-specific examples.
 Run:
 
 ```bash
-scripts/release-build.sh snapshot
+scripts/release-build.sh v0.0.0-snapshot
 ```
 
 The script builds these target archives into `dist/` and embeds the release
@@ -74,7 +74,7 @@ tagged commit.
 To build into another directory, set:
 
 ```bash
-OUTLOOK_AGENT_DIST_DIR=/tmp/outlook-agent-dist scripts/release-build.sh snapshot
+OUTLOOK_AGENT_DIST_DIR=/tmp/outlook-agent-dist scripts/release-build.sh v0.0.0-snapshot
 ```
 
 To prove archive generation and checksum coverage without keeping artifacts in
@@ -104,6 +104,10 @@ policy outside this repository.
 
 ## Tag Release
 
+Only tag commits with green hosted CI. The release workflow verifies artifacts
+before publish, but it does not replace the full CI workflow. The release
+evidence record must include the CI run URL for the exact commit being tagged.
+
 Run the local CI mirror first. It matches the hosted CI gates and is the
 authoritative fallback when GitHub Actions cannot start:
 
@@ -121,10 +125,18 @@ scripts/public-safety-check.sh
 GOPATH=$PWD/.cache/go GOCACHE=$PWD/.cache/go-build GOMODCACHE=$PWD/.cache/go-mod go test -count=1 ./...
 ```
 
+Release process:
+
+1. Wait for CI green on `main`.
+2. Create an annotated version tag on that exact commit.
+3. Push the tag.
+4. Verify the release workflow passed.
+5. Fill release evidence, including the commit SHA and hosted CI run URL.
+
 Then create and push a version tag:
 
 ```bash
-git tag v0.1.0
+git tag -a v0.1.0 -m "v0.1.0"
 git push origin v0.1.0
 ```
 

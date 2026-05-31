@@ -26,6 +26,7 @@ func TestSetupDocsDocumentPortableAgentSetup(t *testing.T) {
 			".opencode/skills",
 			".agents/skills",
 			".claude/skills",
+			"OpenCode may see duplicate skill",
 		},
 		filepath.Join("docs", "SETUP_AGENT.md"): {
 			"outlook-agent setup agent plan",
@@ -38,6 +39,8 @@ func TestSetupDocsDocumentPortableAgentSetup(t *testing.T) {
 			"--force",
 			"--local",
 			"mcpServers",
+			"output path is a symlink",
+			"Manual validation",
 			"not a runtime safety",
 		},
 		filepath.Join("docs", "BOOTSTRAP_CONTRACT.md"): {

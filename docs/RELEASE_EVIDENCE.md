@@ -14,6 +14,8 @@ Version:
 
 Commit:
 
+Commit SHA:
+
 CI run URL:
 
 Date:
@@ -34,6 +36,9 @@ Go version:
 
 ### Tag workflow gates
 
+- Tag commit has green hosted CI:
+- CI run URL:
+- Commit SHA:
 - release build:
 - release verify:
 - checksum verification:

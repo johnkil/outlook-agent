@@ -214,6 +214,65 @@ func TestSkillsPlanDetectsOpenCodeVisibleProjectDuplicates(t *testing.T) {
 	}
 }
 
+func TestCodexProjectInstallWarnsWhenOpenCodeSkillsAlreadyExist(t *testing.T) {
+	projectDir := t.TempDir()
+	homeDir := t.TempDir()
+	existingOpenCodeSkill := filepath.Join(projectDir, ".opencode", "skills", "outlook-mail", "SKILL.md")
+	if err := os.MkdirAll(filepath.Dir(existingOpenCodeSkill), 0o755); err != nil {
+		t.Fatalf("create opencode skill dir: %v", err)
+	}
+	if err := os.WriteFile(existingOpenCodeSkill, []byte(testSkillContent("outlook-mail")), 0o644); err != nil {
+		t.Fatalf("write opencode skill: %v", err)
+	}
+
+	plan, err := BuildSkillsPlan(testSkillFS(), SkillsOptions{
+		Client:     ClientCodex,
+		Scope:      ScopeProject,
+		ProjectDir: projectDir,
+		HomeDir:    homeDir,
+	})
+	if err != nil {
+		t.Fatalf("BuildSkillsPlan returned error: %v", err)
+	}
+	if len(plan.Duplicates) != 0 {
+		t.Fatalf("expected Codex install not to block on OpenCode-only visibility warning, got %#v", plan.Duplicates)
+	}
+	assertWarningContains(t, plan.Warnings, "OpenCode may see duplicate skill \"outlook-mail\"")
+	assertWarningContains(t, plan.Warnings, filepath.Join(projectDir, ".opencode", "skills", "outlook-mail", "SKILL.md"))
+	assertWarningContains(t, plan.Warnings, filepath.Join(projectDir, ".agents", "skills", "outlook-mail", "SKILL.md"))
+	if err := ApplySkillsPlan(plan, ApplyOptions{Yes: true}); err != nil {
+		t.Fatalf("expected warning-only duplicate plan to apply without allow-duplicates: %v", err)
+	}
+}
+
+func TestClaudeProjectInstallWarnsWhenOpenCodeSkillsAlreadyExist(t *testing.T) {
+	projectDir := t.TempDir()
+	homeDir := t.TempDir()
+	existingCodexSkill := filepath.Join(projectDir, ".agents", "skills", "outlook-mail", "SKILL.md")
+	if err := os.MkdirAll(filepath.Dir(existingCodexSkill), 0o755); err != nil {
+		t.Fatalf("create codex skill dir: %v", err)
+	}
+	if err := os.WriteFile(existingCodexSkill, []byte(testSkillContent("outlook-mail")), 0o644); err != nil {
+		t.Fatalf("write codex skill: %v", err)
+	}
+
+	plan, err := BuildSkillsPlan(testSkillFS(), SkillsOptions{
+		Client:     ClientClaudeCode,
+		Scope:      ScopeProject,
+		ProjectDir: projectDir,
+		HomeDir:    homeDir,
+	})
+	if err != nil {
+		t.Fatalf("BuildSkillsPlan returned error: %v", err)
+	}
+	if len(plan.Duplicates) != 0 {
+		t.Fatalf("expected Claude install not to block on OpenCode-only visibility warning, got %#v", plan.Duplicates)
+	}
+	assertWarningContains(t, plan.Warnings, "OpenCode may see duplicate skill \"outlook-mail\"")
+	assertWarningContains(t, plan.Warnings, filepath.Join(projectDir, ".agents", "skills", "outlook-mail", "SKILL.md"))
+	assertWarningContains(t, plan.Warnings, filepath.Join(projectDir, ".claude", "skills", "outlook-mail", "SKILL.md"))
+}
+
 func TestSkillsPlanAllClientProjectInstallDetectsOpenCodeVisibleDuplicates(t *testing.T) {
 	projectDir := t.TempDir()
 	homeDir := t.TempDir()
@@ -301,6 +360,16 @@ func findDuplicate(t *testing.T, duplicates []DuplicateSkill, client Client, ski
 	}
 	t.Fatalf("duplicate for %s/%s not found in %#v", client, skill, duplicates)
 	return DuplicateSkill{}
+}
+
+func assertWarningContains(t *testing.T, warnings []string, expected string) {
+	t.Helper()
+	for _, warning := range warnings {
+		if strings.Contains(warning, expected) {
+			return
+		}
+	}
+	t.Fatalf("expected warning containing %q, got %#v", expected, warnings)
 }
 
 func assertFileContent(t *testing.T, path string, expected string) {

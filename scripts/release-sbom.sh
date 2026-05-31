@@ -8,15 +8,14 @@ script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 repo_root="$(cd -- "${script_dir}/.." && pwd)"
 cd "$repo_root"
 
-version="${1:-snapshot}"
+source "${script_dir}/release-version.sh"
+
+version="${1:-v0.0.0-snapshot}"
 dist_dir="${2:-${OUTLOOK_AGENT_DIST_DIR:-${repo_root}/dist}}"
 binary_name="outlook-agent"
 manifest_file="${dist_dir}/${binary_name}_${version}_dependency-manifest.json"
 
-if [[ -z "$version" || "$version" =~ [[:space:]] ]]; then
-  echo "invalid release version: must be non-empty and contain no ASCII whitespace" >&2
-  exit 2
-fi
+validate_release_version "$version"
 
 mkdir -p "$dist_dir"
 
