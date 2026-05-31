@@ -59,6 +59,9 @@ func BuildPluginExportPlan(fsys fs.FS, options PluginOptions) (PluginPlan, error
 	if err != nil {
 		return PluginPlan{}, fmt.Errorf("resolve plugin output: %w", err)
 	}
+	if err := rejectPluginOutputRootSymlink(output); err != nil {
+		return PluginPlan{}, err
+	}
 	if options.Binary == "" {
 		options.Binary = "outlook-agent"
 	}
@@ -105,6 +108,9 @@ func BuildPluginExportPlan(fsys fs.FS, options PluginOptions) (PluginPlan, error
 }
 
 func ApplyPluginExportPlan(plan PluginPlan) error {
+	if err := rejectPluginOutputRootSymlink(plan.Output); err != nil {
+		return err
+	}
 	if err := validatePluginOutputForWrites(plan); err != nil {
 		return err
 	}
@@ -121,6 +127,20 @@ func ApplyPluginExportPlan(plan PluginPlan) error {
 		if err := atomicWriteFile(operation.TargetPath, operation.content, 0o644); err != nil {
 			return err
 		}
+	}
+	return nil
+}
+
+func rejectPluginOutputRootSymlink(output string) error {
+	info, err := os.Lstat(output)
+	if os.IsNotExist(err) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("lstat plugin output %s: %w", output, err)
+	}
+	if info.Mode()&os.ModeSymlink != 0 {
+		return fmt.Errorf("plugin output path is a symlink; refusing to write generated package outside the requested directory: %s", output)
 	}
 	return nil
 }

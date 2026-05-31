@@ -251,6 +251,28 @@ func TestPluginExportAllowsNonEmptyOutputWithForce(t *testing.T) {
 	assertFileContent(t, staleSkill, testSkillContent("outlook-mail"))
 }
 
+func TestPluginExportRejectsOutputRootSymlink(t *testing.T) {
+	root := t.TempDir()
+	realOutput := filepath.Join(root, "real-output")
+	if err := os.MkdirAll(realOutput, 0o755); err != nil {
+		t.Fatalf("create real output dir: %v", err)
+	}
+	outputLink := filepath.Join(root, "plugin-link")
+	if err := os.Symlink(realOutput, outputLink); err != nil {
+		t.Fatalf("create output symlink: %v", err)
+	}
+
+	_, err := BuildPluginExportPlan(testSkillFS(), PluginOptions{
+		Client: ClientCodex,
+		Output: outputLink,
+		Binary: "outlook-agent",
+		Force:  true,
+	})
+	if err == nil || !strings.Contains(err.Error(), "symlink") {
+		t.Fatalf("expected output symlink rejection even with force, got %v", err)
+	}
+}
+
 func TestPluginExportRejectsUnsafeRelativeOutputTraversal(t *testing.T) {
 	_, err := BuildPluginExportPlan(testSkillFS(), PluginOptions{
 		Client: ClientCodex,

@@ -5,11 +5,10 @@ script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 repo_root="$(cd -- "${script_dir}/.." && pwd)"
 cd "$repo_root"
 
-version="${1:-snapshot}"
-if [[ -z "$version" || "$version" =~ [[:space:]] ]]; then
-  echo "invalid release version: must be non-empty and contain no ASCII whitespace" >&2
-  exit 2
-fi
+source "${script_dir}/release-version.sh"
+
+version="${1:-v0.0.0-snapshot}"
+validate_release_version "$version"
 dist_dir="${OUTLOOK_AGENT_DIST_DIR:-${repo_root}/dist}"
 binary_name="outlook-agent"
 checksum_file="${dist_dir}/SHA256SUMS.txt"

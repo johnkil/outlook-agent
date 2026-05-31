@@ -475,6 +475,40 @@ func TestSetupSkillsApplyRequiresYesAndWritesSkills(t *testing.T) {
 	}
 }
 
+func TestSetupSkillsApplyIncludesPlanWarnings(t *testing.T) {
+	projectDir := t.TempDir()
+	homeDir := t.TempDir()
+	existingOpenCodeSkill := filepath.Join(projectDir, ".opencode", "skills", "outlook-mail", "SKILL.md")
+	if err := os.MkdirAll(filepath.Dir(existingOpenCodeSkill), 0o755); err != nil {
+		t.Fatalf("create opencode skill dir: %v", err)
+	}
+	if err := os.WriteFile(existingOpenCodeSkill, []byte("# existing\n"), 0o644); err != nil {
+		t.Fatalf("write opencode skill: %v", err)
+	}
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+
+	code := Run([]string{"setup", "skills", "apply", "--client", "codex", "--scope", "project", "--project-dir", projectDir, "--home-dir", homeDir, "--yes"}, &stdout, &stderr)
+
+	if code != 0 {
+		t.Fatalf("expected exit code 0, got %d, stderr=%s", code, stderr.String())
+	}
+	var payload struct {
+		OK       bool     `json:"ok"`
+		Command  string   `json:"command"`
+		Warnings []string `json:"warnings"`
+	}
+	if err := json.Unmarshal(stdout.Bytes(), &payload); err != nil {
+		t.Fatalf("apply output is not JSON: %v; output=%s", err, stdout.String())
+	}
+	if !payload.OK || payload.Command != "setup skills apply" {
+		t.Fatalf("unexpected apply identity: %#v", payload)
+	}
+	if !stringSliceContainsText(payload.Warnings, "OpenCode may see duplicate skill \"outlook-mail\"") {
+		t.Fatalf("expected apply output to include duplicate warning, got %#v; output=%s", payload.Warnings, stdout.String())
+	}
+}
+
 func TestSetupSkillsDiffDoesNotWrite(t *testing.T) {
 	projectDir := t.TempDir()
 	var stdout bytes.Buffer

@@ -36,6 +36,10 @@ Export refuses to write generated files into a non-empty output directory unless
 `--force` is passed. Re-running export against an identical generated package is
 allowed and produces only skipped operations.
 
+Export also refuses when the output path is a symlink, even with `--force`.
+Generated packages should be written into the requested directory, not through a
+link to an unexpected filesystem location.
+
 ## Local Export
 
 ```bash
@@ -51,10 +55,23 @@ outlook-agent setup plugin export \
 binary command and config path string. It still must not copy the config file
 contents or any secret values.
 
-## Validation
+## Manual validation
 
 Generated manifests and `.mcp.json` are valid JSON. Skill files are copied from
 canonical `skills/` and should match byte-for-byte.
 
+```bash
+outlook-agent setup plugin export --client codex --output dist/codex-plugin --force
+outlook-agent setup plugin export --client claude-code --output dist/claude-plugin --force
+
+find dist/codex-plugin -maxdepth 3 -type f
+find dist/claude-plugin -maxdepth 3 -type f
+```
+
 If a host CLI provides plugin validation, run it manually against the generated
-directory before distribution.
+directory before distribution:
+
+```bash
+claude plugin validate dist/claude-plugin
+# Codex plugin validation command, if available in your Codex CLI version.
+```

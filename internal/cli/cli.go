@@ -1132,12 +1132,16 @@ func runSetupSkills(args []string, stdout io.Writer, stderr io.Writer) int {
 			fmt.Fprintln(stderr, err)
 			return 1
 		}
-		return writeJSON(stdout, map[string]any{
+		response := map[string]any{
 			"ok":         true,
 			"command":    "setup skills apply",
 			"operations": plan.Operations,
 			"duplicates": plan.Duplicates,
-		})
+		}
+		if len(plan.Warnings) > 0 {
+			response["warnings"] = plan.Warnings
+		}
+		return writeJSON(stdout, response)
 	default:
 		fmt.Fprintf(stderr, "unknown setup skills command: %s\n", settings.Command)
 		return 1
