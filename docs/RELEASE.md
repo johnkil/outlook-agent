@@ -149,10 +149,13 @@ GOPATH=$PWD/.cache/go GOCACHE=$PWD/.cache/go-build GOMODCACHE=$PWD/.cache/go-mod
 Release process:
 
 1. Wait for CI green on `main`.
-2. Create an annotated version tag on that exact commit.
-3. Push the tag.
-4. Verify the release workflow passed.
-5. Fill release evidence, including the commit SHA and hosted CI run URL.
+2. If the Codex marketplace package changed under `plugins/outlook-agent`,
+   bump `codexPluginVersion`, regenerate the package, and verify the committed
+   package still matches the exporter.
+3. Create an annotated version tag on that exact commit.
+4. Push the tag.
+5. Verify the release workflow passed.
+6. Fill release evidence, including the commit SHA and hosted CI run URL.
 
 Then create and push a version tag:
 

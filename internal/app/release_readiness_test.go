@@ -29,6 +29,8 @@ func TestReleaseReadinessArtifactsExist(t *testing.T) {
 			"Create an annotated version tag",
 			"GoReleaser snapshot parity",
 			"scripts/goreleaser-snapshot-smoke.sh",
+			"bump `codexPluginVersion`",
+			"plugins/outlook-agent",
 		},
 		filepath.Join("..", "..", "scripts", "ci-local.sh"): {
 			"-path \"./.cache\"",
