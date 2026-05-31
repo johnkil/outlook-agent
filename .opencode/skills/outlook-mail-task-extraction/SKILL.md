@@ -1,6 +1,15 @@
 ---
 name: outlook-mail-task-extraction
 description: Extract action items, owners, blockers, and due dates from Outlook mail context.
+license: Apache-2.0
+compatibility:
+  clients:
+    - opencode
+    - codex
+    - claude-code
+metadata:
+  mcp_server: outlook-agent
+  tool_prefix: outlook.
 ---
 
 # Outlook Mail Task Extraction

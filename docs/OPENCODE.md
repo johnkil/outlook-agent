@@ -72,6 +72,14 @@ outlook-agent setup opencode diff --config .local/outlook-agent.json
 outlook-agent setup opencode apply --config .local/outlook-agent.json --yes --backup
 ```
 
+For the portable multi-client setup flow, prefer:
+
+```bash
+outlook-agent setup skills plan --client opencode --scope project
+outlook-agent setup agent plan --client opencode --scope project --config .local/outlook-agent.json
+outlook-agent setup agent apply --client opencode --scope project --config .local/outlook-agent.json --yes --backup
+```
+
 The planner writes only public project OpenCode files:
 
 - the existing `opencode.json`, `opencode.jsonc`, `.opencode/opencode.json`, or
@@ -132,12 +140,9 @@ Outlook Email and Outlook Calendar plugins. Skills help agents choose safe
 workflows, but they are not a security boundary.
 
 OpenCode can discover project skills from `.opencode/skills`. This repository
-ships the first agent-facing Outlook workflows there:
-
-- `.opencode/skills/outlook-mail`
-- `.opencode/skills/outlook-mail-inbox-triage`
-- `.opencode/skills/outlook-calendar`
-- `.opencode/skills/outlook-calendar-daily-brief`
+keeps `.opencode/skills` synchronized with the canonical `skills/` directory
+for local OpenCode discovery, including `.opencode/skills/outlook-mail` and
+`.opencode/skills/outlook-calendar`.
 
 Use skills for ordinary user requests and MCP tools for execution. Skills are
 workflow guidance, not a security boundary. The Go runtime still enforces

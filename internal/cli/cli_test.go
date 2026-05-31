@@ -406,6 +406,194 @@ func TestSetupOpencodePlanReportsTargets(t *testing.T) {
 	}
 }
 
+func TestSetupSkillsPlanReportsClientAndScopeTargets(t *testing.T) {
+	projectDir := t.TempDir()
+	homeDir := t.TempDir()
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+
+	code := Run([]string{"setup", "skills", "plan", "--client", "codex", "--scope", "project", "--project-dir", projectDir, "--home-dir", homeDir}, &stdout, &stderr)
+
+	if code != 0 {
+		t.Fatalf("expected exit code 0, got %d, stderr=%s", code, stderr.String())
+	}
+	var payload struct {
+		Command     string `json:"command"`
+		Client      string `json:"client"`
+		Scope       string `json:"scope"`
+		TargetRoots []struct {
+			Path string `json:"path"`
+		} `json:"target_roots"`
+		Operations []struct {
+			Client     string `json:"client"`
+			Skill      string `json:"skill"`
+			Kind       string `json:"kind"`
+			TargetPath string `json:"target_path"`
+		} `json:"operations"`
+	}
+	if err := json.Unmarshal(stdout.Bytes(), &payload); err != nil {
+		t.Fatalf("plan output is not JSON: %v; output=%s", err, stdout.String())
+	}
+	if payload.Command != "setup skills plan" || payload.Client != "codex" || payload.Scope != "project" {
+		t.Fatalf("unexpected plan identity: %#v", payload)
+	}
+	expectedRoot := filepath.Join(projectDir, ".agents", "skills")
+	if len(payload.TargetRoots) != 1 || payload.TargetRoots[0].Path != expectedRoot {
+		t.Fatalf("expected target root %s, got %#v", expectedRoot, payload.TargetRoots)
+	}
+	if len(payload.Operations) == 0 || !strings.Contains(stdout.String(), filepath.Join(".agents", "skills", "outlook-mail", "SKILL.md")) {
+		t.Fatalf("expected outlook-mail operation under .agents, got %s", stdout.String())
+	}
+}
+
+func TestSetupSkillsApplyRequiresYesAndWritesSkills(t *testing.T) {
+	projectDir := t.TempDir()
+	homeDir := t.TempDir()
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+
+	code := Run([]string{"setup", "skills", "apply", "--client", "claude-code", "--scope", "project", "--project-dir", projectDir, "--home-dir", homeDir}, &stdout, &stderr)
+
+	if code == 0 {
+		t.Fatalf("expected non-zero exit without --yes, stdout=%s", stdout.String())
+	}
+	if !strings.Contains(strings.ToLower(stderr.String()), "yes") {
+		t.Fatalf("expected yes error, got stderr=%s", stderr.String())
+	}
+
+	stdout.Reset()
+	stderr.Reset()
+	code = Run([]string{"setup", "skills", "apply", "--client", "claude-code", "--scope", "project", "--project-dir", projectDir, "--home-dir", homeDir, "--yes"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("expected exit code 0, got %d, stderr=%s", code, stderr.String())
+	}
+	if _, err := os.Stat(filepath.Join(projectDir, ".claude", "skills", "outlook-mail", "SKILL.md")); err != nil {
+		t.Fatalf("expected installed claude skill: %v", err)
+	}
+	if !strings.Contains(stdout.String(), `"ok": true`) {
+		t.Fatalf("expected ok apply output, got %s", stdout.String())
+	}
+}
+
+func TestSetupSkillsDiffDoesNotWrite(t *testing.T) {
+	projectDir := t.TempDir()
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+
+	code := Run([]string{"setup", "skills", "diff", "--client", "opencode", "--scope", "project", "--project-dir", projectDir, "--home-dir", t.TempDir()}, &stdout, &stderr)
+
+	if code != 0 {
+		t.Fatalf("expected exit code 0, got %d, stderr=%s", code, stderr.String())
+	}
+	if !strings.Contains(stdout.String(), ".opencode/skills/outlook-mail/SKILL.md") {
+		t.Fatalf("expected diff to mention opencode skill target, got %s", stdout.String())
+	}
+	if _, err := os.Stat(filepath.Join(projectDir, ".opencode", "skills")); !os.IsNotExist(err) {
+		t.Fatalf("expected diff not to write files, stat err=%v", err)
+	}
+}
+
+func TestSetupAgentPlanReportsMCPAndSkillsTargets(t *testing.T) {
+	projectDir := t.TempDir()
+	homeDir := t.TempDir()
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+
+	code := Run([]string{"setup", "agent", "plan", "--client", "codex", "--scope", "project", "--project-dir", projectDir, "--home-dir", homeDir, "--config", ".local/outlook-agent.json", "--binary", "outlook-agent"}, &stdout, &stderr)
+
+	if code != 0 {
+		t.Fatalf("expected exit code 0, got %d, stderr=%s", code, stderr.String())
+	}
+	var payload struct {
+		Command string `json:"command"`
+		Client  string `json:"client"`
+		MCP     struct {
+			TargetPath string `json:"target_path"`
+		} `json:"mcp"`
+		Skills struct {
+			Operations []struct {
+				TargetPath string `json:"target_path"`
+			} `json:"operations"`
+		} `json:"skills"`
+	}
+	if err := json.Unmarshal(stdout.Bytes(), &payload); err != nil {
+		t.Fatalf("plan output is not JSON: %v; output=%s", err, stdout.String())
+	}
+	if payload.Command != "setup agent plan" || payload.Client != "codex" {
+		t.Fatalf("unexpected setup agent plan identity: %#v", payload)
+	}
+	if payload.MCP.TargetPath != filepath.Join(projectDir, ".mcp.json") {
+		t.Fatalf("expected MCP target under project, got %#v", payload.MCP)
+	}
+	if len(payload.Skills.Operations) == 0 || !strings.Contains(stdout.String(), filepath.Join(".agents", "skills", "outlook-mail", "SKILL.md")) {
+		t.Fatalf("expected setup agent plan to include skill operations, got %s", stdout.String())
+	}
+}
+
+func TestSetupAgentApplyRequiresYesAndWritesMCPAndSkills(t *testing.T) {
+	projectDir := t.TempDir()
+	homeDir := t.TempDir()
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+
+	code := Run([]string{"setup", "agent", "apply", "--client", "claude-code", "--scope", "project", "--project-dir", projectDir, "--home-dir", homeDir, "--config", ".local/outlook-agent.json"}, &stdout, &stderr)
+
+	if code == 0 {
+		t.Fatalf("expected non-zero exit without --yes, stdout=%s", stdout.String())
+	}
+	if !strings.Contains(strings.ToLower(stderr.String()), "yes") {
+		t.Fatalf("expected yes error, got stderr=%s", stderr.String())
+	}
+
+	stdout.Reset()
+	stderr.Reset()
+	code = Run([]string{"setup", "agent", "apply", "--client", "claude-code", "--scope", "project", "--project-dir", projectDir, "--home-dir", homeDir, "--config", ".local/outlook-agent.json", "--yes"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("expected exit code 0, got %d, stderr=%s", code, stderr.String())
+	}
+	if _, err := os.Stat(filepath.Join(projectDir, ".mcp.json")); err != nil {
+		t.Fatalf("expected MCP config write: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(projectDir, ".claude", "skills", "outlook-mail", "SKILL.md")); err != nil {
+		t.Fatalf("expected skill write: %v", err)
+	}
+}
+
+func TestSetupPluginExportWritesPreviewPackage(t *testing.T) {
+	outputDir := filepath.Join(t.TempDir(), "codex-plugin")
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+
+	code := Run([]string{"setup", "plugin", "export", "--client", "codex", "--output", outputDir}, &stdout, &stderr)
+
+	if code != 0 {
+		t.Fatalf("expected exit code 0, got %d, stderr=%s", code, stderr.String())
+	}
+	if _, err := os.Stat(filepath.Join(outputDir, ".codex-plugin", "plugin.json")); err != nil {
+		t.Fatalf("expected plugin manifest: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(outputDir, "skills", "outlook-mail", "SKILL.md")); err != nil {
+		t.Fatalf("expected plugin skill copy: %v", err)
+	}
+	if !strings.Contains(stdout.String(), `"ok": true`) {
+		t.Fatalf("expected ok export output, got %s", stdout.String())
+	}
+}
+
+func TestSetupPluginExportRequiresLocalForConfigPath(t *testing.T) {
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+
+	code := Run([]string{"setup", "plugin", "export", "--client", "codex", "--output", filepath.Join(t.TempDir(), "plugin"), "--config", ".local/outlook-agent.json"}, &stdout, &stderr)
+
+	if code == 0 {
+		t.Fatalf("expected non-zero exit without --local, stdout=%s", stdout.String())
+	}
+	if !strings.Contains(stderr.String(), "--local") {
+		t.Fatalf("expected --local error, got %s", stderr.String())
+	}
+}
+
 func TestSetupOpencodeApplyRequiresYes(t *testing.T) {
 	root := t.TempDir()
 	writeCLISkill(t, root, "outlook-mail", "# Mail\n")

@@ -18,12 +18,14 @@ import (
 	"github.com/johnkil/outlook-agent/internal/config"
 	"github.com/johnkil/outlook-agent/internal/policy"
 	"github.com/johnkil/outlook-agent/internal/secret"
+	setupcore "github.com/johnkil/outlook-agent/internal/setup"
 	"github.com/johnkil/outlook-agent/internal/setupopencode"
 	"github.com/johnkil/outlook-agent/internal/transport"
 	"github.com/johnkil/outlook-agent/internal/transport/ews"
 	"github.com/johnkil/outlook-agent/internal/transport/fake"
 	"github.com/johnkil/outlook-agent/internal/transport/graph"
 	"github.com/johnkil/outlook-agent/internal/transport/owa"
+	skillassets "github.com/johnkil/outlook-agent/skills"
 )
 
 type Options struct {
@@ -84,6 +86,15 @@ func RunWithRuntime(args []string, stdout io.Writer, stderr io.Writer, runtime R
 			return 1
 		}
 		return runSetupOpencode(setupArgs, options, stdout, stderr)
+	}
+	if setupArgs, ok := setupSkillsArgsFromRaw(args); ok {
+		return runSetupSkills(setupArgs, stdout, stderr)
+	}
+	if setupArgs, ok := setupAgentArgsFromRaw(args); ok {
+		return runSetupAgent(setupArgs, stdout, stderr)
+	}
+	if setupArgs, ok := setupPluginArgsFromRaw(args); ok {
+		return runSetupPlugin(setupArgs, stdout, stderr)
 	}
 
 	options, commandArgs, err := parseOptions(args)
@@ -931,6 +942,13 @@ Usage:
   outlook-agent setup opencode plan [--binary <path>] [--config <path>]
   outlook-agent setup opencode diff [--binary <path>] [--config <path>]
   outlook-agent setup opencode apply [--binary <path>] [--config <path>] --yes [--force|--backup]
+  outlook-agent setup skills plan --client <opencode|codex|claude-code|all> --scope <project|user>
+  outlook-agent setup skills diff --client <opencode|codex|claude-code|all> --scope <project|user>
+  outlook-agent setup skills apply --client <opencode|codex|claude-code|all> --scope <project|user> --yes [--backup] [--allow-duplicates]
+  outlook-agent setup agent plan --client <opencode|codex|claude-code> --scope <project|user> --config <path>
+  outlook-agent setup agent diff --client <opencode|codex|claude-code> --scope <project|user> --config <path>
+  outlook-agent setup agent apply --client <opencode|codex|claude-code> --scope <project|user> --config <path> --yes [--backup] [--allow-duplicates]
+  outlook-agent setup plugin export --client <codex|claude-code> --output <path> [--local --config <path>] [--binary <path>]
   outlook-agent mcp --config <path>
 
 Agent workflow:
@@ -946,6 +964,30 @@ func isHelpCommand(command string) bool {
 func setupOpencodeArgsFromRaw(args []string) ([]string, bool) {
 	commandIndex := firstCommandIndex(args)
 	if commandIndex+1 < len(args) && args[commandIndex] == "setup" && args[commandIndex+1] == "opencode" {
+		return args[commandIndex+2:], true
+	}
+	return nil, false
+}
+
+func setupSkillsArgsFromRaw(args []string) ([]string, bool) {
+	commandIndex := firstCommandIndex(args)
+	if commandIndex+1 < len(args) && args[commandIndex] == "setup" && args[commandIndex+1] == "skills" {
+		return args[commandIndex+2:], true
+	}
+	return nil, false
+}
+
+func setupAgentArgsFromRaw(args []string) ([]string, bool) {
+	commandIndex := firstCommandIndex(args)
+	if commandIndex+1 < len(args) && args[commandIndex] == "setup" && args[commandIndex+1] == "agent" {
+		return args[commandIndex+2:], true
+	}
+	return nil, false
+}
+
+func setupPluginArgsFromRaw(args []string) ([]string, bool) {
+	commandIndex := firstCommandIndex(args)
+	if commandIndex+1 < len(args) && args[commandIndex] == "setup" && args[commandIndex+1] == "plugin" {
 		return args[commandIndex+2:], true
 	}
 	return nil, false
@@ -1009,6 +1051,169 @@ type setupOpencodeArgs struct {
 	Yes        bool
 	Force      bool
 	Backup     bool
+}
+
+type setupSkillsArgs struct {
+	Command         string
+	Client          setupcore.Client
+	Scope           setupcore.Scope
+	ProjectDir      string
+	HomeDir         string
+	Yes             bool
+	Backup          bool
+	AllowDuplicates bool
+	JSON            bool
+}
+
+type setupAgentArgs struct {
+	Command         string
+	Client          setupcore.Client
+	Scope           setupcore.Scope
+	ProjectDir      string
+	HomeDir         string
+	ConfigPath      string
+	Binary          string
+	Yes             bool
+	Backup          bool
+	AllowDuplicates bool
+	JSON            bool
+}
+
+type setupPluginArgs struct {
+	Command    string
+	Client     setupcore.Client
+	Output     string
+	ConfigPath string
+	Binary     string
+	Local      bool
+}
+
+func runSetupSkills(args []string, stdout io.Writer, stderr io.Writer) int {
+	settings, err := parseSetupSkillsArgs(args)
+	if err != nil {
+		fmt.Fprintln(stderr, err)
+		return 1
+	}
+	plan, err := setupcore.BuildSkillsPlan(skillassets.FS, setupcore.SkillsOptions{
+		Client:     settings.Client,
+		Scope:      settings.Scope,
+		ProjectDir: settings.ProjectDir,
+		HomeDir:    settings.HomeDir,
+	})
+	if err != nil {
+		fmt.Fprintln(stderr, err)
+		return 1
+	}
+	switch settings.Command {
+	case "plan":
+		return writeJSON(stdout, plan)
+	case "diff":
+		if _, err := fmt.Fprint(stdout, setupcore.DiffSkillsPlan(plan)); err != nil {
+			return 1
+		}
+		return 0
+	case "apply":
+		if err := setupcore.ApplySkillsPlan(plan, setupcore.ApplyOptions{
+			Yes:             settings.Yes,
+			Backup:          settings.Backup,
+			AllowDuplicates: settings.AllowDuplicates,
+		}); err != nil {
+			fmt.Fprintln(stderr, err)
+			return 1
+		}
+		return writeJSON(stdout, map[string]any{
+			"ok":         true,
+			"command":    "setup skills apply",
+			"operations": plan.Operations,
+			"duplicates": plan.Duplicates,
+		})
+	default:
+		fmt.Fprintf(stderr, "unknown setup skills command: %s\n", settings.Command)
+		return 1
+	}
+}
+
+func runSetupAgent(args []string, stdout io.Writer, stderr io.Writer) int {
+	settings, err := parseSetupAgentArgs(args)
+	if err != nil {
+		fmt.Fprintln(stderr, err)
+		return 1
+	}
+	plan, err := setupcore.BuildAgentPlan(skillassets.FS, setupcore.AgentOptions{
+		Client:     settings.Client,
+		Scope:      settings.Scope,
+		ProjectDir: settings.ProjectDir,
+		HomeDir:    settings.HomeDir,
+		ConfigPath: settings.ConfigPath,
+		Binary:     settings.Binary,
+	})
+	if err != nil {
+		fmt.Fprintln(stderr, err)
+		return 1
+	}
+	switch settings.Command {
+	case "plan":
+		return writeJSON(stdout, plan)
+	case "diff":
+		if _, err := fmt.Fprint(stdout, setupcore.DiffAgentPlan(plan)); err != nil {
+			return 1
+		}
+		return 0
+	case "apply":
+		if err := setupcore.ApplyAgentPlan(plan, setupcore.ApplyOptions{
+			Yes:             settings.Yes,
+			Backup:          settings.Backup,
+			AllowDuplicates: settings.AllowDuplicates,
+		}); err != nil {
+			fmt.Fprintln(stderr, err)
+			return 1
+		}
+		return writeJSON(stdout, map[string]any{
+			"ok":      true,
+			"command": "setup agent apply",
+			"mcp":     plan.MCP,
+			"skills":  plan.Skills,
+		})
+	default:
+		fmt.Fprintf(stderr, "unknown setup agent command: %s\n", settings.Command)
+		return 1
+	}
+}
+
+func runSetupPlugin(args []string, stdout io.Writer, stderr io.Writer) int {
+	settings, err := parseSetupPluginArgs(args)
+	if err != nil {
+		fmt.Fprintln(stderr, err)
+		return 1
+	}
+	switch settings.Command {
+	case "export":
+		plan, err := setupcore.BuildPluginExportPlan(skillassets.FS, setupcore.PluginOptions{
+			Client:     settings.Client,
+			Output:     settings.Output,
+			Binary:     settings.Binary,
+			ConfigPath: settings.ConfigPath,
+			Local:      settings.Local,
+		})
+		if err != nil {
+			fmt.Fprintln(stderr, err)
+			return 1
+		}
+		if err := setupcore.ApplyPluginExportPlan(plan); err != nil {
+			fmt.Fprintln(stderr, err)
+			return 1
+		}
+		return writeJSON(stdout, map[string]any{
+			"ok":         true,
+			"command":    "setup plugin export",
+			"client":     plan.Client,
+			"output":     plan.Output,
+			"operations": plan.Operations,
+		})
+	default:
+		fmt.Fprintf(stderr, "unknown setup plugin command: %s\n", settings.Command)
+		return 1
+	}
 }
 
 func runSetupOpencode(args []string, options Options, stdout io.Writer, stderr io.Writer) int {
@@ -1122,6 +1327,181 @@ func parseSetupOpencodeArgs(args []string) (setupOpencodeArgs, error) {
 	}
 	if settings.Force && settings.Backup {
 		return setupOpencodeArgs{}, fmt.Errorf("--force and --backup are mutually exclusive")
+	}
+	return settings, nil
+}
+
+func parseSetupSkillsArgs(args []string) (setupSkillsArgs, error) {
+	settings := setupSkillsArgs{
+		Command: "plan",
+		Client:  setupcore.ClientOpenCode,
+		Scope:   setupcore.ScopeProject,
+	}
+	if len(args) > 0 {
+		switch args[0] {
+		case "plan", "diff", "apply":
+			settings.Command = args[0]
+			args = args[1:]
+		}
+	}
+	for index := 0; index < len(args); index++ {
+		switch args[index] {
+		case "--client":
+			index++
+			if index >= len(args) {
+				return setupSkillsArgs{}, fmt.Errorf("--client requires a value")
+			}
+			settings.Client = setupcore.Client(args[index])
+		case "--scope":
+			index++
+			if index >= len(args) {
+				return setupSkillsArgs{}, fmt.Errorf("--scope requires a value")
+			}
+			settings.Scope = setupcore.Scope(args[index])
+		case "--project-dir":
+			index++
+			if index >= len(args) {
+				return setupSkillsArgs{}, fmt.Errorf("--project-dir requires a value")
+			}
+			settings.ProjectDir = args[index]
+		case "--home-dir":
+			index++
+			if index >= len(args) {
+				return setupSkillsArgs{}, fmt.Errorf("--home-dir requires a value")
+			}
+			settings.HomeDir = args[index]
+		case "--yes":
+			settings.Yes = true
+		case "--backup":
+			settings.Backup = true
+		case "--allow-duplicates":
+			settings.AllowDuplicates = true
+		case "--json":
+			settings.JSON = true
+		default:
+			return setupSkillsArgs{}, fmt.Errorf("unknown setup skills argument: %s", args[index])
+		}
+	}
+	if settings.Command != "apply" && (settings.Yes || settings.Backup || settings.AllowDuplicates) {
+		return setupSkillsArgs{}, fmt.Errorf("--yes, --backup, and --allow-duplicates are only valid for setup skills apply")
+	}
+	return settings, nil
+}
+
+func parseSetupAgentArgs(args []string) (setupAgentArgs, error) {
+	settings := setupAgentArgs{
+		Command: "plan",
+		Client:  setupcore.ClientOpenCode,
+		Scope:   setupcore.ScopeProject,
+		Binary:  "outlook-agent",
+	}
+	if len(args) > 0 {
+		switch args[0] {
+		case "plan", "diff", "apply":
+			settings.Command = args[0]
+			args = args[1:]
+		}
+	}
+	for index := 0; index < len(args); index++ {
+		switch args[index] {
+		case "--client":
+			index++
+			if index >= len(args) {
+				return setupAgentArgs{}, fmt.Errorf("--client requires a value")
+			}
+			settings.Client = setupcore.Client(args[index])
+		case "--scope":
+			index++
+			if index >= len(args) {
+				return setupAgentArgs{}, fmt.Errorf("--scope requires a value")
+			}
+			settings.Scope = setupcore.Scope(args[index])
+		case "--project-dir":
+			index++
+			if index >= len(args) {
+				return setupAgentArgs{}, fmt.Errorf("--project-dir requires a value")
+			}
+			settings.ProjectDir = args[index]
+		case "--home-dir":
+			index++
+			if index >= len(args) {
+				return setupAgentArgs{}, fmt.Errorf("--home-dir requires a value")
+			}
+			settings.HomeDir = args[index]
+		case "--config":
+			index++
+			if index >= len(args) {
+				return setupAgentArgs{}, fmt.Errorf("--config requires a value")
+			}
+			settings.ConfigPath = args[index]
+		case "--binary":
+			index++
+			if index >= len(args) {
+				return setupAgentArgs{}, fmt.Errorf("--binary requires a value")
+			}
+			settings.Binary = args[index]
+		case "--yes":
+			settings.Yes = true
+		case "--backup":
+			settings.Backup = true
+		case "--allow-duplicates":
+			settings.AllowDuplicates = true
+		case "--json":
+			settings.JSON = true
+		default:
+			return setupAgentArgs{}, fmt.Errorf("unknown setup agent argument: %s", args[index])
+		}
+	}
+	if settings.Command != "apply" && (settings.Yes || settings.Backup || settings.AllowDuplicates) {
+		return setupAgentArgs{}, fmt.Errorf("--yes, --backup, and --allow-duplicates are only valid for setup agent apply")
+	}
+	return settings, nil
+}
+
+func parseSetupPluginArgs(args []string) (setupPluginArgs, error) {
+	settings := setupPluginArgs{
+		Command: "export",
+		Client:  setupcore.ClientCodex,
+		Binary:  "outlook-agent",
+	}
+	if len(args) > 0 {
+		switch args[0] {
+		case "export":
+			settings.Command = args[0]
+			args = args[1:]
+		}
+	}
+	for index := 0; index < len(args); index++ {
+		switch args[index] {
+		case "--client":
+			index++
+			if index >= len(args) {
+				return setupPluginArgs{}, fmt.Errorf("--client requires a value")
+			}
+			settings.Client = setupcore.Client(args[index])
+		case "--output":
+			index++
+			if index >= len(args) {
+				return setupPluginArgs{}, fmt.Errorf("--output requires a value")
+			}
+			settings.Output = args[index]
+		case "--config":
+			index++
+			if index >= len(args) {
+				return setupPluginArgs{}, fmt.Errorf("--config requires a value")
+			}
+			settings.ConfigPath = args[index]
+		case "--binary":
+			index++
+			if index >= len(args) {
+				return setupPluginArgs{}, fmt.Errorf("--binary requires a value")
+			}
+			settings.Binary = args[index]
+		case "--local":
+			settings.Local = true
+		default:
+			return setupPluginArgs{}, fmt.Errorf("unknown setup plugin argument: %s", args[index])
+		}
 	}
 	return settings, nil
 }

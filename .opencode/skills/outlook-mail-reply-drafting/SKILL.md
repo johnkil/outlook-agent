@@ -1,6 +1,15 @@
 ---
 name: outlook-mail-reply-drafting
 description: Draft safe Outlook replies and forwards grounded in selected message context.
+license: Apache-2.0
+compatibility:
+  clients:
+    - opencode
+    - codex
+    - claude-code
+metadata:
+  mcp_server: outlook-agent
+  tool_prefix: outlook.
 ---
 
 # Outlook Mail Reply Drafting

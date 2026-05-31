@@ -1,6 +1,15 @@
 ---
 name: outlook-mail-subscription-cleanup
 description: Plan safe cleanup of newsletters, subscriptions, and automated mail.
+license: Apache-2.0
+compatibility:
+  clients:
+    - opencode
+    - codex
+    - claude-code
+metadata:
+  mcp_server: outlook-agent
+  tool_prefix: outlook.
 ---
 
 # Outlook Mail Subscription Cleanup
