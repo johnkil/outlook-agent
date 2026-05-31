@@ -180,6 +180,68 @@ func TestSkillsPlanDetectsPerClientDuplicatesAndApplyCanRefuse(t *testing.T) {
 	}
 }
 
+func TestSkillsPlanDetectsOpenCodeVisibleProjectDuplicates(t *testing.T) {
+	projectDir := t.TempDir()
+	homeDir := t.TempDir()
+	existingCodexSkill := filepath.Join(projectDir, ".agents", "skills", "outlook-mail", "SKILL.md")
+	if err := os.MkdirAll(filepath.Dir(existingCodexSkill), 0o755); err != nil {
+		t.Fatalf("create codex skill dir: %v", err)
+	}
+	if err := os.WriteFile(existingCodexSkill, []byte(testSkillContent("outlook-mail")), 0o644); err != nil {
+		t.Fatalf("write codex skill: %v", err)
+	}
+
+	plan, err := BuildSkillsPlan(testSkillFS(), SkillsOptions{
+		Client:     ClientOpenCode,
+		Scope:      ScopeProject,
+		ProjectDir: projectDir,
+		HomeDir:    homeDir,
+	})
+	if err != nil {
+		t.Fatalf("BuildSkillsPlan returned error: %v", err)
+	}
+	duplicate := findDuplicate(t, plan.Duplicates, ClientOpenCode, "outlook-mail")
+	for _, expected := range []string{
+		filepath.Join(projectDir, ".opencode", "skills", "outlook-mail", "SKILL.md"),
+		filepath.Join(projectDir, ".agents", "skills", "outlook-mail", "SKILL.md"),
+	} {
+		if !stringSliceContains(duplicate.Locations, expected) {
+			t.Fatalf("expected duplicate locations to include %s, got %#v", expected, duplicate.Locations)
+		}
+	}
+	if err := ApplySkillsPlan(plan, ApplyOptions{Yes: true}); err == nil {
+		t.Fatal("expected OpenCode-visible duplicate apply to require AllowDuplicates")
+	}
+}
+
+func TestSkillsPlanAllClientProjectInstallDetectsOpenCodeVisibleDuplicates(t *testing.T) {
+	projectDir := t.TempDir()
+	homeDir := t.TempDir()
+
+	plan, err := BuildSkillsPlan(testSkillFS(), SkillsOptions{
+		Client:     ClientAll,
+		Scope:      ScopeProject,
+		ProjectDir: projectDir,
+		HomeDir:    homeDir,
+	})
+	if err != nil {
+		t.Fatalf("BuildSkillsPlan returned error: %v", err)
+	}
+	duplicate := findDuplicate(t, plan.Duplicates, ClientOpenCode, "outlook-mail")
+	for _, expected := range []string{
+		filepath.Join(projectDir, ".opencode", "skills", "outlook-mail", "SKILL.md"),
+		filepath.Join(projectDir, ".agents", "skills", "outlook-mail", "SKILL.md"),
+		filepath.Join(projectDir, ".claude", "skills", "outlook-mail", "SKILL.md"),
+	} {
+		if !stringSliceContains(duplicate.Locations, expected) {
+			t.Fatalf("expected duplicate locations to include %s, got %#v", expected, duplicate.Locations)
+		}
+	}
+	if err := ApplySkillsPlan(plan, ApplyOptions{Yes: true}); err == nil {
+		t.Fatal("expected all-client duplicate apply to require AllowDuplicates")
+	}
+}
+
 func TestBuildSkillsPlanRejectsSymlinkedTargetPath(t *testing.T) {
 	projectDir := t.TempDir()
 	outsideDir := t.TempDir()
@@ -228,6 +290,17 @@ func findOperation(t *testing.T, plan SkillsPlan, skill string) SkillOperation {
 	}
 	t.Fatalf("operation for skill %s not found in %#v", skill, plan.Operations)
 	return SkillOperation{}
+}
+
+func findDuplicate(t *testing.T, duplicates []DuplicateSkill, client Client, skill string) DuplicateSkill {
+	t.Helper()
+	for _, duplicate := range duplicates {
+		if duplicate.Client == client && duplicate.Skill == skill {
+			return duplicate
+		}
+	}
+	t.Fatalf("duplicate for %s/%s not found in %#v", client, skill, duplicates)
+	return DuplicateSkill{}
 }
 
 func assertFileContent(t *testing.T, path string, expected string) {
