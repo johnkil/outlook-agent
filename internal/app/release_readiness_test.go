@@ -27,6 +27,8 @@ func TestReleaseReadinessArtifactsExist(t *testing.T) {
 			"Only tag commits with green hosted CI",
 			"CI run URL for the exact commit",
 			"Create an annotated version tag",
+			"GoReleaser snapshot parity",
+			"scripts/goreleaser-snapshot-smoke.sh",
 		},
 		filepath.Join("..", "..", "scripts", "ci-local.sh"): {
 			"-path \"./.cache\"",
@@ -56,6 +58,16 @@ func TestReleaseReadinessArtifactsExist(t *testing.T) {
 			"OUTLOOK_AGENT_BINARY_UNDER_TEST",
 			"TestBinaryMCPStdioUsesConfiguredDefaultProfile",
 			"scripts/release-verify.sh",
+		},
+		filepath.Join("..", "..", "scripts", "goreleaser-snapshot-smoke.sh"): {
+			"OUTLOOK_AGENT_SMOKE_VERSION",
+			"release-version.sh",
+			"validate_release_version",
+			"goreleaser release --snapshot --clean --skip=publish",
+			"scripts/release-sbom.sh",
+			"SHA256SUMS.txt",
+			"scripts/release-verify.sh \"$dist_dir\"",
+			"goreleaser snapshot smoke passed",
 		},
 		filepath.Join("..", "..", "scripts", "release-verify.sh"): {
 			"SHA256SUMS.txt",
@@ -124,6 +136,32 @@ func TestReleaseReadinessArtifactsExist(t *testing.T) {
 			"gh release",
 			"contents: write",
 		},
+		filepath.Join("..", "..", ".goreleaser.yaml"): {
+			"version: 2",
+			"project_name: outlook-agent",
+			"main: ./cmd/outlook-agent",
+			"binary: outlook-agent",
+			"CGO_ENABLED=0",
+			"darwin",
+			"linux",
+			"windows",
+			"amd64",
+			"arm64",
+			"github.com/johnkil/outlook-agent/internal/buildinfo.Version={{ .Tag }}",
+			"github.com/johnkil/outlook-agent/internal/buildinfo.Commit={{ .Commit }}",
+			"github.com/johnkil/outlook-agent/internal/buildinfo.Date={{ .Date }}",
+			"github.com/johnkil/outlook-agent/internal/buildinfo.Dirty={{ .IsGitDirty }}",
+			"github.com/johnkil/outlook-agent/internal/buildinfo.BuiltBy=goreleaser",
+			"outlook-agent_{{ .Tag }}_{{ .Os }}_{{ .Arch }}",
+			"wrap_in_directory: true",
+			"format_overrides",
+			"goos: windows",
+			"zip",
+			"SHA256SUMS.txt",
+			"README.md",
+			"docs/RELEASE.md",
+			"strip_parent: true",
+		},
 		filepath.Join("..", "..", "docs", "RELEASE_EVIDENCE.md"): {
 			"# Release Evidence",
 			"Template",
@@ -139,7 +177,19 @@ func TestReleaseReadinessArtifactsExist(t *testing.T) {
 			"macOS keychain integration",
 			"live Graph read-only smoke",
 			"dependency manifest",
+			"GoReleaser snapshot smoke",
+			"GoReleaser version",
+			"Artifact contract compared against script release",
+			"Dependency manifest included and checksummed",
 			"Known limitations",
+		},
+		filepath.Join("..", "..", "docs", "RELEASE_DISTRIBUTION_ROADMAP.md"): {
+			"# Release Distribution Roadmap",
+			"GoReleaser owns tag publishing",
+			"update check",
+			"update apply",
+			"Codex marketplace package",
+			"Do not combine these steps into the snapshot parity PR",
 		},
 		filepath.Join("..", "..", "docs", "ACTION_COVERAGE.md"): {
 			"# Action Coverage",
@@ -164,6 +214,72 @@ func TestReleaseReadinessArtifactsExist(t *testing.T) {
 			}
 		}
 	}
+}
+
+func TestGoReleaserConfigIsPublicSafe(t *testing.T) {
+	path := filepath.Join("..", "..", ".goreleaser.yaml")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read GoReleaser config %s: %v", path, err)
+	}
+	text := strings.ToLower(string(data))
+	for _, forbidden := range []string{
+		"access_token",
+		"refresh_token",
+		"x-owa-canary",
+		"cookie",
+		"password",
+		"approval_secret",
+		"alfabank",
+		"alfaintra",
+		"moscow\\",
+		"go mod tidy",
+	} {
+		if strings.Contains(text, forbidden) {
+			t.Fatalf("GoReleaser config contains forbidden marker %q", forbidden)
+		}
+	}
+}
+
+func TestGoReleaserConfigPreservesTagPrefix(t *testing.T) {
+	path := filepath.Join("..", "..", ".goreleaser.yaml")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read GoReleaser config %s: %v", path, err)
+	}
+	text := string(data)
+	for _, forbidden := range []string{
+		"buildinfo.Version={{ .Version }}",
+		"outlook-agent_{{ .Version }}_{{ .Os }}_{{ .Arch }}",
+	} {
+		if strings.Contains(text, forbidden) {
+			t.Fatalf("GoReleaser config uses tag-stripping .Version in release contract marker %q", forbidden)
+		}
+	}
+}
+
+func TestGoReleaserSnapshotSmokeIsAdditive(t *testing.T) {
+	path := filepath.Join("..", "..", "scripts", "goreleaser-snapshot-smoke.sh")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read GoReleaser snapshot smoke %s: %v", path, err)
+	}
+	text := string(data)
+	for _, forbidden := range []string{
+		"gh release create",
+		"GITHUB_TOKEN",
+		"OUTLOOK_AGENT_SIGN_RELEASE",
+	} {
+		if strings.Contains(text, forbidden) {
+			t.Fatalf("GoReleaser snapshot smoke contains publish/signing marker %q", forbidden)
+		}
+	}
+	assertFileMarkersInOrder(t,
+		path,
+		"goreleaser release --snapshot --clean --skip=publish",
+		"scripts/release-sbom.sh",
+		"scripts/release-verify.sh \"$dist_dir\"",
+	)
 }
 
 func TestReleaseWorkflowVerifiesArtifactsBeforePublishing(t *testing.T) {

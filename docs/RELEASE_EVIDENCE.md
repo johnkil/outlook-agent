@@ -33,6 +33,10 @@ Go version:
 - govulncheck:
 - public safety check:
 - action coverage smoke:
+- GoReleaser snapshot smoke:
+- GoReleaser version:
+- Artifact contract compared against script release:
+- Dependency manifest included and checksummed:
 
 ### Tag workflow gates
 
