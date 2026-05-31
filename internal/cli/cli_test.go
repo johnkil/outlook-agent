@@ -610,6 +610,25 @@ func TestSetupPluginExportRequiresLocalForConfigPath(t *testing.T) {
 	}
 }
 
+func TestSetupPluginExportUsesLeadingGlobalConfigForLocalExport(t *testing.T) {
+	outputDir := filepath.Join(t.TempDir(), "plugin")
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+
+	code := Run([]string{"--config", ".local/outlook-agent.json", "setup", "plugin", "export", "--client", "codex", "--output", outputDir, "--local"}, &stdout, &stderr)
+
+	if code != 0 {
+		t.Fatalf("expected exit code 0, got %d, stderr=%s", code, stderr.String())
+	}
+	mcpData, err := os.ReadFile(filepath.Join(outputDir, ".mcp.json"))
+	if err != nil {
+		t.Fatalf("read generated MCP config: %v", err)
+	}
+	if !strings.Contains(string(mcpData), `"--config"`) || !strings.Contains(string(mcpData), `".local/outlook-agent.json"`) {
+		t.Fatalf("expected local plugin MCP config to include leading global config, got %s", string(mcpData))
+	}
+}
+
 func TestSetupOpencodeApplyRequiresYes(t *testing.T) {
 	root := t.TempDir()
 	writeCLISkill(t, root, "outlook-mail", "# Mail\n")

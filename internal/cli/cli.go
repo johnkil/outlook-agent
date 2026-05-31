@@ -99,7 +99,12 @@ func RunWithRuntime(args []string, stdout io.Writer, stderr io.Writer, runtime R
 		return runSetupAgent(setupArgs, options, stdout, stderr)
 	}
 	if setupArgs, ok := setupPluginArgsFromRaw(args); ok {
-		return runSetupPlugin(setupArgs, stdout, stderr)
+		options, _, err := parseOptionsBeforeCommand(args)
+		if err != nil {
+			fmt.Fprintln(stderr, err)
+			return 1
+		}
+		return runSetupPlugin(setupArgs, options, stdout, stderr)
 	}
 
 	options, commandArgs, err := parseOptions(args)
@@ -1188,11 +1193,14 @@ func runSetupAgent(args []string, options Options, stdout io.Writer, stderr io.W
 	}
 }
 
-func runSetupPlugin(args []string, stdout io.Writer, stderr io.Writer) int {
+func runSetupPlugin(args []string, options Options, stdout io.Writer, stderr io.Writer) int {
 	settings, err := parseSetupPluginArgs(args)
 	if err != nil {
 		fmt.Fprintln(stderr, err)
 		return 1
+	}
+	if settings.ConfigPath == "" {
+		settings.ConfigPath = options.ConfigPath
 	}
 	switch settings.Command {
 	case "export":
