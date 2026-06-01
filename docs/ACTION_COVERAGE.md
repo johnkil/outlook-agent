@@ -134,6 +134,8 @@ Implemented high-level OWA mappings:
 | `mail.list_attachments` | `GetItem` | implemented as metadata-only for explicit message ids and live MCP smoke-tested against a controlled draft attachment fixture |
 | `mail.fetch_attachment` | OWA `GetFileAttachment` download endpoint | implemented for explicit attachment ids and live MCP smoke-tested against a controlled draft attachment fixture |
 | `mail.create_draft` | `CreateItem` | implemented as `SaveOnly` draft and live MCP smoke-tested with a fixture |
+| `mail.move_to_folder` | `MoveItem` | implemented as a high-level reversible action for exact message ids with unit coverage and partial-result reporting; raw `MoveItem` remains the guarded escape hatch |
+| `mail.archive` | `MoveItem` to `archive` | implemented as a high-level reversible action for exact message ids with unit coverage; raw `MoveItem` remains the guarded escape hatch |
 | `mail.move_to_deleted_items` | `DeleteItem` | implemented as `MoveToDeletedItems` and live MCP smoke-tested through dry-run/confirmation cleanup of the draft fixture |
 | `mail.rules.list` | Graph `messageRules` / transport capability | implemented as read-only typed MCP tool where the selected transport supports it |
 | `mail.rules.set_enabled` | Graph `PATCH messageRules/{id}` / transport capability | implemented as a typed settings/rules MCP tool requiring dry-run confirmation before enabling or disabling an existing rule |

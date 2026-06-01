@@ -112,6 +112,33 @@ func (client *Transport) executeHighLevel(ctx context.Context, request transport
 		}
 		drafts := normalizeMailItems(extractItems(response.Data))
 		return transport.ActionResponse{OK: true, Data: map[string]any{"draft": firstAny(drafts)}}, true
+	case "mail.move_to_folder":
+		ids := anySlice(request.Payload["ids"])
+		if len(ids) == 0 {
+			return transport.ActionResponse{OK: false, Error: "mail.move_to_folder requires ids"}, true
+		}
+		folderID := strings.TrimSpace(stringValue(request.Payload, "folder_id"))
+		if folderID == "" {
+			folderID = strings.TrimSpace(stringValue(request.Payload, "folder"))
+		}
+		if folderID == "" {
+			return transport.ActionResponse{OK: false, Error: "mail.move_to_folder requires folder_id"}, true
+		}
+		response := client.executeService(ctx, "MoveItem", client.buildMoveItemRequest(ids, folderID), false)
+		if !response.OK {
+			return response, true
+		}
+		return moveItemResult(ids, response.Data), true
+	case "mail.archive":
+		ids := anySlice(request.Payload["ids"])
+		if len(ids) == 0 {
+			return transport.ActionResponse{OK: false, Error: "mail.archive requires ids"}, true
+		}
+		response := client.executeService(ctx, "MoveItem", client.buildMoveItemRequest(ids, "archive"), false)
+		if !response.OK {
+			return response, true
+		}
+		return moveItemResult(ids, response.Data), true
 	case "mail.move_to_deleted_items":
 		ids := anySlice(request.Payload["ids"])
 		if len(ids) == 0 {
@@ -173,6 +200,43 @@ func moveToDeletedResult(ids []any, payload map[string]any) transport.ActionResp
 	}
 	if len(failed) > 0 {
 		return transport.ActionResponse{OK: false, Error: "some messages failed to move to Deleted Items", Data: data}
+	}
+	return transport.ActionResponse{OK: true, Data: data}
+}
+
+func moveItemResult(ids []any, payload map[string]any) transport.ActionResponse {
+	requested := anyStrings(ids)
+	messages := responseMessages(payload)
+	if len(messages) == 0 {
+		return transport.ActionResponse{OK: true, Data: map[string]any{
+			"updated_count": len(requested),
+			"reversible":    true,
+			"succeeded":     requested,
+			"failed":        []map[string]any{},
+		}}
+	}
+	succeeded := make([]string, 0, len(requested))
+	failed := make([]map[string]any, 0)
+	for index, id := range requested {
+		message := map[string]any{}
+		if index < len(messages) {
+			message, _ = messages[index].(map[string]any)
+		}
+		responseClass := strings.TrimSpace(stringValue(message, "ResponseClass"))
+		if responseClass == "" || strings.EqualFold(responseClass, "Success") {
+			succeeded = append(succeeded, id)
+			continue
+		}
+		failed = append(failed, map[string]any{"id": id, "error": responseMessageError(message)})
+	}
+	data := map[string]any{
+		"updated_count": len(succeeded),
+		"reversible":    true,
+		"succeeded":     succeeded,
+		"failed":        failed,
+	}
+	if len(failed) > 0 {
+		return transport.ActionResponse{OK: false, Error: "some messages failed to move", Data: data}
 	}
 	return transport.ActionResponse{OK: true, Data: data}
 }
@@ -495,6 +559,30 @@ func (client *Transport) buildMoveToDeletedItemsRequest(ids []any) any {
 			field("__type", "DeleteItemRequest:#Exchange"),
 			field("DeleteType", "MoveToDeletedItems"),
 			field("SendMeetingCancellations", "SendToNone"),
+			field("ItemIds", itemIDs),
+		)),
+	)
+}
+
+func (client *Transport) buildMoveItemRequest(ids []any, folderID string) any {
+	itemIDs := make([]any, 0, len(ids))
+	for _, id := range ids {
+		switch typed := id.(type) {
+		case string:
+			itemIDs = append(itemIDs, object(field("__type", "ItemId:#Exchange"), field("Id", typed)))
+		case map[string]any:
+			itemIDs = append(itemIDs, typed)
+		}
+	}
+	return object(
+		field("__type", "MoveItemJsonRequest:#Exchange"),
+		field("Header", client.requestHeaderPayload("Exchange2013")),
+		field("Body", object(
+			field("__type", "MoveItemRequest:#Exchange"),
+			field("ToFolderId", object(
+				field("__type", "TargetFolderId:#Exchange"),
+				field("BaseFolderId", owaFolderID(normalizeFolderID(folderID))),
+			)),
 			field("ItemIds", itemIDs),
 		)),
 	)

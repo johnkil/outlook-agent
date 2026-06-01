@@ -391,6 +391,21 @@ func TestHighLevelExplicitTargetActionsFailBeforeServiceCall(t *testing.T) {
 			request:   transport.ActionRequest{Name: "mail.move_to_deleted_items", Payload: map[string]any{}},
 			wantError: "mail.move_to_deleted_items requires ids",
 		},
+		{
+			name:      "move to folder missing ids",
+			request:   transport.ActionRequest{Name: "mail.move_to_folder", Payload: map[string]any{"folder_id": "target-folder"}},
+			wantError: "mail.move_to_folder requires ids",
+		},
+		{
+			name:      "move to folder missing folder id",
+			request:   transport.ActionRequest{Name: "mail.move_to_folder", Payload: map[string]any{"ids": []any{"msg-1"}}},
+			wantError: "mail.move_to_folder requires folder_id",
+		},
+		{
+			name:      "archive missing ids",
+			request:   transport.ActionRequest{Name: "mail.archive", Payload: map[string]any{}},
+			wantError: "mail.archive requires ids",
+		},
 	}
 
 	for _, tt := range tests {
@@ -435,6 +450,8 @@ func TestCapabilitiesIncludeOWAHighLevelReadActions(t *testing.T) {
 		"mail.list_attachments",
 		"mail.fetch_attachment",
 		"mail.create_draft",
+		"mail.move_to_folder",
+		"mail.archive",
 		"mail.move_to_deleted_items",
 		"calendar.list",
 		"calendar.availability",
@@ -442,6 +459,71 @@ func TestCapabilitiesIncludeOWAHighLevelReadActions(t *testing.T) {
 		if !slices.Contains(names, expected) {
 			t.Fatalf("expected capability %q in %#v", expected, names)
 		}
+	}
+}
+
+func TestHighLevelMailArchiveCallsMoveItemToArchive(t *testing.T) {
+	var calls []recordedServiceCall
+	server := newOWAServiceServer(t, &calls, map[string]any{
+		"Body": map[string]any{
+			"ResponseMessages": map[string]any{
+				"Items": []any{map[string]any{"ResponseClass": "Success"}},
+			},
+		},
+	})
+	defer server.Close()
+	client := newTestTransport(server)
+
+	response := client.Execute(context.Background(), transport.ActionRequest{
+		Name:    "mail.archive",
+		Payload: map[string]any{"ids": []any{"msg-1"}},
+	})
+
+	if !response.OK {
+		t.Fatalf("expected mail.archive ok: %#v", response)
+	}
+	if len(calls) != 1 || calls[0].Action != "MoveItem" {
+		t.Fatalf("expected MoveItem call, got %#v", calls)
+	}
+	body := calls[0].Body["Body"].(map[string]any)
+	toFolder := body["ToFolderId"].(map[string]any)["BaseFolderId"].(map[string]any)
+	if toFolder["Id"] != "archive" {
+		t.Fatalf("expected archive destination, got %#v", toFolder)
+	}
+	if response.Data["updated_count"] != 1 {
+		t.Fatalf("expected updated_count=1, got %#v", response.Data)
+	}
+}
+
+func TestHighLevelMailMoveToFolderReturnsPartialFailures(t *testing.T) {
+	var calls []recordedServiceCall
+	server := newOWAServiceServer(t, &calls, map[string]any{
+		"Body": map[string]any{
+			"ResponseMessages": map[string]any{
+				"Items": []any{
+					map[string]any{"ResponseClass": "Success"},
+					map[string]any{"ResponseClass": "Error", "MessageText": "folder denied"},
+				},
+			},
+		},
+	})
+	defer server.Close()
+	client := newTestTransport(server)
+
+	response := client.Execute(context.Background(), transport.ActionRequest{
+		Name:    "mail.move_to_folder",
+		Payload: map[string]any{"ids": []any{"msg-1", "msg-2"}, "folder_id": "target-folder"},
+	})
+
+	if response.OK || response.Error != "some messages failed to move" {
+		t.Fatalf("expected partial failure, got %#v", response)
+	}
+	if response.Data["updated_count"] != 1 || response.Data["reversible"] != true {
+		t.Fatalf("unexpected partial move metadata: %#v", response.Data)
+	}
+	failed := response.Data["failed"].([]map[string]any)
+	if len(failed) != 1 || failed[0]["id"] != "msg-2" || failed[0]["error"] != "folder denied" {
+		t.Fatalf("unexpected failed move details: %#v", failed)
 	}
 }
 
