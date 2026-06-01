@@ -63,6 +63,16 @@ func TestActionConfirmConsumesTokenAndExecutesExactAction(t *testing.T) {
 	if output.Data["moved_count"] != 1 {
 		t.Fatalf("expected moved_count=1, got %#v", output.Data["moved_count"])
 	}
+	if output.ManifestID == "" || output.ManifestTTLSeconds == 0 {
+		t.Fatalf("expected confirmed move to return mutation manifest metadata: %#v", output)
+	}
+	manifest, ok := runtime.manifests.Get(output.ManifestID)
+	if !ok {
+		t.Fatalf("expected manifest %q to be retained", output.ManifestID)
+	}
+	if manifest.Action != "mail.move_to_deleted_items" || len(manifest.IDs) != 1 || manifest.IDs[0] != "msg-1" {
+		t.Fatalf("unexpected manifest contents: %#v", manifest)
+	}
 }
 
 func TestActionConfirmRequiresExternalApprovalWhenConfigured(t *testing.T) {
@@ -520,6 +530,16 @@ func TestReversibleMessageMutationSingleExecutesAndBulkRequiresConfirmation(t *t
 	if !singleOutput.OK || !client.executed {
 		t.Fatalf("expected single explicit message mutation to execute directly: %#v executed=%v", singleOutput, client.executed)
 	}
+	if singleOutput.ManifestID == "" || singleOutput.ManifestTTLSeconds == 0 {
+		t.Fatalf("expected direct single mutation to return manifest metadata: %#v", singleOutput)
+	}
+	singleManifest, ok := runtime.manifests.Get(singleOutput.ManifestID)
+	if !ok {
+		t.Fatalf("expected direct mutation manifest %q to be retained", singleOutput.ManifestID)
+	}
+	if singleManifest.Action != "mail.mark_read" || len(singleManifest.IDs) != 1 || singleManifest.IDs[0] != "msg-1" {
+		t.Fatalf("unexpected direct mutation manifest contents: %#v", singleManifest)
+	}
 
 	client.executed = false
 	_, missingConfirm, err := mailMarkReadHandler(runtime)(context.Background(), nil, MailMarkReadInput{
@@ -557,6 +577,16 @@ func TestReversibleMessageMutationSingleExecutesAndBulkRequiresConfirmation(t *t
 	}
 	if !confirmed.OK || !client.executed {
 		t.Fatalf("expected confirmed bulk mutation to execute: %#v executed=%v", confirmed, client.executed)
+	}
+	if confirmed.ManifestID == "" || confirmed.ManifestTTLSeconds == 0 {
+		t.Fatalf("expected confirmed bulk mutation to return manifest metadata: %#v", confirmed)
+	}
+	bulkManifest, ok := runtime.manifests.Get(confirmed.ManifestID)
+	if !ok {
+		t.Fatalf("expected bulk mutation manifest %q to be retained", confirmed.ManifestID)
+	}
+	if bulkManifest.Action != "mail.mark_read" || len(bulkManifest.IDs) != 2 || bulkManifest.IDs[0] != "msg-1" || bulkManifest.IDs[1] != "msg-2" {
+		t.Fatalf("unexpected bulk mutation manifest contents: %#v", bulkManifest)
 	}
 }
 
@@ -1090,6 +1120,9 @@ func TestActionConfirmReturnsTransportFailureWithoutData(t *testing.T) {
 	if output.OK || output.Error != "transport failed" || output.Data != nil {
 		t.Fatalf("expected transport failure without data to be returned, got %#v", output)
 	}
+	if output.ManifestID != "" || output.ManifestTTLSeconds != 0 {
+		t.Fatalf("failed action must not return manifest metadata: %#v", output)
+	}
 }
 
 func TestMailMoveToDeletedItemsReturnsTransportFailureWithoutData(t *testing.T) {
@@ -1110,6 +1143,9 @@ func TestMailMoveToDeletedItemsReturnsTransportFailureWithoutData(t *testing.T) 
 	}
 	if output.OK || output.Error != "transport failed" || output.Data != nil {
 		t.Fatalf("expected transport failure without data to be returned, got %#v", output)
+	}
+	if output.ManifestID != "" || output.ManifestTTLSeconds != 0 {
+		t.Fatalf("failed action must not return manifest metadata: %#v", output)
 	}
 }
 

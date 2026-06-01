@@ -16,6 +16,7 @@ import (
 	"github.com/johnkil/outlook-agent/internal/capability"
 	"github.com/johnkil/outlook-agent/internal/confirm"
 	"github.com/johnkil/outlook-agent/internal/cursor"
+	"github.com/johnkil/outlook-agent/internal/manifest"
 	"github.com/johnkil/outlook-agent/internal/policy"
 	"github.com/johnkil/outlook-agent/internal/redact"
 	"github.com/johnkil/outlook-agent/internal/transport"
@@ -225,9 +226,11 @@ type MailboxSettingsGetOutput struct {
 }
 
 type ActionResultOutput struct {
-	OK    bool           `json:"ok"`
-	Data  map[string]any `json:"data,omitempty"`
-	Error string         `json:"error,omitempty"`
+	OK                 bool           `json:"ok"`
+	Data               map[string]any `json:"data,omitempty"`
+	Error              string         `json:"error,omitempty"`
+	ManifestID         string         `json:"manifest_id,omitempty"`
+	ManifestTTLSeconds int            `json:"manifest_ttl_seconds,omitempty"`
 }
 
 type CalendarWindowInput struct {
@@ -313,6 +316,7 @@ type Runtime struct {
 	confirm        *confirm.Store
 	approval       *approval.Store
 	cursors        *cursor.Store
+	manifests      *manifest.Store
 	audit          *audit.Recorder
 	profile        string
 	approvalPolicy approval.Policy
@@ -333,6 +337,7 @@ type toolRegistration struct {
 
 const ApprovalTokenEnv = approval.LegacyTokenEnv
 const searchCursorLeaseTTL = 2 * time.Minute
+const mutationManifestTTL = 30 * time.Minute
 
 var toolRegistrations = []toolRegistration{
 	{name: "outlook.auth_check", add: func(server *mcp.Server, runtime *Runtime, name string) {
@@ -515,6 +520,7 @@ func NewRuntimeWithProfile(client transport.Transport, profile string) *Runtime 
 		confirm:        confirm.NewStore(time.Now),
 		approval:       approval.NewStore(time.Now),
 		cursors:        cursor.NewStore(time.Now),
+		manifests:      manifest.NewStore(time.Now),
 		audit:          recorder,
 		profile:        profile,
 		approvalPolicy: approval.PolicyFromEnv(client.Name(), os.Getenv),
@@ -947,7 +953,9 @@ func executeReversibleMessageMutation(ctx context.Context, runtime *Runtime, act
 	}
 	response := runtime.client.Execute(ctx, transport.ActionRequest{Name: actionName, Payload: payload})
 	runtime.recordAudit(audit.TypeExecute, actionName, payload, runtime.profile, class, review, auditDecisionForResponse(response), summary.Count, response.Error)
-	return nil, actionResultFromResponse(response), nil
+	output := actionResultFromResponse(response)
+	runtime.attachMutationManifest(actionName, payload, &output)
+	return nil, output, nil
 }
 
 func mailMoveToDeletedItemsHandler(runtime *Runtime) func(context.Context, *mcp.CallToolRequest, MailMoveToDeletedItemsInput) (*mcp.CallToolResult, ActionResultOutput, error) {
@@ -973,7 +981,9 @@ func mailMoveToDeletedItemsHandler(runtime *Runtime) func(context.Context, *mcp.
 		runtime.recordAudit(audit.TypeConfirm, "mail.move_to_deleted_items", payload, runtime.profile, class, review, "accepted", summary.Count, "")
 		response := runtime.client.Execute(ctx, transport.ActionRequest{Name: "mail.move_to_deleted_items", Payload: payload})
 		runtime.recordAudit(audit.TypeExecute, "mail.move_to_deleted_items", payload, runtime.profile, class, review, auditDecisionForResponse(response), summary.Count, response.Error)
-		return nil, actionResultFromResponse(response), nil
+		output := actionResultFromResponse(response)
+		runtime.attachMutationManifest("mail.move_to_deleted_items", payload, &output)
+		return nil, output, nil
 	}
 }
 
@@ -1138,6 +1148,65 @@ func actionResultFromResponse(response transport.ActionResponse) ActionResultOut
 	return output
 }
 
+func (runtime *Runtime) attachMutationManifest(actionName string, payload map[string]any, output *ActionResultOutput) {
+	if runtime == nil || runtime.manifests == nil || output == nil || !output.OK || !issuesMutationManifest(actionName) {
+		return
+	}
+	ids, hasExplicitSuccessList := manifestIDsFromData(output.Data)
+	if len(ids) == 0 && !hasExplicitSuccessList {
+		ids = manifestIDsFromValue(payload["ids"])
+	}
+	ids = nonEmptyStrings(ids)
+	if len(ids) == 0 {
+		return
+	}
+	record, err := runtime.manifests.Issue(manifest.Record{Action: actionName, IDs: ids}, mutationManifestTTL)
+	if err != nil {
+		return
+	}
+	output.ManifestID = record.ID
+	output.ManifestTTLSeconds = int(mutationManifestTTL.Seconds())
+}
+
+func issuesMutationManifest(actionName string) bool {
+	return actionName == "mail.move_to_deleted_items" || isReversibleMessageMutationAction(actionName)
+}
+
+func manifestIDsFromData(data map[string]any) ([]string, bool) {
+	if data == nil {
+		return nil, false
+	}
+	value, ok := data["succeeded"]
+	if !ok {
+		return nil, false
+	}
+	return manifestIDsFromValue(value), true
+}
+
+func manifestIDsFromValue(value any) []string {
+	switch typed := value.(type) {
+	case string:
+		return []string{typed}
+	case []string:
+		return append([]string(nil), typed...)
+	case []any:
+		ids := make([]string, 0, len(typed))
+		for _, item := range typed {
+			ids = append(ids, manifestIDsFromValue(item)...)
+		}
+		return ids
+	case map[string]any:
+		for _, key := range []string{"id", "Id"} {
+			if id, ok := typed[key].(string); ok {
+				return []string{id}
+			}
+		}
+		return nil
+	default:
+		return nil
+	}
+}
+
 func dryRunHandler(runtime *Runtime) func(context.Context, *mcp.CallToolRequest, DryRunInput) (*mcp.CallToolResult, DryRunOutput, error) {
 	return func(ctx context.Context, _ *mcp.CallToolRequest, input DryRunInput) (*mcp.CallToolResult, DryRunOutput, error) {
 		if reason := actionPreflightRejection(input.Action); reason != "" {
@@ -1253,7 +1322,9 @@ func actionConfirmHandler(runtime *Runtime) func(context.Context, *mcp.CallToolR
 		runtime.recordAudit(audit.TypeConfirm, input.Action, input.Payload, runtime.profileOrDefault(input.Profile), class, review, "accepted", summary.Count, "")
 		response := runtime.client.Execute(ctx, transport.ActionRequest{Name: input.Action, Payload: input.Payload, UnsafeMode: input.UnsafeMode})
 		runtime.recordAudit(audit.TypeExecute, input.Action, input.Payload, runtime.profileOrDefault(input.Profile), class, review, auditDecisionForResponse(response), summary.Count, response.Error)
-		return nil, actionResultFromResponse(response), nil
+		output := actionResultFromResponse(response)
+		runtime.attachMutationManifest(input.Action, input.Payload, &output)
+		return nil, output, nil
 	}
 }
 
