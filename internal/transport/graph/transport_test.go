@@ -2346,6 +2346,58 @@ func TestTransportCalendarFindTimeUsesGetScheduleIntersection(t *testing.T) {
 	}
 }
 
+func TestTransportCalendarFindTimeFailsOnAttendeeScheduleError(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		switch {
+		case request.Method == http.MethodGet && request.URL.Path == "/v1.0/me/calendarView":
+			response.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(response).Encode(map[string]any{"value": []any{}})
+		case request.Method == http.MethodPost && request.URL.Path == "/v1.0/me/calendar/getSchedule":
+			response.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(response).Encode(map[string]any{
+				"value": []any{
+					map[string]any{
+						"scheduleId":       "vlad.cheshenko@example.com",
+						"scheduleItems":    []any{},
+						"availabilityView": "",
+						"error": map[string]any{
+							"responseCode": "ErrorMailRecipientNotFound",
+							"message":      "The attendee schedule is unavailable.",
+						},
+					},
+				},
+			})
+		default:
+			t.Fatalf("unexpected request: %s %s", request.Method, request.URL.String())
+		}
+	}))
+	defer server.Close()
+
+	client := graph.NewTransport(graph.Config{
+		BaseURL:   server.URL + "/v1.0",
+		SecretRef: secret.Ref("memory:graph"),
+	}, secret.NewMemoryStore(map[string]string{"memory:graph": "token-secret"}), server.Client())
+
+	result := client.Execute(context.Background(), transport.ActionRequest{
+		Name: "calendar.find_time",
+		Payload: map[string]any{
+			"attendees":        []any{"vlad.cheshenko@example.com"},
+			"start":            "2026-05-28T09:00:00Z",
+			"end":              "2026-05-28T10:00:00Z",
+			"duration_minutes": float64(30),
+			"time_zone":        "UTC",
+			"tentative":        "busy",
+		},
+	})
+
+	if result.OK {
+		t.Fatalf("expected attendee schedule error to abort find-time, got %#v", result)
+	}
+	if !strings.Contains(result.Error, "ErrorMailRecipientNotFound") {
+		t.Fatalf("expected schedule error code, got %q", result.Error)
+	}
+}
+
 func TestTransportCalendarFindTimeUsesMailboxForGetSchedule(t *testing.T) {
 	const mailbox = "shared@example.com"
 	var sawCalendarView bool

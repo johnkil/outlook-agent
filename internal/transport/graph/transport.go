@@ -804,6 +804,12 @@ type getScheduleResponse struct {
 type scheduleInformation struct {
 	ScheduleID    string         `json:"scheduleId"`
 	ScheduleItems []scheduleItem `json:"scheduleItems"`
+	Error         scheduleError  `json:"error"`
+}
+
+type scheduleError struct {
+	ResponseCode string `json:"responseCode"`
+	Message      string `json:"message"`
 }
 
 type scheduleItem struct {
@@ -1422,6 +1428,17 @@ func (client *Transport) getSchedule(ctx context.Context, payload map[string]any
 	}
 	windows := make([]any, 0)
 	for _, schedule := range response.Value {
+		if schedule.Error.ResponseCode != "" || schedule.Error.Message != "" {
+			scheduleID := strings.TrimSpace(schedule.ScheduleID)
+			if scheduleID == "" {
+				scheduleID = email
+			}
+			detail := strings.TrimSpace(schedule.Error.ResponseCode)
+			if detail == "" {
+				detail = strings.TrimSpace(schedule.Error.Message)
+			}
+			return nil, fmt.Errorf("graph getSchedule failed for %s: %s", scheduleID, detail)
+		}
 		for _, item := range schedule.ScheduleItems {
 			windows = append(windows, normalizeGraphScheduleItem(schedule.ScheduleID, item, timeZone))
 		}
