@@ -90,6 +90,27 @@ platform archives, verifies the dependency manifest and `SHA256SUMS.txt`, runs
 runnable, checks the embedded `doctor` version, and removes the temporary output unless
 `OUTLOOK_AGENT_KEEP_RELEASE_SMOKE=1` is set.
 
+## GoReleaser snapshot parity
+
+GoReleaser is available as an additive snapshot/parity builder. It does not
+replace the tag release workflow yet. Existing release scripts remain the
+release safety gates and fallback publishing path.
+
+Run:
+
+```bash
+GOPATH=$PWD/.cache/go GOCACHE=$PWD/.cache/go-build GOMODCACHE=$PWD/.cache/go-mod scripts/goreleaser-snapshot-smoke.sh
+```
+
+The smoke runs `goreleaser release --snapshot --clean --skip=publish`, keeps the
+current archive naming contract, generates the dependency manifest with
+`scripts/release-sbom.sh`, adds it to `SHA256SUMS.txt`, and verifies the result
+with `scripts/release-verify.sh dist`.
+
+A future PR may switch tag publishing to GoReleaser only after snapshot parity
+and a real release verify the artifact contract. Keep later distribution work in
+`docs/RELEASE_DISTRIBUTION_ROADMAP.md`.
+
 ## Signed Checksums
 
 Set `OUTLOOK_AGENT_SIGN_RELEASE=1` to create a detached armored GPG signature:
@@ -128,10 +149,13 @@ GOPATH=$PWD/.cache/go GOCACHE=$PWD/.cache/go-build GOMODCACHE=$PWD/.cache/go-mod
 Release process:
 
 1. Wait for CI green on `main`.
-2. Create an annotated version tag on that exact commit.
-3. Push the tag.
-4. Verify the release workflow passed.
-5. Fill release evidence, including the commit SHA and hosted CI run URL.
+2. If the Codex marketplace package changed under `plugins/outlook-agent`,
+   bump `codexPluginVersion`, regenerate the package, and verify the committed
+   package still matches the exporter.
+3. Create an annotated version tag on that exact commit.
+4. Push the tag.
+5. Verify the release workflow passed.
+6. Fill release evidence, including the commit SHA and hosted CI run URL.
 
 Then create and push a version tag:
 

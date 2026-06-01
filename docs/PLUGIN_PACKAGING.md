@@ -40,6 +40,52 @@ Export also refuses when the output path is a symlink, even with `--force`.
 Generated packages should be written into the requested directory, not through a
 link to an unexpected filesystem location.
 
+## Codex Repo Marketplace
+
+The repository also carries a Codex marketplace source:
+
+```text
+.agents/plugins/marketplace.json
+plugins/outlook-agent/
+```
+
+Install it from GitHub with sparse checkout paths:
+
+```bash
+codex plugin marketplace add johnkil/outlook-agent --sparse .agents/plugins --sparse plugins
+codex plugin marketplace list
+```
+
+`list` prints the marketplace names and root paths in Codex versions that
+include that subcommand. Older local Codex CLI builds may only expose `add`,
+`upgrade`, and `remove`.
+
+After adding the marketplace, open Codex Plugins, select the Outlook Agent
+marketplace, install or enable `outlook-agent`, and restart the session so
+skills and MCP metadata reload.
+
+Refresh or remove the marketplace source with:
+
+```bash
+codex plugin marketplace upgrade outlook-agent
+codex plugin marketplace remove outlook-agent
+```
+
+For local branch validation, run the add command against the repository root:
+
+```bash
+codex plugin marketplace add "$PWD"
+```
+
+Marketplace updates refresh plugin metadata, skills, and MCP packaging only.
+This does not update the `outlook-agent` binary. Install or update the binary
+through GitHub Releases, the install script, or another explicit binary rollout
+path.
+
+The committed marketplace package launches `outlook-agent` from `PATH` and does
+not embed a private config path. Use `setup agent` or a `--local` plugin export
+when a client needs a private config path in its MCP wiring.
+
 ## Local Export
 
 ```bash

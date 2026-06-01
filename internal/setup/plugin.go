@@ -39,6 +39,8 @@ type PluginOperation struct {
 	currentContent []byte
 }
 
+const codexPluginVersion = "0.4.0"
+
 func BuildPluginExportPlan(fsys fs.FS, options PluginOptions) (PluginPlan, error) {
 	if options.Client == "" {
 		options.Client = ClientCodex
@@ -208,9 +210,37 @@ func buildPluginManifest(client Client, skills []Skill) (string, []byte, error) 
 	case ClientCodex:
 		payload := map[string]any{
 			"name":        "outlook-agent",
-			"description": "Portable Outlook Agent MCP and skills package.",
-			"skills":      "./skills/",
-			"mcpServers":  "./.mcp.json",
+			"version":     codexPluginVersion,
+			"description": "Safety-gated MCP bridge for Outlook mail and calendar.",
+			"author": map[string]any{
+				"name": "johnkil",
+				"url":  "https://github.com/johnkil",
+			},
+			"homepage":   "https://github.com/johnkil/outlook-agent",
+			"repository": "https://github.com/johnkil/outlook-agent",
+			"license":    "Apache-2.0",
+			"keywords": []string{
+				"outlook",
+				"mcp",
+				"model-context-protocol",
+				"email-agent",
+				"calendar-agent",
+				"agent-safety",
+			},
+			"skills":     "./skills/",
+			"mcpServers": "./.mcp.json",
+			"interface": map[string]any{
+				"displayName":      "Outlook Agent",
+				"shortDescription": "Safety-gated Outlook mail and calendar access for Codex.",
+				"longDescription":  "Use Outlook Agent to let Codex inspect Outlook mail and calendar metadata, fetch explicit content, prepare drafts, and execute reviewed writes through dry-run, confirmation, and host approval gates.",
+				"developerName":    "johnkil",
+				"category":         "Productivity",
+				"capabilities":     []string{"Read", "Write"},
+				"defaultPrompt": []string{
+					"Use Outlook Agent to summarize today's inbox and calendar without opening message bodies unless needed.",
+					"Use Outlook Agent to draft a reply, then show the review packet before sending.",
+				},
+			},
 		}
 		content, err := json.MarshalIndent(payload, "", "  ")
 		return filepath.Join(".codex-plugin", "plugin.json"), ensureNewline(content), err
