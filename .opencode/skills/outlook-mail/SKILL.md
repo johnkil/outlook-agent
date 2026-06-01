@@ -27,7 +27,9 @@ specific message or thread.
 3. Fetch one selected message with `outlook.mail_fetch_metadata` before reading
    body or attachment content.
 4. Fetch message bodies with `outlook.mail_fetch_body` only for explicit,
-   narrow targets.
+   narrow targets. For large body audits, prefer `outlook.mail_fetch_bodies`
+   with exact ids, keep batches within the server cap, and report attempted,
+   succeeded, and failed coverage.
 5. List attachment metadata with `outlook.mail_list_attachments` before using
    `outlook.mail_fetch_attachment` for one explicit attachment id.
 6. Create new drafts with `outlook.mail_create_draft`, and source-message
@@ -44,6 +46,11 @@ specific message or thread.
    `outlook.mail_mark_read`. Single-message changes need the exact id and new
    state; bulk changes need dry-run review, confirmation, and host approval
    fields when the dry-run response requires them.
+   For Inbox cleanup, do a content-risk review before the mutation dry-run:
+   body-read every unread, high-importance, human, corporate/system,
+   IT/security/access/training/compliance, Confluence announcement, or unclear
+   candidate. A dry-run proves the mutation is reviewable; it does not prove
+   the messages are unimportant.
 9. Inspect rule and mailbox-setting metadata with `outlook.mail_rules_list`
    and `outlook.mailbox_settings_get` before considering any raw rule or
    settings action.

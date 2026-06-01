@@ -33,6 +33,8 @@ Separate analysis from mailbox changes.
 6. Use `outlook.action_dry_run` before any broad move or delete. The dry-run is
    a mutation-safety gate, not an importance classifier; include body-read
    coverage and protected/skipped counts in the user-facing review.
+   Before broad cleanup, report target count, protected count, skipped count,
+   body-read coverage, destination, and manifest/audit plan.
 7. Execute only the reviewed payload with `outlook.action_confirm`; when
    dry-run returns an `approval_challenge`, pass host-provided
    `approval_challenge_id` and `approval_token` without asking for the

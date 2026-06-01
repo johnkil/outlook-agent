@@ -42,9 +42,10 @@ Use this skill for inbox triage, unread-mail review, and reply-needed detection.
    fetch attachment content during triage unless the user picked one explicit
    attachment.
 7. Keep triage findings separate from mailbox actions.
-8. Before asking for or executing cleanup approval, report target counts,
-   protected counts, body-read coverage, and any messages that were skipped
-   because they need user review.
+8. Before asking for or executing cleanup approval, report target count,
+   protected count, skipped count, body-read coverage, destination, and
+   manifest/audit plan. Keep any messages that need user review out of the
+   mutation target set.
 
 ## Output
 

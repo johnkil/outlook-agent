@@ -129,6 +129,8 @@ repository.
 3. Treat body reads and mutations as separate phases. Metadata-first discovery
    is appropriate, but broad cleanup needs a content-risk review before the
    mutation dry-run.
+   Before broad cleanup, report target count, protected count, skipped count,
+   body-read coverage, destination, and manifest/audit plan.
 4. Body-read every unread, high-importance, human-sender, corporate/system
    announcement, IT/security/access/training/compliance, Confluence
    announcement, or ambiguous candidate before moving it out of Inbox. Only

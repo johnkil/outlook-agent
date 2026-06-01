@@ -76,6 +76,27 @@ func TestOutlookCalendarSkillsDocumentCurrentToolSurface(t *testing.T) {
 	}
 }
 
+func TestMailCleanupSkillsRequireBodyGatedReview(t *testing.T) {
+	for _, path := range []string{
+		"skills/outlook-mail-inbox-triage/SKILL.md",
+		"skills/outlook-mail-subscription-cleanup/SKILL.md",
+	} {
+		content := readProjectFile(t, path)
+		for _, required := range []string{
+			"dry-run",
+			"body-read coverage",
+			"corporate",
+			"training",
+			"compliance",
+			"manifest",
+		} {
+			if !strings.Contains(content, required) {
+				t.Fatalf("%s must mention %q", path, required)
+			}
+		}
+	}
+}
+
 func TestOpenCodeSkillsDocumentAgentUXPackage(t *testing.T) {
 	sourceRoot := filepath.Join("..", "..", "skills")
 	targetRoot := filepath.Join("..", "..", ".opencode", "skills")
@@ -101,4 +122,13 @@ func TestOpenCodeSkillsDocumentAgentUXPackage(t *testing.T) {
 			t.Fatalf("expected OpenCode skill %s to match source skill %s", targetPath, sourcePath)
 		}
 	}
+}
+
+func readProjectFile(t *testing.T, path string) string {
+	t.Helper()
+	data, err := os.ReadFile(filepath.Join("..", "..", path))
+	if err != nil {
+		t.Fatalf("read project file %s: %v", path, err)
+	}
+	return string(data)
 }
