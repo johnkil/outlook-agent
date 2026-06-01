@@ -175,6 +175,36 @@ func TestHighLevelMailSearchUsesRequestedFolder(t *testing.T) {
 	}
 }
 
+func TestHighLevelMailSearchFallsBackToFolderID(t *testing.T) {
+	var calls []recordedServiceCall
+	server := newOWAServiceServer(t, &calls, map[string]any{
+		"Body": map[string]any{
+			"ResponseMessages": map[string]any{
+				"Items": []any{
+					map[string]any{"RootFolder": map[string]any{"Items": []any{}}},
+				},
+			},
+		},
+	})
+	defer server.Close()
+	client := newTestTransport(server)
+
+	response := client.Execute(context.Background(), transport.ActionRequest{
+		Name:    "mail.search",
+		Payload: map[string]any{"folder_id": "archive"},
+	})
+
+	if !response.OK {
+		t.Fatalf("expected mail.search ok: %#v", response)
+	}
+	body := calls[0].Body["Body"].(map[string]any)
+	parentFolders := body["ParentFolderIds"].([]any)
+	folder := parentFolders[0].(map[string]any)
+	if folder["Id"] != "archive" {
+		t.Fatalf("expected archive folder from folder_id, got %#v", folder)
+	}
+}
+
 func TestHighLevelMailSearchUsesConfiguredTimeZone(t *testing.T) {
 	var calls []recordedServiceCall
 	server := newOWAServiceServer(t, &calls, map[string]any{"Body": map[string]any{"Items": []any{}}})

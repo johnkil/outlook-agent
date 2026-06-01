@@ -18,7 +18,11 @@ func (client *Transport) executeHighLevel(ctx context.Context, request transport
 		if err != nil {
 			return transport.ActionResponse{OK: false, Error: err.Error()}, true
 		}
-		folderID := normalizeFolderID(stringValue(request.Payload, "folder"))
+		folderID := strings.TrimSpace(stringValue(request.Payload, "folder"))
+		if folderID == "" {
+			folderID = strings.TrimSpace(stringValue(request.Payload, "folder_id"))
+		}
+		folderID = normalizeFolderID(folderID)
 		response := client.executeService(ctx, "FindItem", client.buildFindItemsRequest(limit.Value, folderID), false)
 		if !response.OK {
 			return response, true
