@@ -706,7 +706,7 @@ func runCalendarAvailability(stdout io.Writer, options Options, runtime Runtime,
 		return errCode
 	}
 	if query := stringAny(payload["with"]); query != "" {
-		email, err := resolvePersonEmail(client, query)
+		email, err := resolvePersonEmail(client, query, stringAny(payload["mailbox"]))
 		if err != nil {
 			_ = writeJSON(stdout, map[string]any{"ok": false, "command": "calendar availability", "error": err.Error()})
 			return 3
@@ -724,7 +724,7 @@ func runCalendarFindTime(stdout io.Writer, options Options, runtime Runtime, pay
 	}
 	attendees := stringSliceAny(payload["attendees"])
 	for _, query := range stringSliceAny(payload["with"]) {
-		email, err := resolvePersonEmail(client, query)
+		email, err := resolvePersonEmail(client, query, stringAny(payload["mailbox"]))
 		if err != nil {
 			_ = writeJSON(stdout, map[string]any{"ok": false, "command": "calendar find-time", "error": err.Error()})
 			return 3
@@ -782,8 +782,12 @@ func runTypedReadActionWithClient(stdout io.Writer, client transport.Transport, 
 	return 3
 }
 
-func resolvePersonEmail(client transport.Transport, query string) (string, error) {
-	response := client.Execute(context.Background(), transport.ActionRequest{Name: "people.resolve", Payload: map[string]any{"query": query}})
+func resolvePersonEmail(client transport.Transport, query string, mailbox string) (string, error) {
+	payload := map[string]any{"query": query}
+	if strings.TrimSpace(mailbox) != "" {
+		payload["mailbox"] = mailbox
+	}
+	response := client.Execute(context.Background(), transport.ActionRequest{Name: "people.resolve", Payload: payload})
 	if !response.OK {
 		return "", errors.New(response.Error)
 	}

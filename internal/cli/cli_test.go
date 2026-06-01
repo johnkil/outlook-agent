@@ -1765,6 +1765,42 @@ func TestCalendarFindTimeVladScenarioWithDurationStringAndJSON(t *testing.T) {
 	}
 }
 
+func TestCalendarFindTimeWithPersonPreservesMailboxWhenResolving(t *testing.T) {
+	oldNow := now
+	now = func() time.Time { return time.Date(2026, 6, 1, 12, 0, 0, 0, time.UTC) }
+	defer func() { now = oldNow }()
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	client := &cliCapturingTransport{}
+
+	code := RunWithRuntime([]string{
+		"calendar", "find-time",
+		"--mailbox", "shared@example.com",
+		"--with", "vlad",
+		"--date", "tomorrow",
+		"--duration", "30m",
+		"--timezone", "UTC",
+		"--json",
+	}, &stdout, &stderr, Runtime{
+		BuildTransport: func(context.Context, Options) (transport.Transport, string, error) {
+			return client, "work", nil
+		},
+	})
+
+	if code != 0 {
+		t.Fatalf("expected exit code 0, got %d, stderr=%s", code, stderr.String())
+	}
+	if len(client.requests) != 2 || client.requests[0].Name != "people.resolve" || client.requests[1].Name != "calendar.find_time" {
+		t.Fatalf("expected people resolve before find-time, got %#v", client.requests)
+	}
+	if client.requests[0].Payload["mailbox"] != "shared@example.com" {
+		t.Fatalf("expected people.resolve to keep mailbox, got %#v", client.requests[0])
+	}
+	if client.requests[1].Payload["mailbox"] != "shared@example.com" {
+		t.Fatalf("expected calendar.find_time to keep mailbox, got %#v", client.requests[1])
+	}
+}
+
 func TestCalendarMutualFreeAlias(t *testing.T) {
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer

@@ -2524,6 +2524,61 @@ func TestTransportCalendarFindTimeParsesOrganizerEventTimezone(t *testing.T) {
 	}
 }
 
+func TestTransportCalendarFindTimeParsesFractionalGraphDateTimeTimeZone(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		switch {
+		case request.Method == http.MethodGet && request.URL.Path == "/v1.0/me/calendarView":
+			response.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(response).Encode(map[string]any{
+				"value": []any{
+					graphEventResponse("event-1", "Private focus", "2026-05-28T09:00:00.0000000", "2026-05-28T09:30:00.0000000", "Room 1"),
+				},
+			})
+		case request.Method == http.MethodPost && request.URL.Path == "/v1.0/me/calendar/getSchedule":
+			response.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(response).Encode(map[string]any{
+				"value": []any{
+					map[string]any{
+						"scheduleId": "vlad.cheshenko@example.com",
+						"scheduleItems": []any{
+							graphScheduleItemResponse("busy", "2026-05-28T09:30:00.0000000", "2026-05-28T10:00:00.0000000", "Hidden busy event"),
+						},
+					},
+				},
+			})
+		default:
+			t.Fatalf("unexpected request: %s %s", request.Method, request.URL.String())
+		}
+	}))
+	defer server.Close()
+
+	client := graph.NewTransport(graph.Config{
+		BaseURL:   server.URL + "/v1.0",
+		SecretRef: secret.Ref("memory:graph"),
+	}, secret.NewMemoryStore(map[string]string{"memory:graph": "token-secret"}), server.Client())
+
+	result := client.Execute(context.Background(), transport.ActionRequest{
+		Name: "calendar.find_time",
+		Payload: map[string]any{
+			"attendees":        []any{"vlad.cheshenko@example.com"},
+			"start":            "2026-05-28T09:00:00Z",
+			"end":              "2026-05-28T12:00:00Z",
+			"duration_minutes": float64(30),
+			"time_zone":        "UTC",
+			"tentative":        "busy",
+		},
+	})
+
+	if !result.OK {
+		t.Fatalf("expected calendar.find_time ok, got %#v", result)
+	}
+	suggestions := result.Data["suggestions"].([]any)
+	first := suggestions[0].(map[string]any)
+	if first["start"] != "2026-05-28T10:00:00Z" || first["end"] != "2026-05-28T10:30:00Z" {
+		t.Fatalf("unexpected first suggestion: %#v", first)
+	}
+}
+
 func TestTransportReportsHTTPErrorWithoutToken(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
 		response.Header().Set("Content-Type", "application/json")

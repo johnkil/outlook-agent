@@ -2381,14 +2381,24 @@ func stringSlice(value any) []string {
 }
 
 func parseGraphTimeInZone(value string, timeZone string) (time.Time, error) {
-	if parsed, err := time.Parse(time.RFC3339, value); err == nil {
-		return parsed, nil
+	for _, layout := range []string{time.RFC3339Nano, time.RFC3339} {
+		if parsed, err := time.Parse(layout, value); err == nil {
+			return parsed, nil
+		}
 	}
 	location := time.UTC
 	if loaded, err := graphTimeLocation(timeZone); err == nil {
 		location = loaded
 	}
-	return time.ParseInLocation("2006-01-02T15:04:05", value, location)
+	var lastErr error
+	for _, layout := range []string{"2006-01-02T15:04:05.999999999", "2006-01-02T15:04:05"} {
+		parsed, err := time.ParseInLocation(layout, value, location)
+		if err == nil {
+			return parsed, nil
+		}
+		lastErr = err
+	}
+	return time.Time{}, lastErr
 }
 
 func graphTimeLocation(timeZone string) (*time.Location, error) {
