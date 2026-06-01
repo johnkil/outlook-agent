@@ -57,3 +57,19 @@ func TestFindSuggestionsCanTreatTentativeAsFree(t *testing.T) {
 		t.Fatalf("expected tentative slot to remain available, got %#v", suggestions)
 	}
 }
+
+func TestFindSuggestionsTreatsWorkingElsewhereAsFree(t *testing.T) {
+	start := mustTime(t, "2026-05-28T09:00:00Z")
+	end := mustTime(t, "2026-05-28T10:00:00Z")
+
+	suggestions := calendarplan.FindSuggestions(start, end, []calendarplan.Interval{
+		{Start: mustTime(t, "2026-05-28T09:00:00Z"), End: mustTime(t, "2026-05-28T09:30:00Z"), Status: "workingElsewhere"},
+	}, calendarplan.Options{Duration: 30 * time.Minute, Step: 30 * time.Minute})
+
+	if len(suggestions) == 0 {
+		t.Fatal("expected workingElsewhere slot to remain available")
+	}
+	if suggestions[0].Start != mustTime(t, "2026-05-28T09:00:00Z") || suggestions[0].End != mustTime(t, "2026-05-28T09:30:00Z") {
+		t.Fatalf("expected workingElsewhere not to block first slot, got %#v", suggestions[0])
+	}
+}

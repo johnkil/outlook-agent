@@ -78,7 +78,7 @@ func blockingIntervals(intervals []Interval, tentativePolicy string) []Interval 
 		}
 		status := strings.ToLower(strings.TrimSpace(interval.Status))
 		switch status {
-		case "busy", "oof", "outofoffice", "workingelsewhere", "working_elsewhere":
+		case "busy", "oof", "outofoffice":
 			blocking = append(blocking, interval)
 		case "tentative":
 			if !tentativeIsFree {

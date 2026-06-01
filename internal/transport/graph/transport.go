@@ -1346,7 +1346,10 @@ func (client *Transport) findMeetingTime(ctx context.Context, mailbox string, pa
 	if err != nil {
 		return nil, err
 	}
-	busy := intervalsFromGraphEvents(events)
+	busy, err := intervalsFromGraphEvents(events)
+	if err != nil {
+		return nil, err
+	}
 	for _, attendee := range attendees {
 		windows, err := client.getSchedule(ctx, map[string]any{
 			"mailbox":          mailbox,
@@ -1359,7 +1362,11 @@ func (client *Transport) findMeetingTime(ctx context.Context, mailbox string, pa
 		if err != nil {
 			return nil, err
 		}
-		busy = append(busy, intervalsFromGraphWindows(windows)...)
+		attendeeBusy, err := intervalsFromGraphWindows(windows)
+		if err != nil {
+			return nil, err
+		}
+		busy = append(busy, attendeeBusy...)
 	}
 	duration := calendarplan.DurationFromMinutes(floatValue(payload, "duration_minutes", 30))
 	slots := calendarplan.FindSuggestions(windowStart, windowEnd, busy, calendarplan.Options{
@@ -2207,7 +2214,7 @@ func normalizeGraphScheduleItem(scheduleID string, item scheduleItem, fallbackTi
 	}
 }
 
-func intervalsFromGraphEvents(events []any) []calendarplan.Interval {
+func intervalsFromGraphEvents(events []any) ([]calendarplan.Interval, error) {
 	intervals := make([]calendarplan.Interval, 0, len(events))
 	for _, event := range events {
 		eventMap, ok := event.(map[string]any)
@@ -2216,18 +2223,18 @@ func intervalsFromGraphEvents(events []any) []calendarplan.Interval {
 		}
 		start, err := parseGraphTimeInZone(stringValue(eventMap, "start", ""), stringValue(eventMap, "start_time_zone", "UTC"))
 		if err != nil {
-			continue
+			return nil, fmt.Errorf("calendar.find_time requires parseable organizer event start")
 		}
 		end, err := parseGraphTimeInZone(stringValue(eventMap, "end", ""), stringValue(eventMap, "end_time_zone", "UTC"))
 		if err != nil {
-			continue
+			return nil, fmt.Errorf("calendar.find_time requires parseable organizer event end")
 		}
 		intervals = append(intervals, calendarplan.Interval{Start: start, End: end, Status: stringValue(eventMap, "free_busy_type", "busy")})
 	}
-	return intervals
+	return intervals, nil
 }
 
-func intervalsFromGraphWindows(windows []any) []calendarplan.Interval {
+func intervalsFromGraphWindows(windows []any) ([]calendarplan.Interval, error) {
 	intervals := make([]calendarplan.Interval, 0, len(windows))
 	for _, window := range windows {
 		windowMap, ok := window.(map[string]any)
@@ -2236,15 +2243,15 @@ func intervalsFromGraphWindows(windows []any) []calendarplan.Interval {
 		}
 		start, err := parseGraphTimeInZone(stringValue(windowMap, "start", ""), stringValue(windowMap, "start_time_zone", "UTC"))
 		if err != nil {
-			continue
+			return nil, fmt.Errorf("calendar.find_time requires parseable attendee window start")
 		}
 		end, err := parseGraphTimeInZone(stringValue(windowMap, "end", ""), stringValue(windowMap, "end_time_zone", "UTC"))
 		if err != nil {
-			continue
+			return nil, fmt.Errorf("calendar.find_time requires parseable attendee window end")
 		}
 		intervals = append(intervals, calendarplan.Interval{Start: start, End: end, Status: stringValue(windowMap, "free_busy_type", "")})
 	}
-	return intervals
+	return intervals, nil
 }
 
 func formatAddress(address emailAddress) string {
@@ -2409,9 +2416,9 @@ func parseGraphTimeInZone(value string, timeZone string) (time.Time, error) {
 			return parsed, nil
 		}
 	}
-	location := time.UTC
-	if loaded, err := graphTimeLocation(timeZone); err == nil {
-		location = loaded
+	location, err := graphTimeLocation(timeZone)
+	if err != nil {
+		return time.Time{}, err
 	}
 	var lastErr error
 	for _, layout := range []string{"2006-01-02T15:04:05.999999999", "2006-01-02T15:04:05"} {
@@ -2441,6 +2448,8 @@ func graphWindowsTimeZoneLocation(timeZone string) string {
 		return "UTC"
 	case "gmt standard time":
 		return "Europe/London"
+	case "india standard time":
+		return "Asia/Kolkata"
 	case "w. europe standard time", "central european standard time", "romance standard time":
 		return "Europe/Berlin"
 	case "russian standard time":
@@ -2460,15 +2469,6 @@ func graphWindowsTimeZoneLocation(timeZone string) string {
 
 func graphDateTimeZone(value string, fallback string) string {
 	for _, candidate := range []string{value, fallback, "UTC"} {
-		candidate = strings.TrimSpace(candidate)
-		if candidate == "" {
-			continue
-		}
-		if _, err := graphTimeLocation(candidate); err == nil {
-			return candidate
-		}
-	}
-	for _, candidate := range []string{value, fallback} {
 		candidate = strings.TrimSpace(candidate)
 		if candidate != "" {
 			return candidate
