@@ -804,7 +804,11 @@ func mailAuditManifestBodiesHandler(runtime *Runtime) func(context.Context, *mcp
 		if !ok {
 			return nil, MailAuditManifestBodiesOutput{}, errors.New("mutation manifest is missing or expired; rerun metadata search and build an explicit id list")
 		}
-		batch, err := fetchBodies(ctx, runtime.client, record.IDs, input.Max, input.Mailbox, "mutation manifest has no ids")
+		mailbox := strings.TrimSpace(input.Mailbox)
+		if mailbox == "" {
+			mailbox = record.Mailbox
+		}
+		batch, err := fetchBodies(ctx, runtime.client, record.IDs, input.Max, mailbox, "mutation manifest has no ids")
 		if err != nil {
 			return nil, MailAuditManifestBodiesOutput{}, err
 		}
@@ -1256,18 +1260,25 @@ func actionResultFromResponse(response transport.ActionResponse) ActionResultOut
 }
 
 func (runtime *Runtime) attachMutationManifest(actionName string, payload map[string]any, output *ActionResultOutput) {
-	if runtime == nil || runtime.manifests == nil || output == nil || !output.OK || !issuesMutationManifest(actionName) {
+	if runtime == nil || runtime.manifests == nil || output == nil || !issuesMutationManifest(actionName) {
 		return
 	}
 	ids, hasExplicitSuccessList := manifestIDsFromData(output.Data)
-	if len(ids) == 0 && !hasExplicitSuccessList {
+	if !output.OK && (!hasExplicitSuccessList || len(ids) == 0) {
+		return
+	}
+	if output.OK && len(ids) == 0 && !hasExplicitSuccessList {
 		ids = manifestIDsFromValue(payload["ids"])
 	}
 	ids = nonEmptyStrings(ids)
 	if len(ids) == 0 {
 		return
 	}
-	record, err := runtime.manifests.Issue(manifest.Record{Action: actionName, IDs: ids}, mutationManifestTTL)
+	record, err := runtime.manifests.Issue(manifest.Record{
+		Action:  actionName,
+		IDs:     ids,
+		Mailbox: stringMetadata(payload, "mailbox"),
+	}, mutationManifestTTL)
 	if err != nil {
 		return
 	}

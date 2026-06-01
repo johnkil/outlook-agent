@@ -4,6 +4,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"errors"
+	"strings"
 	"sync"
 	"time"
 )
@@ -12,6 +13,7 @@ type Record struct {
 	ID        string    `json:"id"`
 	Action    string    `json:"action"`
 	IDs       []string  `json:"ids"`
+	Mailbox   string    `json:"mailbox,omitempty"`
 	CreatedAt time.Time `json:"created_at"`
 	ExpiresAt time.Time `json:"expires_at"`
 }
@@ -44,6 +46,7 @@ func (store *Store) Issue(record Record, ttl time.Duration) (Record, error) {
 	record.ID = id
 	record.CreatedAt = now
 	record.ExpiresAt = now.Add(ttl)
+	record.Mailbox = strings.TrimSpace(record.Mailbox)
 	record.IDs = append([]string(nil), record.IDs...)
 	store.mu.Lock()
 	defer store.mu.Unlock()
