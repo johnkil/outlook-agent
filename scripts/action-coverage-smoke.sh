@@ -45,7 +45,7 @@ jq -e '
   and .command == "policy coverage"
   and (.summary.total == (.actions | length))
   and (.summary.total > 0)
-  and (.summary.by_transport.owa == 64)
+  and (.summary.by_transport.owa == 66)
   and ([.actions[] | select((.execution_route // "") == "" or (.live_check_level // "") == "")] | length == 0)
   and ([.actions[] | select(.safety_class == "read_metadata" and .live_check_level != "live_readonly")] | length == 0)
   and ([.actions[] | select((.safety_class == "read_body_explicit" or .safety_class == "read_attachment_explicit") and .live_check_level != "manual_explicit_target")] | length == 0)

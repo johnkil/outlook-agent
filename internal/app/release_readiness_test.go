@@ -1552,7 +1552,7 @@ func writeCoverageFixture(t *testing.T, path string) {
 			AllowedDirect:  true,
 		},
 	}
-	for len(actions) < 64 {
+	for len(actions) < 66 {
 		actions = append(actions, coverageAction{
 			Action:         "fixture.read." + string(rune('a'+len(actions)%26)),
 			Transport:      "owa",
@@ -1568,7 +1568,7 @@ func writeCoverageFixture(t *testing.T, path string) {
 		"actions": actions,
 		"summary": map[string]any{
 			"total":        len(actions),
-			"by_transport": map[string]int{"owa": 64},
+			"by_transport": map[string]int{"owa": 66},
 		},
 	}
 	data, err := json.Marshal(payload)
