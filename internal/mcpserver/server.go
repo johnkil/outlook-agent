@@ -105,6 +105,26 @@ type MailFetchBodyOutput struct {
 	BodyText string `json:"body_text"`
 }
 
+type MailFetchBodiesInput struct {
+	IDs     []string `json:"ids" jsonschema:"explicit message ids to fetch body text for"`
+	Max     int      `json:"max,omitempty" jsonschema:"maximum ids to process, capped by the server"`
+	Mailbox string   `json:"mailbox,omitempty" jsonschema:"optional mailbox user id or user principal name"`
+}
+
+type MailFetchBodiesOutput struct {
+	Attempted int                       `json:"attempted"`
+	Succeeded int                       `json:"succeeded"`
+	Failed    int                       `json:"failed"`
+	Results   []MailFetchBodyItemOutput `json:"results"`
+}
+
+type MailFetchBodyItemOutput struct {
+	ID       string `json:"id"`
+	OK       bool   `json:"ok"`
+	BodyText string `json:"body_text,omitempty"`
+	Error    string `json:"error,omitempty"`
+}
+
 type MailListAttachmentsOutput struct {
 	Attachments []any `json:"attachments"`
 }
@@ -338,6 +358,7 @@ type toolRegistration struct {
 const ApprovalTokenEnv = approval.LegacyTokenEnv
 const searchCursorLeaseTTL = 2 * time.Minute
 const mutationManifestTTL = 30 * time.Minute
+const maxBatchBodyFetch = 50
 
 var toolRegistrations = []toolRegistration{
 	{name: "outlook.auth_check", add: func(server *mcp.Server, runtime *Runtime, name string) {
@@ -357,6 +378,9 @@ var toolRegistrations = []toolRegistration{
 	}},
 	{name: "outlook.mail_fetch_body", add: func(server *mcp.Server, runtime *Runtime, name string) {
 		mcp.AddTool(server, mcpTool(name), mailFetchBodyHandler(runtime.client))
+	}},
+	{name: "outlook.mail_fetch_bodies", add: func(server *mcp.Server, runtime *Runtime, name string) {
+		mcp.AddTool(server, mcpTool(name), mailFetchBodiesHandler(runtime.client))
 	}},
 	{name: "outlook.mail_list_attachments", add: func(server *mcp.Server, runtime *Runtime, name string) {
 		mcp.AddTool(server, mcpTool(name), mailListAttachmentsHandler(runtime.client))
@@ -433,6 +457,7 @@ var toolDescriptionByName = map[string]string{
 	"outlook.mail_search_next":            "Fetch the next metadata-only mail search page using an opaque cursor from outlook.mail_search.",
 	"outlook.mail_fetch_metadata":         "Fetch metadata for one explicit message before body or attachment reads.",
 	"outlook.mail_fetch_body":             "Fetch body text for one explicit message; not a bulk body reader.",
+	"outlook.mail_fetch_bodies":           "Fetch body text for explicit ids in a capped batch; not a mailbox search or broad body reader.",
 	"outlook.mail_list_attachments":       "List attachment metadata for one explicit message; does not fetch attachment content.",
 	"outlook.mail_fetch_attachment":       "Fetch one explicit attachment by message id and attachment id.",
 	"outlook.mail_create_draft":           "Create a save-only draft; does not send mail.",
@@ -737,6 +762,36 @@ func mailFetchBodyHandler(client transport.Transport) func(context.Context, *mcp
 		}
 		body, _ := response.Data["body_text"].(string)
 		return nil, MailFetchBodyOutput{ID: response.Data["id"], BodyText: body}, nil
+	}
+}
+
+func mailFetchBodiesHandler(client transport.Transport) func(context.Context, *mcp.CallToolRequest, MailFetchBodiesInput) (*mcp.CallToolResult, MailFetchBodiesOutput, error) {
+	return func(ctx context.Context, _ *mcp.CallToolRequest, input MailFetchBodiesInput) (*mcp.CallToolResult, MailFetchBodiesOutput, error) {
+		ids := nonEmptyStrings(input.IDs)
+		if len(ids) == 0 {
+			return nil, MailFetchBodiesOutput{}, errors.New("outlook.mail_fetch_bodies requires ids")
+		}
+		limit := input.Max
+		if limit <= 0 || limit > maxBatchBodyFetch {
+			limit = maxBatchBodyFetch
+		}
+		if len(ids) > limit {
+			ids = ids[:limit]
+		}
+		output := MailFetchBodiesOutput{Attempted: len(ids), Results: make([]MailFetchBodyItemOutput, 0, len(ids))}
+		for _, id := range ids {
+			response := client.Execute(ctx, transport.ActionRequest{Name: "mail.fetch_body", Payload: withMailbox(map[string]any{"id": id}, input.Mailbox)})
+			item := MailFetchBodyItemOutput{ID: id, OK: response.OK}
+			if response.OK {
+				item.BodyText, _ = response.Data["body_text"].(string)
+				output.Succeeded++
+			} else {
+				item.Error = redact.String(response.Error)
+				output.Failed++
+			}
+			output.Results = append(output.Results, item)
+		}
+		return nil, output, nil
 	}
 }
 
@@ -1357,6 +1412,9 @@ func rawActionHandler(runtime *Runtime) func(context.Context, *mcp.CallToolReque
 func actionPreflightRejection(actionName string) string {
 	if actionName == "mail.search_next" {
 		return "mail.search_next requires an opaque cursor; use outlook.mail_search_next"
+	}
+	if actionName == "mail.fetch_bodies" {
+		return "mail.fetch_bodies is an MCP-only typed helper; use outlook.mail_fetch_bodies"
 	}
 	return ""
 }

@@ -17,6 +17,7 @@ Compatibility version `0.1` includes these tool names:
 - `outlook.mail_search_next`
 - `outlook.mail_fetch_metadata`
 - `outlook.mail_fetch_body`
+- `outlook.mail_fetch_bodies`
 - `outlook.mail_list_attachments`
 - `outlook.mail_fetch_attachment`
 - `outlook.mail_create_draft`
@@ -127,6 +128,11 @@ dry-run review, exact confirmation, and host approval when approval mode
 requires it. Graph review packets include metadata-only meeting context such as
 subject, time, location, organizer, attendees, and current response status when
 available, never event body content.
+
+Compatibility version `0.1` also includes `outlook.mail_fetch_bodies`, an
+explicit-id batch helper capped at 50 ids per call. It is not a mailbox search,
+broad body reader, or raw transport action; clients should report attempted,
+succeeded, and failed counts when using it for body audits.
 
 Clients must ignore unknown output fields and unknown capability detail fields.
 Servers must keep existing fields present with compatible meanings.

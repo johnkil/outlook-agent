@@ -175,6 +175,24 @@ func TestMailSearchNextDoesNotReplaySameCursorConcurrently(t *testing.T) {
 	}
 }
 
+func TestMailFetchBodiesRedactsPerItemErrors(t *testing.T) {
+	handler := mailFetchBodiesHandler(batchBodyLeakyErrorTransport{})
+
+	_, output, err := handler(context.Background(), nil, MailFetchBodiesInput{IDs: []string{"msg-1", "msg-2"}})
+	if err != nil {
+		t.Fatalf("mail fetch bodies handler: %v", err)
+	}
+	if output.Attempted != 2 || output.Succeeded != 1 || output.Failed != 1 {
+		t.Fatalf("unexpected batch coverage: %#v", output)
+	}
+	if len(output.Results) != 2 || output.Results[1].OK {
+		t.Fatalf("expected one failed result, got %#v", output.Results)
+	}
+	if strings.Contains(output.Results[1].Error, "secret") || !strings.Contains(output.Results[1].Error, "[REDACTED]") {
+		t.Fatalf("expected redacted per-item error, got %q", output.Results[1].Error)
+	}
+}
+
 type leakyTransport struct{}
 
 func (leakyTransport) Name() string {
@@ -205,6 +223,32 @@ func (leakyTransport) Execute(context.Context, transport.ActionRequest) transpor
 }
 
 func (leakyTransport) DryRun(context.Context, transport.ActionRequest) transport.DryRunSummary {
+	return transport.DryRunSummary{}
+}
+
+type batchBodyLeakyErrorTransport struct{}
+
+func (batchBodyLeakyErrorTransport) Name() string {
+	return "leaky"
+}
+
+func (batchBodyLeakyErrorTransport) Authenticate(context.Context, string) transport.AuthResult {
+	return transport.AuthResult{OK: true}
+}
+
+func (batchBodyLeakyErrorTransport) Capabilities(context.Context) transport.CapabilitySet {
+	return transport.CapabilitySet{}
+}
+
+func (batchBodyLeakyErrorTransport) Execute(_ context.Context, request transport.ActionRequest) transport.ActionResponse {
+	id, _ := request.Payload["id"].(string)
+	if id == "msg-2" {
+		return transport.ActionResponse{OK: false, Error: "provider failed with token=secret"}
+	}
+	return transport.ActionResponse{OK: true, Data: map[string]any{"id": id, "body_text": "safe explicit body"}}
+}
+
+func (batchBodyLeakyErrorTransport) DryRun(context.Context, transport.ActionRequest) transport.DryRunSummary {
 	return transport.DryRunSummary{}
 }
 

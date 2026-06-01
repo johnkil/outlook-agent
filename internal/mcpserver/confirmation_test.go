@@ -1385,6 +1385,37 @@ func TestRawActionRejectsCursorBoundSearchNext(t *testing.T) {
 	}
 }
 
+func TestGenericActionPathsRejectBatchBodyHelper(t *testing.T) {
+	client := newRecordingTransport(action.Definition{Name: "mail.fetch_bodies", Transport: "test", Class: policy.ReadBodyExplicit, Level: action.LevelHighLevelMCPTool})
+	runtime := NewRuntime(client)
+
+	_, rawOutput, err := rawActionHandler(runtime)(context.Background(), nil, RawActionInput{
+		Action:  "mail.fetch_bodies",
+		Payload: map[string]any{"ids": []any{"msg-1", "msg-2"}},
+	})
+	if err != nil {
+		t.Fatalf("raw action handler: %v", err)
+	}
+	if rawOutput.OK || !strings.Contains(rawOutput.Error, "outlook.mail_fetch_bodies") {
+		t.Fatalf("expected raw batch body helper to be rejected with typed-tool guidance, got %#v", rawOutput)
+	}
+
+	_, confirmOutput, err := actionConfirmHandler(runtime)(context.Background(), nil, ActionConfirmInput{
+		ConfirmToken: "unused",
+		Action:       "mail.fetch_bodies",
+		Payload:      map[string]any{"ids": []any{"msg-1", "msg-2"}},
+	})
+	if err != nil {
+		t.Fatalf("confirm handler: %v", err)
+	}
+	if confirmOutput.OK || !strings.Contains(confirmOutput.Error, "outlook.mail_fetch_bodies") {
+		t.Fatalf("expected generic confirm batch body helper to be rejected with typed-tool guidance, got %#v", confirmOutput)
+	}
+	if client.executed {
+		t.Fatal("batch body helper must not execute through generic action paths")
+	}
+}
+
 func TestRawActionDoesNotTrustCallerSuppliedExplicitTarget(t *testing.T) {
 	client := newRecordingTransport(action.Definition{Name: "SearchMailboxes", Transport: "test", Class: policy.ReadBodyExplicit, Level: action.LevelRawGuardedExecution})
 	runtime := NewRuntime(client)
