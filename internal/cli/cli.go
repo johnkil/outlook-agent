@@ -98,6 +98,14 @@ func RunWithRuntime(args []string, stdout io.Writer, stderr io.Writer, runtime R
 		}
 		return runSetupAgent(setupArgs, options, stdout, stderr)
 	}
+	if setupArgs, ok := setupApprovalArgsFromRaw(args); ok {
+		options, _, err := parseOptionsBeforeCommand(args)
+		if err != nil {
+			fmt.Fprintln(stderr, err)
+			return 1
+		}
+		return runSetupApproval(setupArgs, options, stdout, stderr)
+	}
 	if setupArgs, ok := setupPluginArgsFromRaw(args); ok {
 		options, _, err := parseOptionsBeforeCommand(args)
 		if err != nil {
@@ -958,6 +966,9 @@ Usage:
   outlook-agent setup agent plan --client <opencode|codex|claude-code> --scope <project|user> --config <path>
   outlook-agent setup agent diff --client <opencode|codex|claude-code> --scope <project|user> --config <path>
   outlook-agent setup agent apply --client <opencode|codex|claude-code> --scope <project|user> --config <path> --yes [--backup] [--allow-duplicates]
+  outlook-agent setup approval plan --client <opencode|codex|claude-code> --scope <project|user> --config <path> [--secret-file <path>]
+  outlook-agent setup approval diff --client <opencode|codex|claude-code> --scope <project|user> --config <path> [--secret-file <path>]
+  outlook-agent setup approval apply --client <opencode|codex|claude-code> --scope <project|user> --config <path> --yes [--secret-file <path>]
   outlook-agent setup plugin export --client <codex|claude-code> --output <path> [--local --config <path>] [--binary <path>] [--force]
   outlook-agent mcp --config <path>
 
@@ -990,6 +1001,14 @@ func setupSkillsArgsFromRaw(args []string) ([]string, bool) {
 func setupAgentArgsFromRaw(args []string) ([]string, bool) {
 	commandIndex := firstCommandIndex(args)
 	if commandIndex+1 < len(args) && args[commandIndex] == "setup" && args[commandIndex+1] == "agent" {
+		return args[commandIndex+2:], true
+	}
+	return nil, false
+}
+
+func setupApprovalArgsFromRaw(args []string) ([]string, bool) {
+	commandIndex := firstCommandIndex(args)
+	if commandIndex+1 < len(args) && args[commandIndex] == "setup" && args[commandIndex+1] == "approval" {
 		return args[commandIndex+2:], true
 	}
 	return nil, false
@@ -1088,6 +1107,19 @@ type setupAgentArgs struct {
 	Backup          bool
 	AllowDuplicates bool
 	JSON            bool
+}
+
+type setupApprovalArgs struct {
+	Command    string
+	Client     setupcore.Client
+	Scope      setupcore.Scope
+	ProjectDir string
+	HomeDir    string
+	ConfigPath string
+	SecretFile string
+	Binary     string
+	Yes        bool
+	JSON       bool
 }
 
 type setupPluginArgs struct {
@@ -1195,6 +1227,53 @@ func runSetupAgent(args []string, options Options, stdout io.Writer, stderr io.W
 		})
 	default:
 		fmt.Fprintf(stderr, "unknown setup agent command: %s\n", settings.Command)
+		return 1
+	}
+}
+
+func runSetupApproval(args []string, options Options, stdout io.Writer, stderr io.Writer) int {
+	settings, err := parseSetupApprovalArgs(args)
+	if err != nil {
+		fmt.Fprintln(stderr, err)
+		return 1
+	}
+	if settings.ConfigPath == "" {
+		settings.ConfigPath = options.ConfigPath
+	}
+	plan, err := setupcore.BuildApprovalPlan(setupcore.ApprovalOptions{
+		Client:     settings.Client,
+		Scope:      settings.Scope,
+		ProjectDir: settings.ProjectDir,
+		HomeDir:    settings.HomeDir,
+		ConfigPath: settings.ConfigPath,
+		Binary:     settings.Binary,
+		SecretFile: settings.SecretFile,
+	})
+	if err != nil {
+		fmt.Fprintln(stderr, err)
+		return 1
+	}
+	switch settings.Command {
+	case "plan":
+		return writeJSON(stdout, plan)
+	case "diff":
+		if _, err := fmt.Fprint(stdout, setupcore.DiffApprovalPlan(plan)); err != nil {
+			return 1
+		}
+		return 0
+	case "apply":
+		if err := setupcore.ApplyApprovalPlan(plan, setupcore.ApplyOptions{Yes: settings.Yes}); err != nil {
+			fmt.Fprintln(stderr, err)
+			return 1
+		}
+		return writeJSON(stdout, map[string]any{
+			"ok":          true,
+			"command":     "setup approval apply",
+			"secret_file": plan.SecretFile,
+			"wrapper":     plan.Wrapper,
+		})
+	default:
+		fmt.Fprintf(stderr, "unknown setup approval command: %s\n", settings.Command)
 		return 1
 	}
 }
@@ -1477,6 +1556,78 @@ func parseSetupAgentArgs(args []string) (setupAgentArgs, error) {
 	}
 	if settings.Command != "apply" && (settings.Yes || settings.Backup || settings.AllowDuplicates) {
 		return setupAgentArgs{}, fmt.Errorf("--yes, --backup, and --allow-duplicates are only valid for setup agent apply")
+	}
+	return settings, nil
+}
+
+func parseSetupApprovalArgs(args []string) (setupApprovalArgs, error) {
+	settings := setupApprovalArgs{
+		Command: "plan",
+		Client:  setupcore.ClientOpenCode,
+		Scope:   setupcore.ScopeProject,
+		Binary:  "outlook-agent",
+	}
+	if len(args) > 0 {
+		switch args[0] {
+		case "plan", "diff", "apply":
+			settings.Command = args[0]
+			args = args[1:]
+		}
+	}
+	for index := 0; index < len(args); index++ {
+		switch args[index] {
+		case "--client":
+			index++
+			if index >= len(args) {
+				return setupApprovalArgs{}, fmt.Errorf("--client requires a value")
+			}
+			settings.Client = setupcore.Client(args[index])
+		case "--scope":
+			index++
+			if index >= len(args) {
+				return setupApprovalArgs{}, fmt.Errorf("--scope requires a value")
+			}
+			settings.Scope = setupcore.Scope(args[index])
+		case "--project-dir":
+			index++
+			if index >= len(args) {
+				return setupApprovalArgs{}, fmt.Errorf("--project-dir requires a value")
+			}
+			settings.ProjectDir = args[index]
+		case "--home-dir":
+			index++
+			if index >= len(args) {
+				return setupApprovalArgs{}, fmt.Errorf("--home-dir requires a value")
+			}
+			settings.HomeDir = args[index]
+		case "--config":
+			index++
+			if index >= len(args) {
+				return setupApprovalArgs{}, fmt.Errorf("--config requires a value")
+			}
+			settings.ConfigPath = args[index]
+		case "--secret-file":
+			index++
+			if index >= len(args) {
+				return setupApprovalArgs{}, fmt.Errorf("--secret-file requires a value")
+			}
+			settings.SecretFile = args[index]
+		case "--binary":
+			index++
+			if index >= len(args) {
+				return setupApprovalArgs{}, fmt.Errorf("--binary requires a value")
+			}
+			settings.Binary = args[index]
+		case "--yes":
+			settings.Yes = true
+		case "--json":
+			settings.JSON = true
+		default:
+			return setupApprovalArgs{}, fmt.Errorf("unknown setup approval argument: %s", args[index])
+		}
+	}
+	if settings.Command != "apply" && settings.Yes {
+		return setupApprovalArgs{}, fmt.Errorf("--yes is only valid for setup approval apply")
 	}
 	return settings, nil
 }

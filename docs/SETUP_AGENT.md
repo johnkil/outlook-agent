@@ -16,6 +16,19 @@ outlook-agent setup agent apply --client claude-code --scope user    --config ~/
 
 Use `--binary <path-or-command>` when `outlook-agent` is not on `PATH`.
 
+For live write-capable profiles, configure host approval before broad mailbox
+mutations:
+
+```bash
+outlook-agent setup approval plan  --client codex --scope project --config .local/outlook-agent.json
+outlook-agent setup approval diff  --client codex --scope project --config .local/outlook-agent.json
+outlook-agent setup approval apply --client codex --scope project --config .local/outlook-agent.json --yes
+```
+
+`setup approval` creates host-owned wrapper material. It does not embed the
+approval secret in MCP config. Review `plan` and `diff` before `apply`, and keep
+project-scope approval material under `.local/`.
+
 ## MCP Targets
 
 | Client | Scope | MCP target |

@@ -39,7 +39,7 @@ Separate analysis from mailbox changes.
    approval secret.
 8. Keep the exact target ids in process until the post-action verification is
    complete so accidental moves can be restored immediately. Do not write raw
-   message bodies, cookies, canary values, or session dumps to disk.
+   message bodies, browser session secrets, or session dumps to disk.
 9. Use `outlook.raw_action` only when `outlook.capabilities` shows the needed
    transport action and no high-level tool fits.
 

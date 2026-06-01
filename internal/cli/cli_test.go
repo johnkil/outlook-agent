@@ -469,6 +469,28 @@ func TestSetupSkillsPlanReportsClientAndScopeTargets(t *testing.T) {
 	}
 }
 
+func TestSetupApprovalPlanCLI(t *testing.T) {
+	projectDir := t.TempDir()
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+
+	code := Run([]string{
+		"setup", "approval", "plan",
+		"--client", "codex",
+		"--scope", "project",
+		"--project-dir", projectDir,
+		"--home-dir", t.TempDir(),
+		"--config", ".local/outlook-agent.json",
+	}, &stdout, &stderr)
+
+	if code != 0 {
+		t.Fatalf("expected setup approval plan to pass, code=%d stderr=%s", code, stderr.String())
+	}
+	if !strings.Contains(stdout.String(), `"command": "setup approval plan"`) {
+		t.Fatalf("expected setup approval JSON, got %s", stdout.String())
+	}
+}
+
 func TestSetupSkillsApplyRequiresYesAndWritesSkills(t *testing.T) {
 	projectDir := t.TempDir()
 	homeDir := t.TempDir()
