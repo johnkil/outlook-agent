@@ -42,13 +42,21 @@ func (client *Transport) executeHighLevel(ctx context.Context, request transport
 		}
 		return transport.ActionResponse{OK: true, Data: data}, true
 	case "people.search":
-		response := client.executeService(ctx, "FindPeople", client.buildFindPeopleRequest(stringValue(request.Payload, "query")), false)
+		query, err := peopleQuery(request.Payload, "people.search")
+		if err != nil {
+			return transport.ActionResponse{OK: false, Error: err.Error()}, true
+		}
+		response := client.executeService(ctx, "FindPeople", client.buildFindPeopleRequest(query), false)
 		if !response.OK {
 			return response, true
 		}
 		return transport.ActionResponse{OK: true, Data: map[string]any{"people": normalizePeople(response.Data)}}, true
 	case "people.resolve":
-		response := client.executeService(ctx, "FindPeople", client.buildFindPeopleRequest(stringValue(request.Payload, "query")), false)
+		query, err := peopleQuery(request.Payload, "people.resolve")
+		if err != nil {
+			return transport.ActionResponse{OK: false, Error: err.Error()}, true
+		}
+		response := client.executeService(ctx, "FindPeople", client.buildFindPeopleRequest(query), false)
 		if !response.OK {
 			return response, true
 		}
@@ -369,6 +377,14 @@ func filenameFromContentDisposition(value string) string {
 		return ""
 	}
 	return params["filename"]
+}
+
+func peopleQuery(payload map[string]any, action string) (string, error) {
+	query := strings.TrimSpace(stringValue(payload, "query"))
+	if query == "" {
+		return "", fmt.Errorf("%s requires query", action)
+	}
+	return query, nil
 }
 
 func (client *Transport) findMeetingTime(ctx context.Context, payload map[string]any) (transport.ActionResponse, error) {

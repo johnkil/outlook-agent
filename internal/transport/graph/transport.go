@@ -2142,11 +2142,13 @@ func normalizeGraphAttachmentMetadata(item attachment) map[string]any {
 
 func normalizeGraphEvent(item calendarEvent) map[string]any {
 	return map[string]any{
-		"id":       item.ID,
-		"title":    item.Subject,
-		"start":    item.Start.DateTime,
-		"end":      item.End.DateTime,
-		"location": item.Location.DisplayName,
+		"id":              item.ID,
+		"title":           item.Subject,
+		"start":           item.Start.DateTime,
+		"start_time_zone": graphDateTimeZone(item.Start.TimeZone, "UTC"),
+		"end":             item.End.DateTime,
+		"end_time_zone":   graphDateTimeZone(item.End.TimeZone, "UTC"),
+		"location":        item.Location.DisplayName,
 	}
 }
 
@@ -2189,11 +2191,11 @@ func intervalsFromGraphEvents(events []any) []calendarplan.Interval {
 		if !ok {
 			continue
 		}
-		start, err := parseGraphTime(stringValue(eventMap, "start", ""))
+		start, err := parseGraphTimeInZone(stringValue(eventMap, "start", ""), stringValue(eventMap, "start_time_zone", "UTC"))
 		if err != nil {
 			continue
 		}
-		end, err := parseGraphTime(stringValue(eventMap, "end", ""))
+		end, err := parseGraphTimeInZone(stringValue(eventMap, "end", ""), stringValue(eventMap, "end_time_zone", "UTC"))
 		if err != nil {
 			continue
 		}
@@ -2376,10 +2378,6 @@ func stringSlice(value any) []string {
 	default:
 		return nil
 	}
-}
-
-func parseGraphTime(value string) (time.Time, error) {
-	return parseGraphTimeInZone(value, "UTC")
 }
 
 func parseGraphTimeInZone(value string, timeZone string) (time.Time, error) {

@@ -455,6 +455,34 @@ func TestHighLevelPeopleResolveAmbiguousDoesNotGuess(t *testing.T) {
 	}
 }
 
+func TestHighLevelPeopleResolveRequiresQueryBeforeServiceCall(t *testing.T) {
+	var calls []recordedServiceCall
+	server := newOWAServiceServer(t, &calls, map[string]any{
+		"Body": map[string]any{
+			"People": []any{
+				map[string]any{"PersonaId": map[string]any{"Id": "persona-1"}, "DisplayName": "Fallback Person", "EmailAddress": "fallback@example.com"},
+			},
+		},
+	})
+	defer server.Close()
+	client := newTestTransport(server)
+
+	response := client.Execute(context.Background(), transport.ActionRequest{
+		Name:    "people.resolve",
+		Payload: map[string]any{"query": "   "},
+	})
+
+	if response.OK {
+		t.Fatalf("expected people.resolve without query to fail: %#v", response)
+	}
+	if len(calls) != 0 {
+		t.Fatalf("expected people.resolve to fail before FindPeople, got %#v", calls)
+	}
+	if !strings.Contains(response.Error, "query") {
+		t.Fatalf("expected query validation error, got %q", response.Error)
+	}
+}
+
 func TestHighLevelCalendarFindTimeUsesCalendarAndAvailabilityWithoutSubjectLeak(t *testing.T) {
 	var calls []recordedServiceCall
 	server := newOWAServiceServerByAction(t, &calls, map[string]map[string]any{
