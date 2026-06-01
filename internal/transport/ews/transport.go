@@ -92,7 +92,7 @@ func (client *Transport) Execute(ctx context.Context, request transport.ActionRe
 		if err != nil {
 			return transport.ActionResponse{OK: false, Error: err.Error()}
 		}
-		result, err := client.findItems(ctx, stringValue(request.Payload, "folder_id", "inbox"), limit.Value, stringValue(request.Payload, "query", ""))
+		result, err := client.findItems(ctx, mailSearchFolderID(request.Payload), limit.Value, stringValue(request.Payload, "query", ""))
 		if err != nil {
 			return transport.ActionResponse{OK: false, Error: err.Error()}
 		}
@@ -570,6 +570,13 @@ func matchesQuery(message map[string]any, query string) bool {
 	}
 	haystack := strings.ToLower(stringValue(message, "subject", "") + " " + stringValue(message, "sender", ""))
 	return strings.Contains(haystack, needle)
+}
+
+func mailSearchFolderID(payload map[string]any) string {
+	if folder := strings.TrimSpace(stringValue(payload, "folder", "")); folder != "" {
+		return folder
+	}
+	return stringValue(payload, "folder_id", "inbox")
 }
 
 func stringValue(values map[string]any, key string, fallback string) string {

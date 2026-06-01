@@ -453,7 +453,7 @@ func TestMCPHighLevelToolsForwardMailboxTarget(t *testing.T) {
 		arguments map[string]any
 		action    string
 	}{
-		{name: "outlook.mail_search", arguments: map[string]any{"query": "x", "mailbox": "shared@example.com"}, action: "mail.search"},
+		{name: "outlook.mail_search", arguments: map[string]any{"query": "x", "folder": "deleteditems", "mailbox": "shared@example.com"}, action: "mail.search"},
 		{name: "outlook.mail_fetch_metadata", arguments: map[string]any{"id": "msg-1", "mailbox": "shared@example.com"}, action: "mail.fetch_metadata"},
 		{name: "outlook.calendar_list", arguments: map[string]any{"start": "2026-05-27T00:00:00+02:00", "end": "2026-05-28T00:00:00+02:00", "mailbox": "shared@example.com"}, action: "calendar.list"},
 		{name: "outlook.calendar_availability", arguments: map[string]any{"start": "2026-05-27T09:00:00+02:00", "end": "2026-05-27T18:00:00+02:00", "email": "person@example.com", "mailbox": "shared@example.com"}, action: "calendar.availability"},
@@ -472,6 +472,9 @@ func TestMCPHighLevelToolsForwardMailboxTarget(t *testing.T) {
 			}
 			if capturing.lastRequest.Payload["mailbox"] != "shared@example.com" {
 				t.Fatalf("expected mailbox forwarded to %s, got %#v", call.action, capturing.lastRequest.Payload)
+			}
+			if call.name == "outlook.mail_search" && capturing.lastRequest.Payload["folder"] != "deleteditems" {
+				t.Fatalf("expected folder forwarded to mail.search, got %#v", capturing.lastRequest.Payload)
 			}
 		})
 	}

@@ -145,6 +145,36 @@ func TestHighLevelMailSearchClampsHugePageSize(t *testing.T) {
 	}
 }
 
+func TestHighLevelMailSearchUsesRequestedFolder(t *testing.T) {
+	var calls []recordedServiceCall
+	server := newOWAServiceServer(t, &calls, map[string]any{
+		"Body": map[string]any{
+			"ResponseMessages": map[string]any{
+				"Items": []any{
+					map[string]any{"RootFolder": map[string]any{"Items": []any{}}},
+				},
+			},
+		},
+	})
+	defer server.Close()
+	client := newTestTransport(server)
+
+	response := client.Execute(context.Background(), transport.ActionRequest{
+		Name:    "mail.search",
+		Payload: map[string]any{"folder": "deleteditems"},
+	})
+
+	if !response.OK {
+		t.Fatalf("expected mail.search ok: %#v", response)
+	}
+	body := calls[0].Body["Body"].(map[string]any)
+	parentFolders := body["ParentFolderIds"].([]any)
+	folder := parentFolders[0].(map[string]any)
+	if folder["Id"] != "deleteditems" {
+		t.Fatalf("expected deleteditems folder, got %#v", folder)
+	}
+}
+
 func TestHighLevelMailSearchUsesConfiguredTimeZone(t *testing.T) {
 	var calls []recordedServiceCall
 	server := newOWAServiceServer(t, &calls, map[string]any{"Body": map[string]any{"Items": []any{}}})

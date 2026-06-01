@@ -61,6 +61,14 @@ high-level mail and calendar tools. Transports that support delegated or shared
 mailbox targeting may use it; transports that do not support it keep their
 existing behavior or return a normal transport error.
 
+Compatibility version `0.1` includes the additive optional
+`outlook.mail_search.folder` input. It accepts a well-known folder name such as
+`inbox`, `archive`, or `deleteditems`, or a backend folder id where the
+transport supports that form. Omitted `folder` keeps the existing Inbox search
+default. The older transport-internal `folder_id` payload remains compatible
+for direct transport tests and raw integration code, but MCP clients should use
+`folder`.
+
 Compatibility version `0.1` also returns opaque `next_cursor` values from
 paginated mail search responses when a transport supports continuation. Clients
 must call `outlook.mail_search_next` with that cursor instead of storing or

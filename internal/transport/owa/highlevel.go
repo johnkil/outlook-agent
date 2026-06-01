@@ -18,7 +18,8 @@ func (client *Transport) executeHighLevel(ctx context.Context, request transport
 		if err != nil {
 			return transport.ActionResponse{OK: false, Error: err.Error()}, true
 		}
-		response := client.executeService(ctx, "FindItem", client.buildFindInboxItemsRequest(limit.Value), false)
+		folderID := normalizeFolderID(stringValue(request.Payload, "folder"))
+		response := client.executeService(ctx, "FindItem", client.buildFindItemsRequest(limit.Value, folderID), false)
 		if !response.OK {
 			return response, true
 		}
@@ -248,13 +249,14 @@ func filenameFromContentDisposition(value string) string {
 	return params["filename"]
 }
 
-func (client *Transport) buildFindInboxItemsRequest(maxItems int) any {
+func (client *Transport) buildFindItemsRequest(maxItems int, folderID string) any {
 	if maxItems <= 0 {
 		maxItems = transport.DefaultPageSize
 	}
 	if maxItems > transport.MaxPageSize {
 		maxItems = transport.MaxPageSize
 	}
+	folderID = normalizeFolderID(folderID)
 	return object(
 		field("__type", "FindItemJsonRequest:#Exchange"),
 		field("Header", client.requestHeaderPayload("Exchange2013")),
@@ -279,11 +281,48 @@ func (client *Transport) buildFindInboxItemsRequest(maxItems int) any {
 				field("MaxEntriesReturned", maxItems),
 			)),
 			field("ParentFolderIds", []any{
-				object(field("__type", "DistinguishedFolderId:#Exchange"), field("Id", "inbox")),
+				owaFolderID(folderID),
 			}),
 			field("Traversal", "Shallow"),
 		)),
 	)
+}
+
+func normalizeFolderID(value string) string {
+	folderID := strings.TrimSpace(value)
+	if folderID == "" {
+		return "inbox"
+	}
+	switch strings.ToLower(folderID) {
+	case "inbox":
+		return "inbox"
+	case "archive", "archives":
+		return "archive"
+	case "deleted", "deleteditem", "deleteditems", "deleted items":
+		return "deleteditems"
+	case "draft", "drafts":
+		return "drafts"
+	case "sent", "sentitem", "sentitems", "sent items":
+		return "sentitems"
+	default:
+		return folderID
+	}
+}
+
+func owaFolderID(folderID string) any {
+	if isOWADistinguishedFolderID(folderID) {
+		return object(field("__type", "DistinguishedFolderId:#Exchange"), field("Id", folderID))
+	}
+	return object(field("__type", "FolderId:#Exchange"), field("Id", folderID))
+}
+
+func isOWADistinguishedFolderID(folderID string) bool {
+	switch folderID {
+	case "inbox", "archive", "deleteditems", "drafts", "sentitems":
+		return true
+	default:
+		return false
+	}
 }
 
 func (client *Transport) buildCalendarViewRequest(start string, end string) any {

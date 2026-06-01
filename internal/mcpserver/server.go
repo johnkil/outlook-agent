@@ -67,6 +67,7 @@ type ApprovalInfoOutput struct {
 
 type MailSearchInput struct {
 	Query   string `json:"query,omitempty" jsonschema:"search query"`
+	Folder  string `json:"folder,omitempty" jsonschema:"folder id or well-known folder name such as inbox, archive, deleteditems"`
 	Mailbox string `json:"mailbox,omitempty" jsonschema:"optional mailbox user id or user principal name"`
 }
 
@@ -601,7 +602,7 @@ func (runtime *Runtime) dryRunApprovalInfo(requiredForAction bool, challenge *ap
 
 func mailSearchHandler(runtime *Runtime) func(context.Context, *mcp.CallToolRequest, MailSearchInput) (*mcp.CallToolResult, MailSearchOutput, error) {
 	return func(ctx context.Context, _ *mcp.CallToolRequest, input MailSearchInput) (*mcp.CallToolResult, MailSearchOutput, error) {
-		payload := withMailbox(map[string]any{"query": input.Query}, input.Mailbox)
+		payload := withMailbox(map[string]any{"query": input.Query, "folder": input.Folder}, input.Mailbox)
 		response := runtime.client.Execute(ctx, transport.ActionRequest{
 			Name:    "mail.search",
 			Payload: payload,
@@ -691,7 +692,7 @@ func (runtime *Runtime) issueSearchCursor(input MailSearchInput, nextLink string
 		Action:    "mail.search",
 		Mailbox:   strings.TrimSpace(input.Mailbox),
 		Query:     input.Query,
-		QueryHash: transport.PayloadFingerprint(map[string]any{"query": input.Query}),
+		QueryHash: transport.PayloadFingerprint(map[string]any{"query": input.Query, "folder": input.Folder}),
 	}
 	return runtime.issueSearchCursorFromBinding(binding, nextLink)
 }

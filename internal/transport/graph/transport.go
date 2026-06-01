@@ -110,7 +110,7 @@ func (client *Transport) Execute(ctx context.Context, request transport.ActionRe
 		if err != nil {
 			return transport.ActionResponse{OK: false, Error: err.Error()}
 		}
-		result, err := client.listMessages(ctx, mailbox, stringValue(request.Payload, "folder_id", "inbox"), limit.Value, stringValue(request.Payload, "query", ""))
+		result, err := client.listMessages(ctx, mailbox, mailSearchFolderID(request.Payload), limit.Value, stringValue(request.Payload, "query", ""))
 		if err != nil {
 			return transport.ActionResponse{OK: false, Error: err.Error()}
 		}
@@ -2270,6 +2270,13 @@ func mailboxTarget(payload map[string]any) string {
 		return mailbox
 	}
 	return strings.TrimSpace(stringValue(payload, "user_id", ""))
+}
+
+func mailSearchFolderID(payload map[string]any) string {
+	if folder := strings.TrimSpace(stringValue(payload, "folder", "")); folder != "" {
+		return folder
+	}
+	return stringValue(payload, "folder_id", "inbox")
 }
 
 func graphOwnerPath(mailbox string) string {

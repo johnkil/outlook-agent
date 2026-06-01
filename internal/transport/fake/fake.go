@@ -69,6 +69,7 @@ func (client *Transport) Execute(_ context.Context, request transport.ActionRequ
 					map[string]any{"id": "msg-1", "subject": "Quarterly planning", "sender": "alex@example.com"},
 					map[string]any{"id": "msg-2", "subject": "Planning follow-up", "sender": "maria@example.com"},
 				},
+				"folder": valueOrDefault(request.Payload, "folder", "inbox"),
 			},
 		}
 	case "mail.fetch_metadata":

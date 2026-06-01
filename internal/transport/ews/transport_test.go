@@ -262,6 +262,41 @@ func TestTransportExecutesMailSearchWithFindItem(t *testing.T) {
 	}
 }
 
+func TestTransportExecutesMailSearchWithFolder(t *testing.T) {
+	var sawDeletedItemsFolder bool
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		if request.Header.Get("SOAPAction") != "http://schemas.microsoft.com/exchange/services/2006/messages/FindItem" {
+			t.Fatalf("unexpected SOAPAction: %s", request.Header.Get("SOAPAction"))
+		}
+		body, err := io.ReadAll(request.Body)
+		if err != nil {
+			t.Fatalf("read body: %v", err)
+		}
+		sawDeletedItemsFolder = strings.Contains(string(body), `<t:DistinguishedFolderId Id="deleteditems"/>`)
+		response.Header().Set("Content-Type", "text/xml")
+		_, _ = response.Write([]byte(successfulFindItemResponse()))
+	}))
+	defer server.Close()
+
+	client := ews.NewTransport(ews.Config{
+		EndpointURL: server.URL + "/EWS/Exchange.asmx",
+		Username:    "DOMAIN\\user",
+		SecretRef:   secret.Ref("memory:ews"),
+	}, secret.NewMemoryStore(map[string]string{"memory:ews": "password-secret"}), server.Client())
+
+	result := client.Execute(context.Background(), transport.ActionRequest{
+		Name:    "mail.search",
+		Payload: map[string]any{"folder": "deleteditems"},
+	})
+
+	if !result.OK {
+		t.Fatalf("expected mail.search ok, got %#v", result)
+	}
+	if !sawDeletedItemsFolder {
+		t.Fatalf("expected FindItem to target deleteditems")
+	}
+}
+
 func TestTransportMailSearchClampsHugePageSize(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
 		body, err := io.ReadAll(request.Body)
