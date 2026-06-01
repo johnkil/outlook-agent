@@ -139,6 +139,19 @@ directories and plugin packages are generated copies. Plugin packages are
 distribution artifacts, not a security boundary. `setup skills plan` reports
 duplicate visible roots before apply.
 
+Before connecting a real write-capable mailbox profile, plan host approval.
+The installer only places the binary; it does not create or store a host-held
+approval secret. For non-fake Graph/EWS/OWA profiles, high-risk writes such as
+sending, moving, deleting, archiving, flagging, categorizing, marking read, or
+changing rules should run with host approval configured and verified by
+`outlook-agent doctor`.
+
+The approval secret belongs to the trusted host/operator layer, not to
+agent-readable project config. See
+[`docs/APPROVAL_HOST_INTEGRATION.md`](./docs/APPROVAL_HOST_INTEGRATION.md) for
+the signing contract and [`docs/OPERATIONS.md`](./docs/OPERATIONS.md) for the
+live cleanup checklist.
+
 Then let the bundled [`skills/`](./skills) drive ordinary requests:
 
 - [`outlook-mail`](./skills/outlook-mail) — metadata-first inspection & draft prep

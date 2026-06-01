@@ -51,6 +51,18 @@ investigated with public-safe evidence.
   to 1Password, Bitwarden, Vault, or native wrapper tooling. Open a dedicated
   GitHub issue before implementing native backends for a concrete rollout.
 
+## Near-Term Operator UX Backlog
+
+These items came from a live mailbox cleanup run. Open dedicated GitHub issues
+before implementation and keep private live evidence outside the repository.
+
+| Item | Why it matters | Target behavior |
+| --- | --- | --- |
+| Host approval setup UX | Operators should learn about required approval before the first live mailbox mutation, not during a failed cleanup attempt. | Keep `install.sh` binary-only; add an explicit `setup approval plan/diff/apply` flow; make `doctor` print the next setup step when required approval is missing. |
+| OWA-compatible archive and folder move UX | The active OWA-compatible profile could move messages through raw `MoveItem`, but the high-level archive path was not viable. | High-level archive/move tools should work for the OWA-compatible profile or fail with a clear fallback path that still uses dry-run, confirmation, and host approval. |
+| Persistent body-read batches | Repeated one-off helper processes caused slow scans and transient OWA login failures. | Large body audits should use one persistent MCP session, explicit ids, bounded retries, progress reporting, and partial-result summaries. |
+| Exact cleanup manifest and audit | After a broad move, scanning the whole Deleted Items folder was slow and noisy because the exact moved set was not retained. | Keep an in-process target manifest until verification completes; audit exact targets first; use full-folder scans only as a paged, resumable fallback. |
+
 ## Tracking Policy
 
 - Every open production gate must have a GitHub issue before the draft PR is

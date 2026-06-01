@@ -44,6 +44,11 @@ specific message or thread.
    `outlook.mail_mark_read`. Single-message changes need the exact id and new
    state; bulk changes need dry-run review, confirmation, and host approval
    fields when the dry-run response requires them.
+   For Inbox cleanup, do a content-risk review before the mutation dry-run:
+   body-read every unread, high-importance, human, corporate/system,
+   IT/security/access/training/compliance, Confluence announcement, or unclear
+   candidate. A dry-run proves the mutation is reviewable; it does not prove
+   the messages are unimportant.
 9. Inspect rule and mailbox-setting metadata with `outlook.mail_rules_list`
    and `outlook.mailbox_settings_get` before considering any raw rule or
    settings action.

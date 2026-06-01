@@ -23,10 +23,28 @@ Use this skill for inbox triage, unread-mail review, and reply-needed detection.
 3. Group results into `Urgent`, `Needs reply`, `Waiting`, and `FYI`.
 4. Fetch bodies with `outlook.mail_fetch_body` only for messages whose urgency
    cannot be judged from metadata.
-5. If attachment names matter, use `outlook.mail_list_attachments`; do not
+5. For any possible Inbox cleanup, run a cleanup guard before proposing a
+   broad archive, move, or delete:
+   - Do not treat a dry-run confirmation as proof that the mail is unimportant;
+     dry-run only proves the mutation payload is reviewable.
+   - Fetch the body for every unread message, high-importance message, human
+     sender, corporate/system announcement, IT/security/access/training/compliance
+     sender, Confluence announcement, or unclear subject before classifying it
+     as removable.
+   - Do not classify a corporate announcement as FYI from sender/subject alone.
+     If the body mentions an obligatory course, deadline, access/security
+     action, approval, required check, or future-dated task, keep it in Inbox
+     or put it in an explicit follow-up bucket.
+   - Only skip body reads for messages that are clearly low-risk automated
+     noise by both sender and subject, such as routine build/PR notification
+     duplicates, after stating that coverage.
+6. If attachment names matter, use `outlook.mail_list_attachments`; do not
    fetch attachment content during triage unless the user picked one explicit
    attachment.
-6. Keep triage findings separate from mailbox actions.
+7. Keep triage findings separate from mailbox actions.
+8. Before asking for or executing cleanup approval, report target counts,
+   protected counts, body-read coverage, and any messages that were skipped
+   because they need user review.
 
 ## Output
 

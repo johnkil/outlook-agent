@@ -15,17 +15,32 @@ Separate analysis from mailbox changes.
 
 ## Workflow
 
-1. Search for candidate automated or subscription messages. Continue paginated
+1. Use this skill only after the request is clearly about subscriptions,
+   newsletters, or automated mail. If the user asks to clean the whole Inbox
+   "if nothing important is there", first run an inbox triage pass with the
+   body-gated cleanup guard.
+2. Search for candidate automated or subscription messages. Continue paginated
    results with `outlook.mail_search_next` when `next_cursor` is present; do
    not call the same cursor concurrently.
-2. Group by sender and pattern.
-3. Propose unsubscribe, archive, move, or delete actions.
-4. Use `outlook.action_dry_run` before any broad move or delete.
-5. Execute only the reviewed payload with `outlook.action_confirm`; when
+3. Group by sender and pattern.
+4. Fetch message bodies before moving or deleting any unread item, corporate
+   announcement, IT/security/access/training/compliance message, human-sender
+   message, high-importance item, or ambiguous subscription-like message.
+   Sender and subject alone are not enough for those cases.
+5. Propose unsubscribe, archive, move, or delete actions. Prefer archive or a
+   review/quarantine folder for non-spam work mail; use Deleted Items only for
+   obvious noise or when the user explicitly asked for it.
+6. Use `outlook.action_dry_run` before any broad move or delete. The dry-run is
+   a mutation-safety gate, not an importance classifier; include body-read
+   coverage and protected/skipped counts in the user-facing review.
+7. Execute only the reviewed payload with `outlook.action_confirm`; when
    dry-run returns an `approval_challenge`, pass host-provided
    `approval_challenge_id` and `approval_token` without asking for the
    approval secret.
-6. Use `outlook.raw_action` only when `outlook.capabilities` shows the needed
+8. Keep the exact target ids in process until the post-action verification is
+   complete so accidental moves can be restored immediately. Do not write raw
+   message bodies, cookies, canary values, or session dumps to disk.
+9. Use `outlook.raw_action` only when `outlook.capabilities` shows the needed
    transport action and no high-level tool fits.
 
 Do not unsubscribe, move, or delete without explicit user approval.
