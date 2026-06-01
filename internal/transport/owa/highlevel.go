@@ -411,13 +411,13 @@ func (client *Transport) findMeetingTime(ctx context.Context, payload map[string
 	}
 	requestStart := windowStart.Format(time.RFC3339)
 	requestEnd := windowEnd.Format(time.RFC3339)
-	calendarResponse := client.executeService(ctx, "GetCalendarView", client.buildCalendarViewRequest(requestStart, requestEnd), true)
+	calendarResponse := client.executeService(ctx, "GetCalendarView", client.buildCalendarViewRequestInTimeZone(requestStart, requestEnd, timeZone), true)
 	if !calendarResponse.OK {
 		return calendarResponse, nil
 	}
 	busy := intervalsFromCalendarItemsInZone(normalizeCalendarItems(extractItems(calendarResponse.Data)), timeZone)
 	for _, attendee := range attendees {
-		availabilityResponse := client.executeService(ctx, "GetUserAvailabilityInternal", client.buildAvailabilityRequest(requestStart, requestEnd, attendee), true)
+		availabilityResponse := client.executeService(ctx, "GetUserAvailabilityInternal", client.buildAvailabilityRequestInTimeZone(requestStart, requestEnd, attendee, timeZone), true)
 		if !availabilityResponse.OK {
 			return availabilityResponse, nil
 		}
@@ -543,9 +543,13 @@ func isOWADistinguishedFolderID(folderID string) bool {
 }
 
 func (client *Transport) buildCalendarViewRequest(start string, end string) any {
+	return client.buildCalendarViewRequestInTimeZone(start, end, "")
+}
+
+func (client *Transport) buildCalendarViewRequestInTimeZone(start string, end string, timeZone string) any {
 	return object(
 		field("__type", "GetCalendarViewJsonRequest:#Exchange"),
-		field("Header", client.requestHeaderPayload("V2017_08_18")),
+		field("Header", client.requestHeaderPayloadInTimeZone("V2017_08_18", timeZone)),
 		field("Body", object(
 			field("__type", "GetCalendarViewRequest:#Exchange"),
 			field("CalendarId", object(
@@ -562,10 +566,14 @@ func (client *Transport) buildCalendarViewRequest(start string, end string) any 
 }
 
 func (client *Transport) buildAvailabilityRequest(start string, end string, email string) any {
+	return client.buildAvailabilityRequestInTimeZone(start, end, email, "")
+}
+
+func (client *Transport) buildAvailabilityRequestInTimeZone(start string, end string, email string, timeZone string) any {
 	return object(
 		field("request", object(
 			field("__type", "GetUserAvailabilityInternalJsonRequest:#Exchange"),
-			field("Header", client.requestHeaderPayload("Exchange2013")),
+			field("Header", client.requestHeaderPayloadInTimeZone("Exchange2013", timeZone)),
 			field("Body", object(
 				field("__type", "GetUserAvailabilityRequest:#Exchange"),
 				field("MailboxDataArray", []any{
@@ -742,6 +750,14 @@ func (client *Transport) buildMoveItemRequest(ids []any, folderID string) any {
 }
 
 func (client *Transport) requestHeaderPayload(version string) any {
+	return client.requestHeaderPayloadInTimeZone(version, "")
+}
+
+func (client *Transport) requestHeaderPayloadInTimeZone(version string, timeZone string) any {
+	timeZone = strings.TrimSpace(timeZone)
+	if timeZone == "" {
+		timeZone = client.config.effectiveTimeZoneID()
+	}
 	return object(
 		field("__type", "JsonRequestHeaders:#Exchange"),
 		field("RequestServerVersion", version),
@@ -749,7 +765,7 @@ func (client *Transport) requestHeaderPayload(version string) any {
 			field("__type", "TimeZoneContext:#Exchange"),
 			field("TimeZoneDefinition", object(
 				field("__type", "TimeZoneDefinitionType:#Exchange"),
-				field("Id", client.config.effectiveTimeZoneID()),
+				field("Id", timeZone),
 			)),
 		)),
 	)

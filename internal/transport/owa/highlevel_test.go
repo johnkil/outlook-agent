@@ -648,6 +648,61 @@ func TestHighLevelCalendarFindTimeParsesWindowInRequestedTimezone(t *testing.T) 
 	}
 }
 
+func TestHighLevelCalendarFindTimeUsesRequestedTimeZoneHeaders(t *testing.T) {
+	var calls []recordedServiceCall
+	server := newOWAServiceServerByAction(t, &calls, map[string]map[string]any{
+		"GetCalendarView": {
+			"Body": map[string]any{"Items": []any{}},
+		},
+		"GetUserAvailabilityInternal": {
+			"Body": map[string]any{
+				"Responses": []any{
+					map[string]any{
+						"CalendarView": map[string]any{"Items": []any{}},
+					},
+				},
+			},
+		},
+	})
+	defer server.Close()
+	client := owa.NewTransport(owa.Config{
+		BaseURL:    server.URL,
+		Username:   "DOMAIN\\user",
+		SecretRef:  secret.Ref("memory:owa"),
+		TimeZoneID: "UTC",
+	}, secret.NewMemoryStore(map[string]string{"memory:owa": "password"}), server.Client())
+
+	response := client.Execute(context.Background(), transport.ActionRequest{
+		Name: "calendar.find_time",
+		Payload: map[string]any{
+			"attendees":        []any{"vlad.cheshenko@example.com"},
+			"start":            "2026-05-28T09:00:00",
+			"end":              "2026-05-28T10:00:00",
+			"duration_minutes": float64(30),
+			"time_zone":        "America/Los_Angeles",
+			"tentative":        "busy",
+		},
+	})
+
+	if !response.OK {
+		t.Fatalf("expected calendar.find_time ok: %#v", response)
+	}
+	if len(calls) != 2 || calls[0].Action != "GetCalendarView" || calls[1].Action != "GetUserAvailabilityInternal" {
+		t.Fatalf("expected calendar and availability calls, got %#v", calls)
+	}
+	calendarHeader := calls[0].Body["Header"].(map[string]any)
+	calendarTimeZone := calendarHeader["TimeZoneContext"].(map[string]any)["TimeZoneDefinition"].(map[string]any)
+	if calendarTimeZone["Id"] != "America/Los_Angeles" {
+		t.Fatalf("expected requested calendar timezone header, got %#v", calendarTimeZone)
+	}
+	availabilityRequest := calls[1].Body["request"].(map[string]any)
+	availabilityHeader := availabilityRequest["Header"].(map[string]any)
+	availabilityTimeZone := availabilityHeader["TimeZoneContext"].(map[string]any)["TimeZoneDefinition"].(map[string]any)
+	if availabilityTimeZone["Id"] != "America/Los_Angeles" {
+		t.Fatalf("expected requested availability timezone header, got %#v", availabilityTimeZone)
+	}
+}
+
 func TestHighLevelCalendarFindTimeParsesFractionalBusyTimestamps(t *testing.T) {
 	var calls []recordedServiceCall
 	server := newOWAServiceServerByAction(t, &calls, map[string]map[string]any{
