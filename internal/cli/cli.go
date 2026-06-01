@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -10,6 +11,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/johnkil/outlook-agent/internal/action"
 	"github.com/johnkil/outlook-agent/internal/approval"
@@ -38,6 +40,8 @@ type Runtime struct {
 	EnrollGraphDeviceCode func(context.Context, Options, func(GraphDeviceCodeChallenge)) (GraphDeviceCodeResult, error)
 	RunMCP                func(context.Context, Options) error
 }
+
+var now = time.Now
 
 type GraphDeviceCodeChallenge struct {
 	VerificationURI string
@@ -152,6 +156,10 @@ func RunWithRuntime(args []string, stdout io.Writer, stderr io.Writer, runtime R
 		if len(commandArgs) >= 2 && commandArgs[1] == "discover-action-context" {
 			return runOWADiscoverActionContext(commandArgs[2:], options, runtime, stdout, stderr)
 		}
+	case "people":
+		return runPeopleCommand(commandArgs[1:], options, runtime, stdout, stderr)
+	case "calendar":
+		return runCalendarCommand(commandArgs[1:], options, runtime, stdout, stderr)
 	case "auth":
 		if len(commandArgs) == 2 && commandArgs[1] == "check" {
 			return runAuthCheck(stdout, options, runtime)
@@ -633,6 +641,467 @@ func builtinActionDefinitions() []action.Definition {
 	return definitions
 }
 
+func runPeopleCommand(args []string, options Options, runtime Runtime, stdout io.Writer, stderr io.Writer) int {
+	if len(args) < 1 {
+		fmt.Fprintln(stderr, "people command requires search or resolve")
+		return 1
+	}
+	switch args[0] {
+	case "search":
+		query, mailbox, err := parsePeopleArgs(args[1:])
+		if err != nil {
+			fmt.Fprintln(stderr, err)
+			return 1
+		}
+		return runTypedReadAction(stdout, options, runtime, "people search", "people.search", map[string]any{"query": query, "mailbox": mailbox}, "people")
+	case "resolve":
+		query, mailbox, err := parsePeopleArgs(args[1:])
+		if err != nil {
+			fmt.Fprintln(stderr, err)
+			return 1
+		}
+		return runTypedReadAction(stdout, options, runtime, "people resolve", "people.resolve", map[string]any{"query": query, "mailbox": mailbox}, "person")
+	default:
+		fmt.Fprintf(stderr, "unknown people command: %s\n", args[0])
+		return 1
+	}
+}
+
+func runCalendarCommand(args []string, options Options, runtime Runtime, stdout io.Writer, stderr io.Writer) int {
+	if len(args) < 1 {
+		fmt.Fprintln(stderr, "calendar command requires find-time")
+		return 1
+	}
+	switch args[0] {
+	case "list":
+		payload, err := parseCalendarWindowArgs(args[1:], false)
+		if err != nil {
+			fmt.Fprintln(stderr, err)
+			return 1
+		}
+		return runTypedReadAction(stdout, options, runtime, "calendar list", "calendar.list", payload, "events")
+	case "availability":
+		payload, err := parseCalendarWindowArgs(args[1:], true)
+		if err != nil {
+			fmt.Fprintln(stderr, err)
+			return 1
+		}
+		return runCalendarAvailability(stdout, options, runtime, payload)
+	case "find-time", "mutual-free":
+		payload, err := parseCalendarFindTimeArgs(args[1:])
+		if err != nil {
+			fmt.Fprintln(stderr, err)
+			return 1
+		}
+		return runCalendarFindTime(stdout, options, runtime, payload)
+	default:
+		fmt.Fprintf(stderr, "unknown calendar command: %s\n", args[0])
+		return 1
+	}
+}
+
+func runCalendarAvailability(stdout io.Writer, options Options, runtime Runtime, payload map[string]any) int {
+	client, errCode, err := buildCLITransport(stdout, options, runtime, "calendar availability")
+	if err != nil {
+		return errCode
+	}
+	if query := stringAny(payload["with"]); query != "" {
+		email, err := resolvePersonEmail(client, query)
+		if err != nil {
+			_ = writeJSON(stdout, map[string]any{"ok": false, "command": "calendar availability", "error": err.Error()})
+			return 3
+		}
+		payload["email"] = email
+		delete(payload, "with")
+	}
+	return runTypedReadActionWithClient(stdout, client, "calendar availability", "calendar.availability", payload, "windows")
+}
+
+func runCalendarFindTime(stdout io.Writer, options Options, runtime Runtime, payload map[string]any) int {
+	client, errCode, err := buildCLITransport(stdout, options, runtime, "calendar find-time")
+	if err != nil {
+		return errCode
+	}
+	attendees := stringSliceAny(payload["attendees"])
+	for _, query := range stringSliceAny(payload["with"]) {
+		email, err := resolvePersonEmail(client, query)
+		if err != nil {
+			_ = writeJSON(stdout, map[string]any{"ok": false, "command": "calendar find-time", "error": err.Error()})
+			return 3
+		}
+		attendees = append(attendees, email)
+	}
+	payload["attendees"] = attendees
+	delete(payload, "with")
+	return runTypedReadActionWithClient(stdout, client, "calendar find-time", "calendar.find_time", payload, "suggestions")
+}
+
+func runTypedReadAction(stdout io.Writer, options Options, runtime Runtime, command string, actionName string, payload map[string]any, resultKey string) int {
+	client, errCode, err := buildCLITransport(stdout, options, runtime, command)
+	if err != nil {
+		return errCode
+	}
+	return runTypedReadActionWithClient(stdout, client, command, actionName, payload, resultKey)
+}
+
+func buildCLITransport(stdout io.Writer, options Options, runtime Runtime, command string) (transport.Transport, int, error) {
+	if runtime.BuildTransport == nil {
+		_ = writeJSON(stdout, map[string]any{"ok": false, "command": command, "error": "transport profile is not configured"})
+		return nil, 4, errors.New("transport profile is not configured")
+	}
+	client, _, err := runtime.BuildTransport(context.Background(), options)
+	if err != nil {
+		_ = writeJSON(stdout, map[string]any{"ok": false, "command": command, "error": err.Error()})
+		return nil, 3, err
+	}
+	return client, 0, nil
+}
+
+func runTypedReadActionWithClient(stdout io.Writer, client transport.Transport, command string, actionName string, payload map[string]any, resultKey string) int {
+	cleanPayload := map[string]any{}
+	for key, value := range payload {
+		if value == nil {
+			continue
+		}
+		if text, ok := value.(string); ok && text == "" {
+			continue
+		}
+		cleanPayload[key] = value
+	}
+	response := client.Execute(context.Background(), transport.ActionRequest{Name: actionName, Payload: cleanPayload})
+	output := map[string]any{"ok": response.OK, "command": command}
+	if response.OK {
+		output[resultKey] = response.Data[resultKey]
+		return writeJSON(stdout, output)
+	}
+	output["error"] = response.Error
+	if response.Data != nil {
+		output["data"] = response.Data
+	}
+	_ = writeJSON(stdout, output)
+	return 3
+}
+
+func resolvePersonEmail(client transport.Transport, query string) (string, error) {
+	response := client.Execute(context.Background(), transport.ActionRequest{Name: "people.resolve", Payload: map[string]any{"query": query}})
+	if !response.OK {
+		return "", errors.New(response.Error)
+	}
+	person, _ := response.Data["person"].(map[string]any)
+	email := stringAny(person["email"])
+	if email == "" {
+		return "", fmt.Errorf("people.resolve did not return an email")
+	}
+	return email, nil
+}
+
+func parsePeopleArgs(args []string) (string, string, error) {
+	var query string
+	var mailbox string
+	for index := 0; index < len(args); index++ {
+		switch args[index] {
+		case "--json":
+			continue
+		case "--query":
+			index++
+			if index >= len(args) {
+				return "", "", fmt.Errorf("--query requires a value")
+			}
+			query = args[index]
+		case "--mailbox":
+			index++
+			if index >= len(args) {
+				return "", "", fmt.Errorf("--mailbox requires a value")
+			}
+			mailbox = args[index]
+		default:
+			if query == "" {
+				query = args[index]
+			} else {
+				query += " " + args[index]
+			}
+		}
+	}
+	if strings.TrimSpace(query) == "" {
+		return "", "", fmt.Errorf("people query is required")
+	}
+	return query, mailbox, nil
+}
+
+func parseCalendarWindowArgs(args []string, allowEmail bool) (map[string]any, error) {
+	payload := map[string]any{}
+	for index := 0; index < len(args); index++ {
+		switch args[index] {
+		case "--json":
+			continue
+		case "--start":
+			value, next, err := valueArg(args, index, "--start")
+			if err != nil {
+				return nil, err
+			}
+			payload["start"] = value
+			index = next
+		case "--end":
+			value, next, err := valueArg(args, index, "--end")
+			if err != nil {
+				return nil, err
+			}
+			payload["end"] = value
+			index = next
+		case "--date":
+			value, next, err := valueArg(args, index, "--date")
+			if err != nil {
+				return nil, err
+			}
+			payload["date"] = value
+			index = next
+		case "--timezone":
+			value, next, err := valueArg(args, index, "--timezone")
+			if err != nil {
+				return nil, err
+			}
+			payload["time_zone"] = value
+			index = next
+		case "--email":
+			if !allowEmail {
+				return nil, fmt.Errorf("--email is not supported for calendar list")
+			}
+			value, next, err := valueArg(args, index, "--email")
+			if err != nil {
+				return nil, err
+			}
+			payload["email"] = value
+			index = next
+		case "--with":
+			if !allowEmail {
+				return nil, fmt.Errorf("--with is not supported for calendar list")
+			}
+			value, next, err := valueArg(args, index, "--with")
+			if err != nil {
+				return nil, err
+			}
+			payload["with"] = value
+			index = next
+		case "--mailbox":
+			value, next, err := valueArg(args, index, "--mailbox")
+			if err != nil {
+				return nil, err
+			}
+			payload["mailbox"] = value
+			index = next
+		default:
+			return nil, fmt.Errorf("unknown calendar option: %s", args[index])
+		}
+	}
+	if err := applyDateWindow(payload, false); err != nil {
+		return nil, err
+	}
+	if payload["start"] == nil || payload["end"] == nil {
+		return nil, fmt.Errorf("calendar command requires --start and --end")
+	}
+	return payload, nil
+}
+
+func parseCalendarFindTimeArgs(args []string) (map[string]any, error) {
+	payload := map[string]any{"tentative": "busy"}
+	attendees := make([]string, 0)
+	withPeople := make([]string, 0)
+	for index := 0; index < len(args); index++ {
+		switch args[index] {
+		case "--json":
+			continue
+		case "--attendee":
+			index++
+			if index >= len(args) {
+				return nil, fmt.Errorf("--attendee requires a value")
+			}
+			attendees = append(attendees, args[index])
+		case "--email":
+			index++
+			if index >= len(args) {
+				return nil, fmt.Errorf("--email requires a value")
+			}
+			attendees = append(attendees, args[index])
+		case "--with":
+			index++
+			if index >= len(args) {
+				return nil, fmt.Errorf("--with requires a value")
+			}
+			withPeople = append(withPeople, args[index])
+		case "--start":
+			value, next, err := valueArg(args, index, "--start")
+			if err != nil {
+				return nil, err
+			}
+			payload["start"] = value
+			index = next
+		case "--end":
+			value, next, err := valueArg(args, index, "--end")
+			if err != nil {
+				return nil, err
+			}
+			payload["end"] = value
+			index = next
+		case "--date":
+			value, next, err := valueArg(args, index, "--date")
+			if err != nil {
+				return nil, err
+			}
+			payload["date"] = value
+			index = next
+		case "--duration":
+			value, next, err := valueArg(args, index, "--duration")
+			if err != nil {
+				return nil, err
+			}
+			duration, err := parseDurationMinutes(value)
+			if err != nil {
+				return nil, err
+			}
+			payload["duration_minutes"] = duration
+			index = next
+		case "--min":
+			value, next, err := valueArg(args, index, "--min")
+			if err != nil {
+				return nil, err
+			}
+			duration, err := parseDurationMinutes(value)
+			if err != nil {
+				return nil, err
+			}
+			payload["duration_minutes"] = duration
+			index = next
+		case "--timezone":
+			value, next, err := valueArg(args, index, "--timezone")
+			if err != nil {
+				return nil, err
+			}
+			payload["time_zone"] = value
+			index = next
+		case "--tentative":
+			value, next, err := valueArg(args, index, "--tentative")
+			if err != nil {
+				return nil, err
+			}
+			if value != "busy" && value != "free" {
+				return nil, fmt.Errorf("--tentative must be busy or free")
+			}
+			payload["tentative"] = value
+			index = next
+		case "--mailbox":
+			value, next, err := valueArg(args, index, "--mailbox")
+			if err != nil {
+				return nil, err
+			}
+			payload["mailbox"] = value
+			index = next
+		default:
+			return nil, fmt.Errorf("unknown calendar find-time option: %s", args[index])
+		}
+	}
+	if err := applyDateWindow(payload, true); err != nil {
+		return nil, err
+	}
+	if len(attendees) == 0 && len(withPeople) == 0 {
+		return nil, fmt.Errorf("calendar find-time requires at least one --attendee or --with")
+	}
+	if payload["start"] == nil || payload["end"] == nil {
+		return nil, fmt.Errorf("calendar find-time requires --start and --end")
+	}
+	payload["attendees"] = attendees
+	payload["with"] = withPeople
+	return payload, nil
+}
+
+func valueArg(args []string, index int, flag string) (string, int, error) {
+	index++
+	if index >= len(args) {
+		return "", index, fmt.Errorf("%s requires a value", flag)
+	}
+	return args[index], index, nil
+}
+
+func applyDateWindow(payload map[string]any, workingHours bool) error {
+	dateText := strings.TrimSpace(stringAny(payload["date"]))
+	if dateText == "" {
+		return nil
+	}
+	location := time.Local
+	if zone := strings.TrimSpace(stringAny(payload["time_zone"])); zone != "" {
+		loaded, err := time.LoadLocation(zone)
+		if err != nil {
+			return fmt.Errorf("unknown timezone %q", zone)
+		}
+		location = loaded
+	}
+	base := now().In(location)
+	var day time.Time
+	switch strings.ToLower(dateText) {
+	case "today":
+		day = time.Date(base.Year(), base.Month(), base.Day(), 0, 0, 0, 0, location)
+	case "tomorrow":
+		next := base.AddDate(0, 0, 1)
+		day = time.Date(next.Year(), next.Month(), next.Day(), 0, 0, 0, 0, location)
+	default:
+		parsed, err := time.ParseInLocation("2006-01-02", dateText, location)
+		if err != nil {
+			return fmt.Errorf("--date must be today, tomorrow, or YYYY-MM-DD")
+		}
+		day = parsed
+	}
+	start := day
+	end := day.AddDate(0, 0, 1)
+	if workingHours {
+		start = time.Date(day.Year(), day.Month(), day.Day(), 9, 0, 0, 0, location)
+		end = time.Date(day.Year(), day.Month(), day.Day(), 18, 0, 0, 0, location)
+	}
+	payload["start"] = start.Format(time.RFC3339)
+	payload["end"] = end.Format(time.RFC3339)
+	delete(payload, "date")
+	return nil
+}
+
+func parseDurationMinutes(value string) (float64, error) {
+	trimmed := strings.TrimSpace(value)
+	if trimmed == "" {
+		return 0, fmt.Errorf("duration requires a value")
+	}
+	if strings.HasSuffix(trimmed, "m") || strings.HasSuffix(trimmed, "h") || strings.HasSuffix(trimmed, "s") {
+		duration, err := time.ParseDuration(trimmed)
+		if err != nil {
+			return 0, fmt.Errorf("duration must be minutes or a Go duration like 30m")
+		}
+		return duration.Minutes(), nil
+	}
+	duration, err := strconv.ParseFloat(trimmed, 64)
+	if err != nil {
+		return 0, fmt.Errorf("duration must be a number of minutes")
+	}
+	return duration, nil
+}
+
+func stringAny(value any) string {
+	text, _ := value.(string)
+	return text
+}
+
+func stringSliceAny(value any) []string {
+	switch typed := value.(type) {
+	case []string:
+		return typed
+	case []any:
+		output := make([]string, 0, len(typed))
+		for _, item := range typed {
+			if text, ok := item.(string); ok {
+				output = append(output, text)
+			}
+		}
+		return output
+	default:
+		return nil
+	}
+}
+
 func runAuthCheck(stdout io.Writer, options Options, runtime Runtime) int {
 	if runtime.BuildTransport == nil {
 		return writeJSON(stdout, map[string]any{
@@ -954,6 +1423,11 @@ Usage:
   outlook-agent version
   outlook-agent auth check --config <path> [--profile <name>]
   outlook-agent auth graph-device-code --config <path> [--profile <name>]
+  outlook-agent people search <query> [--config <path>] [--profile <name>]
+  outlook-agent people resolve <query> [--config <path>] [--profile <name>]
+  outlook-agent calendar list (--date <today|tomorrow|YYYY-MM-DD>|--start <ts> --end <ts>) [--timezone <tz>]
+  outlook-agent calendar availability (--email <addr>|--with <query>) (--date <date>|--start <ts> --end <ts>) [--timezone <tz>]
+  outlook-agent calendar find-time (--attendee <addr>|--with <query>) (--date <date>|--start <ts> --end <ts>) [--duration <minutes|30m>] [--timezone <tz>] [--tentative busy|free]
   outlook-agent policy explain [--action <name>]
   outlook-agent setup opencode --print [--binary <path>] [--config <path>]
   outlook-agent setup opencode print [--binary <path>] [--config <path>]

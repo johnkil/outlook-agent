@@ -125,8 +125,11 @@ outlook.mail_move_to_deleted_items
 outlook.mail_rules_list
 outlook.mail_rule_set_enabled
 outlook.mailbox_settings_get
+outlook.people_search
+outlook.people_resolve
 outlook.calendar_list
 outlook.calendar_availability
+outlook.calendar_find_time
 outlook.calendar_respond
 outlook.action_dry_run
 outlook.action_confirm
@@ -158,6 +161,11 @@ Key tool inputs:
 - High-level mail and calendar tools accept optional `mailbox` for transports
   that support delegated or shared mailbox targeting. Graph uses that value as
   `/users/{id|userPrincipalName}`; when omitted, Graph uses `/me`.
+- `outlook.people_search`: `query` and optional `mailbox`. Returns bounded
+  people metadata (`display_name`, `email`, provider id/source when available).
+- `outlook.people_resolve`: `query` and optional `mailbox`. Returns one
+  `person` only when the match is unique; ambiguous or empty results fail
+  without guessing and may include `candidates` in transport data.
 - `outlook.mail_search` returns normalized metadata plus bounded-window fields
   `returned`, `limit`, and `truncated`. When the selected transport supports
   continuation, it returns an opaque `next_cursor`; agents continue with
@@ -169,6 +177,11 @@ Key tool inputs:
 - `outlook.calendar_availability`: `start`, `end`, and optional `email`.
   When `email` is omitted, OWA profiles use `settings.mailbox_email` if
   configured.
+- `outlook.calendar_find_time`: `start`, `end`, `attendees`,
+  optional `duration_minutes`, optional `timezone`, optional `tentative`
+  (`busy` by default, or `free`), and optional `mailbox`. It is planning-only:
+  it returns mutual free-time suggestions from calendar/availability
+  intersections and never creates, updates, or sends meeting items.
 - `outlook.calendar_respond`: `event_id`, `response` (`accept`, `decline`, or
   `tentative`), `send_response`, `confirm_token`, optional `comment`, optional
   `approval_challenge_id`, optional `approval_token`, and optional `mailbox`.

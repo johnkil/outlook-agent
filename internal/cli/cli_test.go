@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/johnkil/outlook-agent/internal/transport"
 	"github.com/johnkil/outlook-agent/internal/transport/fake"
@@ -1493,6 +1494,344 @@ func TestUnknownCommandReturnsValidationError(t *testing.T) {
 	if stderr.Len() == 0 {
 		t.Fatal("expected stderr to explain unknown command")
 	}
+}
+
+func TestPeopleSearchCommandUsesConfiguredTransport(t *testing.T) {
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	client := &cliCapturingTransport{}
+
+	code := RunWithRuntime([]string{"people", "search", "vlad", "--config", "/tmp/outlook-agent.json"}, &stdout, &stderr, Runtime{
+		BuildTransport: func(_ context.Context, options Options) (transport.Transport, string, error) {
+			if options.ConfigPath != "/tmp/outlook-agent.json" {
+				t.Fatalf("expected config path forwarded, got %#v", options)
+			}
+			return client, "work", nil
+		},
+	})
+
+	if code != 0 {
+		t.Fatalf("expected exit code 0, got %d, stderr=%s", code, stderr.String())
+	}
+	if client.lastRequest.Name != "people.search" || client.lastRequest.Payload["query"] != "vlad" {
+		t.Fatalf("expected people.search payload, got %#v", client.lastRequest)
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(stdout.Bytes(), &payload); err != nil {
+		t.Fatalf("people search output is not JSON: %v; output=%s", err, stdout.String())
+	}
+	if payload["command"] != "people search" || len(payload["people"].([]any)) != 1 {
+		t.Fatalf("unexpected people search output: %#v", payload)
+	}
+}
+
+func TestPeopleResolveCommandDoesNotUseRawAction(t *testing.T) {
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	client := &cliCapturingTransport{}
+
+	code := RunWithRuntime([]string{"people", "resolve", "vlad"}, &stdout, &stderr, Runtime{
+		BuildTransport: func(context.Context, Options) (transport.Transport, string, error) {
+			return client, "work", nil
+		},
+	})
+
+	if code != 0 {
+		t.Fatalf("expected exit code 0, got %d, stderr=%s", code, stderr.String())
+	}
+	if client.lastRequest.Name != "people.resolve" || client.lastRequest.Payload["query"] != "vlad" {
+		t.Fatalf("expected people.resolve payload, got %#v", client.lastRequest)
+	}
+	if strings.Contains(stdout.String(), "raw_action") || strings.Contains(stdout.String(), "FindPeople") {
+		t.Fatalf("people resolve CLI should expose typed output, got %s", stdout.String())
+	}
+}
+
+func TestPeopleResolveCommandAcceptsJSONFlag(t *testing.T) {
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	client := &cliCapturingTransport{}
+
+	code := RunWithRuntime([]string{"people", "resolve", "Vlad Cheshenko", "--json"}, &stdout, &stderr, Runtime{
+		BuildTransport: func(context.Context, Options) (transport.Transport, string, error) {
+			return client, "work", nil
+		},
+	})
+
+	if code != 0 {
+		t.Fatalf("expected exit code 0, got %d, stderr=%s", code, stderr.String())
+	}
+	if client.lastRequest.Name != "people.resolve" || client.lastRequest.Payload["query"] != "Vlad Cheshenko" {
+		t.Fatalf("expected --json not to be included in query, got %#v", client.lastRequest)
+	}
+}
+
+func TestCalendarFindTimeCommandForwardsPlanningOptions(t *testing.T) {
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	client := &cliCapturingTransport{}
+
+	code := RunWithRuntime([]string{
+		"calendar", "find-time",
+		"--attendee", "vlad.cheshenko@example.com",
+		"--start", "2026-05-28T09:00:00Z",
+		"--end", "2026-05-28T12:00:00Z",
+		"--duration", "30",
+		"--timezone", "UTC",
+		"--tentative", "free",
+	}, &stdout, &stderr, Runtime{
+		BuildTransport: func(context.Context, Options) (transport.Transport, string, error) {
+			return client, "work", nil
+		},
+	})
+
+	if code != 0 {
+		t.Fatalf("expected exit code 0, got %d, stderr=%s", code, stderr.String())
+	}
+	if client.lastRequest.Name != "calendar.find_time" {
+		t.Fatalf("expected calendar.find_time request, got %#v", client.lastRequest)
+	}
+	if client.lastRequest.Payload["time_zone"] != "UTC" || client.lastRequest.Payload["tentative"] != "free" || client.lastRequest.Payload["duration_minutes"] != float64(30) {
+		t.Fatalf("expected find-time options forwarded, got %#v", client.lastRequest.Payload)
+	}
+	attendees := client.lastRequest.Payload["attendees"].([]string)
+	if len(attendees) != 1 || attendees[0] != "vlad.cheshenko@example.com" {
+		t.Fatalf("expected attendee forwarded, got %#v", client.lastRequest.Payload)
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(stdout.Bytes(), &payload); err != nil {
+		t.Fatalf("find-time output is not JSON: %v; output=%s", err, stdout.String())
+	}
+	if payload["command"] != "calendar find-time" || len(payload["suggestions"].([]any)) != 1 {
+		t.Fatalf("unexpected find-time output: %#v", payload)
+	}
+}
+
+func TestCalendarListCommandForwardsWindow(t *testing.T) {
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	client := &cliCapturingTransport{}
+
+	code := RunWithRuntime([]string{
+		"calendar", "list",
+		"--start", "2026-05-28T00:00:00Z",
+		"--end", "2026-05-29T00:00:00Z",
+	}, &stdout, &stderr, Runtime{
+		BuildTransport: func(context.Context, Options) (transport.Transport, string, error) {
+			return client, "work", nil
+		},
+	})
+
+	if code != 0 {
+		t.Fatalf("expected exit code 0, got %d, stderr=%s", code, stderr.String())
+	}
+	if client.lastRequest.Name != "calendar.list" || client.lastRequest.Payload["start"] != "2026-05-28T00:00:00Z" || client.lastRequest.Payload["end"] != "2026-05-29T00:00:00Z" {
+		t.Fatalf("expected calendar.list window forwarded, got %#v", client.lastRequest)
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(stdout.Bytes(), &payload); err != nil {
+		t.Fatalf("calendar list output is not JSON: %v; output=%s", err, stdout.String())
+	}
+	if payload["command"] != "calendar list" || len(payload["events"].([]any)) != 1 {
+		t.Fatalf("unexpected calendar list output: %#v", payload)
+	}
+}
+
+func TestCalendarAvailabilityCommandForwardsEmailAndWindow(t *testing.T) {
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	client := &cliCapturingTransport{}
+
+	code := RunWithRuntime([]string{
+		"calendar", "availability",
+		"--email", "vlad.cheshenko@example.com",
+		"--start", "2026-05-28T09:00:00Z",
+		"--end", "2026-05-28T12:00:00Z",
+	}, &stdout, &stderr, Runtime{
+		BuildTransport: func(context.Context, Options) (transport.Transport, string, error) {
+			return client, "work", nil
+		},
+	})
+
+	if code != 0 {
+		t.Fatalf("expected exit code 0, got %d, stderr=%s", code, stderr.String())
+	}
+	if client.lastRequest.Name != "calendar.availability" || client.lastRequest.Payload["email"] != "vlad.cheshenko@example.com" {
+		t.Fatalf("expected calendar.availability email forwarded, got %#v", client.lastRequest)
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(stdout.Bytes(), &payload); err != nil {
+		t.Fatalf("calendar availability output is not JSON: %v; output=%s", err, stdout.String())
+	}
+	if payload["command"] != "calendar availability" || len(payload["windows"].([]any)) != 1 {
+		t.Fatalf("unexpected calendar availability output: %#v", payload)
+	}
+}
+
+func TestCalendarListDateTomorrowUsesTimezone(t *testing.T) {
+	oldNow := now
+	now = func() time.Time { return time.Date(2026, 6, 1, 12, 0, 0, 0, time.UTC) }
+	defer func() { now = oldNow }()
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	client := &cliCapturingTransport{}
+
+	code := RunWithRuntime([]string{
+		"calendar", "list",
+		"--date", "tomorrow",
+		"--timezone", "UTC",
+		"--json",
+	}, &stdout, &stderr, Runtime{
+		BuildTransport: func(context.Context, Options) (transport.Transport, string, error) {
+			return client, "work", nil
+		},
+	})
+
+	if code != 0 {
+		t.Fatalf("expected exit code 0, got %d, stderr=%s", code, stderr.String())
+	}
+	if client.lastRequest.Name != "calendar.list" || client.lastRequest.Payload["start"] != "2026-06-02T00:00:00Z" || client.lastRequest.Payload["end"] != "2026-06-03T00:00:00Z" {
+		t.Fatalf("expected tomorrow window in UTC, got %#v", client.lastRequest)
+	}
+}
+
+func TestCalendarAvailabilityWithPersonResolvesFirst(t *testing.T) {
+	oldNow := now
+	now = func() time.Time { return time.Date(2026, 6, 1, 12, 0, 0, 0, time.UTC) }
+	defer func() { now = oldNow }()
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	client := &cliCapturingTransport{}
+
+	code := RunWithRuntime([]string{
+		"calendar", "availability",
+		"--with", "vlad",
+		"--date", "tomorrow",
+		"--timezone", "UTC",
+	}, &stdout, &stderr, Runtime{
+		BuildTransport: func(context.Context, Options) (transport.Transport, string, error) {
+			return client, "work", nil
+		},
+	})
+
+	if code != 0 {
+		t.Fatalf("expected exit code 0, got %d, stderr=%s", code, stderr.String())
+	}
+	if len(client.requests) != 2 || client.requests[0].Name != "people.resolve" || client.requests[1].Name != "calendar.availability" {
+		t.Fatalf("expected people resolve before availability, got %#v", client.requests)
+	}
+	if client.requests[1].Payload["email"] != "vlad.cheshenko@example.com" {
+		t.Fatalf("expected resolved attendee email, got %#v", client.requests[1])
+	}
+}
+
+func TestCalendarFindTimeVladScenarioWithDurationStringAndJSON(t *testing.T) {
+	oldNow := now
+	now = func() time.Time { return time.Date(2026, 6, 1, 12, 0, 0, 0, time.UTC) }
+	defer func() { now = oldNow }()
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	client := &cliCapturingTransport{}
+
+	code := RunWithRuntime([]string{
+		"calendar", "find-time",
+		"--with", "vlad",
+		"--date", "tomorrow",
+		"--duration", "30m",
+		"--timezone", "UTC",
+		"--json",
+	}, &stdout, &stderr, Runtime{
+		BuildTransport: func(context.Context, Options) (transport.Transport, string, error) {
+			return client, "work", nil
+		},
+	})
+
+	if code != 0 {
+		t.Fatalf("expected exit code 0, got %d, stderr=%s", code, stderr.String())
+	}
+	if len(client.requests) != 2 || client.requests[0].Name != "people.resolve" || client.requests[1].Name != "calendar.find_time" {
+		t.Fatalf("expected people resolve before find-time, got %#v", client.requests)
+	}
+	if client.requests[1].Payload["duration_minutes"] != float64(30) {
+		t.Fatalf("expected 30 minute duration, got %#v", client.requests[1].Payload)
+	}
+	attendees := client.requests[1].Payload["attendees"].([]string)
+	if len(attendees) != 1 || attendees[0] != "vlad.cheshenko@example.com" {
+		t.Fatalf("expected resolved attendee email, got %#v", client.requests[1].Payload)
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(stdout.Bytes(), &payload); err != nil {
+		t.Fatalf("find-time output is not JSON: %v; output=%s", err, stdout.String())
+	}
+}
+
+func TestCalendarMutualFreeAlias(t *testing.T) {
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	client := &cliCapturingTransport{}
+
+	code := RunWithRuntime([]string{
+		"calendar", "mutual-free",
+		"--attendee", "vlad.cheshenko@example.com",
+		"--start", "2026-05-28T09:00:00Z",
+		"--end", "2026-05-28T12:00:00Z",
+		"--min", "30m",
+	}, &stdout, &stderr, Runtime{
+		BuildTransport: func(context.Context, Options) (transport.Transport, string, error) {
+			return client, "work", nil
+		},
+	})
+
+	if code != 0 {
+		t.Fatalf("expected exit code 0, got %d, stderr=%s", code, stderr.String())
+	}
+	if client.lastRequest.Name != "calendar.find_time" {
+		t.Fatalf("expected mutual-free alias to call calendar.find_time, got %#v", client.lastRequest)
+	}
+}
+
+type cliCapturingTransport struct {
+	lastRequest transport.ActionRequest
+	requests    []transport.ActionRequest
+}
+
+func (client *cliCapturingTransport) Name() string {
+	return "capture"
+}
+
+func (client *cliCapturingTransport) Authenticate(context.Context, string) transport.AuthResult {
+	return transport.AuthResult{OK: true}
+}
+
+func (client *cliCapturingTransport) Capabilities(context.Context) transport.CapabilitySet {
+	return transport.CapabilitySet{}
+}
+
+func (client *cliCapturingTransport) Execute(_ context.Context, request transport.ActionRequest) transport.ActionResponse {
+	client.lastRequest = request
+	client.requests = append(client.requests, request)
+	return transport.ActionResponse{
+		OK: true,
+		Data: map[string]any{
+			"people": []any{
+				map[string]any{"display_name": "Vlad Cheshenko", "email": "vlad.cheshenko@example.com"},
+			},
+			"person": map[string]any{"display_name": "Vlad Cheshenko", "email": "vlad.cheshenko@example.com"},
+			"suggestions": []any{
+				map[string]any{"start": "2026-05-28T10:00:00Z", "end": "2026-05-28T10:30:00Z"},
+			},
+			"events": []any{
+				map[string]any{"id": "evt-1", "title": "Planning", "start": "2026-05-28T10:00:00Z"},
+			},
+			"windows": []any{
+				map[string]any{"start": "2026-05-28T09:30:00Z", "end": "2026-05-28T10:00:00Z", "free_busy_type": "Busy"},
+			},
+		},
+	}
+}
+
+func (client *cliCapturingTransport) DryRun(context.Context, transport.ActionRequest) transport.DryRunSummary {
+	return transport.DryRunSummary{}
 }
 
 type discoveringTransport struct {

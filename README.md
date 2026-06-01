@@ -78,8 +78,8 @@ the busywork; **you keep the keys.** 🔑
 
 **Read (direct):** search mail metadata · paginate with safe cursors
 (`search_next`) · explicit body reads with `mail.fetch_body` by id · list &
-fetch attachments by id · list calendar events · check free/busy · read mailbox
-settings & rule metadata.
+fetch attachments by id · search/resolve people · list calendar events · check
+free/busy · find mutual free time · read mailbox settings & rule metadata.
 
 **Prepare (save-only, never sends):** draft · reply draft · reply-all draft ·
 forward draft.

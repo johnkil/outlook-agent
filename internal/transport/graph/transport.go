@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/johnkil/outlook-agent/internal/action"
+	"github.com/johnkil/outlook-agent/internal/calendarplan"
 	"github.com/johnkil/outlook-agent/internal/policy"
 	"github.com/johnkil/outlook-agent/internal/secret"
 	"github.com/johnkil/outlook-agent/internal/transport"
@@ -69,8 +70,11 @@ func (client *Transport) Capabilities(context.Context) transport.CapabilitySet {
 		{Name: "mail.rules.list", Transport: "graph", Class: policy.ReadMetadata, Level: action.LevelHighLevelMCPTool},
 		{Name: "mail.rules.set_enabled", Transport: "graph", Class: policy.SettingsOrRules, Level: action.LevelHighLevelMCPTool},
 		{Name: "mailbox.settings.get", Transport: "graph", Class: policy.ReadMetadata, Level: action.LevelHighLevelMCPTool},
+		{Name: "people.search", Transport: "graph", Class: policy.ReadMetadata, Level: action.LevelHighLevelMCPTool},
+		{Name: "people.resolve", Transport: "graph", Class: policy.ReadMetadata, Level: action.LevelHighLevelMCPTool},
 		{Name: "calendar.list", Transport: "graph", Class: policy.ReadMetadata, Level: action.LevelHighLevelMCPTool},
 		{Name: "calendar.availability", Transport: "graph", Class: policy.ReadMetadata, Level: action.LevelHighLevelMCPTool},
+		{Name: "calendar.find_time", Transport: "graph", Class: policy.ReadMetadata, Level: action.LevelHighLevelMCPTool},
 		{Name: "calendar.respond", Transport: "graph", Class: policy.SendLike, Level: action.LevelHighLevelMCPTool},
 	}}
 }
@@ -297,6 +301,24 @@ func (client *Transport) Execute(ctx context.Context, request transport.ActionRe
 			return transport.ActionResponse{OK: false, Error: err.Error()}
 		}
 		return transport.ActionResponse{OK: true, Data: map[string]any{"settings": settings}}
+	case "people.search":
+		people, err := client.searchPeople(ctx, mailbox, stringValue(request.Payload, "query", ""))
+		if err != nil {
+			return transport.ActionResponse{OK: false, Error: err.Error()}
+		}
+		return transport.ActionResponse{OK: true, Data: map[string]any{"people": people}}
+	case "people.resolve":
+		people, err := client.searchPeople(ctx, mailbox, stringValue(request.Payload, "query", ""))
+		if err != nil {
+			return transport.ActionResponse{OK: false, Error: err.Error()}
+		}
+		if len(people) == 1 {
+			return transport.ActionResponse{OK: true, Data: map[string]any{"person": people[0]}}
+		}
+		if len(people) == 0 {
+			return transport.ActionResponse{OK: false, Error: "people.resolve found no matches", Data: map[string]any{"candidates": []any{}}}
+		}
+		return transport.ActionResponse{OK: false, Error: "people.resolve is ambiguous", Data: map[string]any{"candidates": people}}
 	case "calendar.list":
 		events, err := client.listCalendarEvents(ctx, mailbox, stringValue(request.Payload, "start", ""), stringValue(request.Payload, "end", ""))
 		if err != nil {
@@ -309,6 +331,12 @@ func (client *Transport) Execute(ctx context.Context, request transport.ActionRe
 			return transport.ActionResponse{OK: false, Error: err.Error()}
 		}
 		return transport.ActionResponse{OK: true, Data: map[string]any{"windows": windows}}
+	case "calendar.find_time":
+		suggestions, err := client.findMeetingTime(ctx, mailbox, request.Payload)
+		if err != nil {
+			return transport.ActionResponse{OK: false, Error: err.Error()}
+		}
+		return transport.ActionResponse{OK: true, Data: map[string]any{"suggestions": suggestions}}
 	case "calendar.respond":
 		result, err := client.respondCalendarEvent(ctx, mailbox, request.Payload)
 		if err != nil {
@@ -721,6 +749,27 @@ type itemBody struct {
 
 type eventList struct {
 	Value []calendarEvent `json:"value"`
+}
+
+type peopleList struct {
+	Value []person `json:"value"`
+}
+
+type person struct {
+	ID                   string               `json:"id"`
+	DisplayName          string               `json:"displayName"`
+	UserPrincipalName    string               `json:"userPrincipalName"`
+	Mail                 string               `json:"mail"`
+	ScoredEmailAddresses []scoredEmailAddress `json:"scoredEmailAddresses"`
+	EmailAddresses       []personEmailAddress `json:"emailAddresses"`
+}
+
+type scoredEmailAddress struct {
+	Address string `json:"address"`
+}
+
+type personEmailAddress struct {
+	Address string `json:"address"`
 }
 
 type calendarEvent struct {
@@ -1226,6 +1275,25 @@ func (client *Transport) getMailboxSettings(ctx context.Context, mailbox string,
 	return settings, nil
 }
 
+func (client *Transport) searchPeople(ctx context.Context, mailbox string, query string) ([]any, error) {
+	requestURL, err := client.peopleURL(mailbox, query)
+	if err != nil {
+		return nil, err
+	}
+	var response peopleList
+	if err := client.getJSON(ctx, requestURL, &response); err != nil {
+		return nil, err
+	}
+	people := make([]any, 0, len(response.Value))
+	for _, item := range response.Value {
+		people = append(people, normalizeGraphPerson(item))
+	}
+	if people == nil {
+		return []any{}, nil
+	}
+	return people, nil
+}
+
 func (client *Transport) listCalendarEvents(ctx context.Context, mailbox string, start string, end string) ([]any, error) {
 	if strings.TrimSpace(start) == "" || strings.TrimSpace(end) == "" {
 		return nil, fmt.Errorf("calendar.list requires start and end")
@@ -1246,6 +1314,62 @@ func (client *Transport) listCalendarEvents(ctx context.Context, mailbox string,
 		return []any{}, nil
 	}
 	return events, nil
+}
+
+func (client *Transport) findMeetingTime(ctx context.Context, mailbox string, payload map[string]any) ([]any, error) {
+	start := strings.TrimSpace(stringValue(payload, "start", ""))
+	end := strings.TrimSpace(stringValue(payload, "end", ""))
+	if start == "" || end == "" {
+		return nil, fmt.Errorf("calendar.find_time requires start and end")
+	}
+	attendees := stringSlice(payload["attendees"])
+	if len(attendees) == 0 {
+		return nil, fmt.Errorf("calendar.find_time requires attendees")
+	}
+	windowStart, err := parseGraphTime(start)
+	if err != nil {
+		return nil, fmt.Errorf("calendar.find_time requires parseable start")
+	}
+	windowEnd, err := parseGraphTime(end)
+	if err != nil {
+		return nil, fmt.Errorf("calendar.find_time requires parseable end")
+	}
+	events, err := client.listCalendarEvents(ctx, mailbox, start, end)
+	if err != nil {
+		return nil, err
+	}
+	busy := intervalsFromGraphEvents(events)
+	for _, attendee := range attendees {
+		windows, err := client.getSchedule(ctx, map[string]any{
+			"email":            attendee,
+			"start":            start,
+			"end":              end,
+			"time_zone":        stringValue(payload, "time_zone", "UTC"),
+			"interval_minutes": intValue(payload, "interval_minutes", 30),
+		})
+		if err != nil {
+			return nil, err
+		}
+		busy = append(busy, intervalsFromGraphWindows(windows)...)
+	}
+	duration := calendarplan.DurationFromMinutes(floatValue(payload, "duration_minutes", 30))
+	slots := calendarplan.FindSuggestions(windowStart, windowEnd, busy, calendarplan.Options{
+		Duration:        duration,
+		Step:            30 * time.Minute,
+		MaxSuggestions:  5,
+		TentativePolicy: stringValue(payload, "tentative", calendarplan.TentativeBusy),
+	})
+	suggestions := make([]any, 0, len(slots))
+	for _, slot := range slots {
+		suggestions = append(suggestions, map[string]any{
+			"start":            slot.Start.UTC().Format(time.RFC3339),
+			"end":              slot.End.UTC().Format(time.RFC3339),
+			"duration_minutes": int(duration / time.Minute),
+			"attendees":        attendees,
+			"source":           "availability_intersection",
+		})
+	}
+	return suggestions, nil
 }
 
 func (client *Transport) getSchedule(ctx context.Context, payload map[string]any) ([]any, error) {
@@ -1889,6 +2013,23 @@ func (client *Transport) calendarViewURL(mailbox string, start string, end strin
 	return base + graphOwnerPath(mailbox) + "/calendarView?" + values.Encode(), nil
 }
 
+func (client *Transport) peopleURL(mailbox string, query string) (string, error) {
+	base, err := client.config.normalizedBaseURL()
+	if err != nil {
+		return "", err
+	}
+	values := url.Values{}
+	if strings.TrimSpace(query) != "" {
+		values.Set("$search", query)
+	}
+	values.Set("$top", "10")
+	encoded := values.Encode()
+	if encoded == "" {
+		return base + graphOwnerPath(mailbox) + "/people", nil
+	}
+	return base + graphOwnerPath(mailbox) + "/people?" + encoded, nil
+}
+
 func (client *Transport) getScheduleURL(mailbox string) (string, error) {
 	base, err := client.config.normalizedBaseURL()
 	if err != nil {
@@ -2003,6 +2144,25 @@ func normalizeGraphEvent(item calendarEvent) map[string]any {
 	}
 }
 
+func normalizeGraphPerson(item person) map[string]any {
+	email := strings.TrimSpace(item.Mail)
+	if email == "" {
+		email = strings.TrimSpace(item.UserPrincipalName)
+	}
+	if email == "" && len(item.ScoredEmailAddresses) > 0 {
+		email = strings.TrimSpace(item.ScoredEmailAddresses[0].Address)
+	}
+	if email == "" && len(item.EmailAddresses) > 0 {
+		email = strings.TrimSpace(item.EmailAddresses[0].Address)
+	}
+	return map[string]any{
+		"id":           item.ID,
+		"display_name": item.DisplayName,
+		"email":        email,
+		"source":       "graph",
+	}
+}
+
 func normalizeGraphScheduleItem(scheduleID string, item scheduleItem) map[string]any {
 	return map[string]any{
 		"schedule_id":    scheduleID,
@@ -2012,6 +2172,46 @@ func normalizeGraphScheduleItem(scheduleID string, item scheduleItem) map[string
 		"free_busy_type": item.Status,
 		"subject":        item.Subject,
 	}
+}
+
+func intervalsFromGraphEvents(events []any) []calendarplan.Interval {
+	intervals := make([]calendarplan.Interval, 0, len(events))
+	for _, event := range events {
+		eventMap, ok := event.(map[string]any)
+		if !ok {
+			continue
+		}
+		start, err := parseGraphTime(stringValue(eventMap, "start", ""))
+		if err != nil {
+			continue
+		}
+		end, err := parseGraphTime(stringValue(eventMap, "end", ""))
+		if err != nil {
+			continue
+		}
+		intervals = append(intervals, calendarplan.Interval{Start: start, End: end, Status: "busy"})
+	}
+	return intervals
+}
+
+func intervalsFromGraphWindows(windows []any) []calendarplan.Interval {
+	intervals := make([]calendarplan.Interval, 0, len(windows))
+	for _, window := range windows {
+		windowMap, ok := window.(map[string]any)
+		if !ok {
+			continue
+		}
+		start, err := parseGraphTime(stringValue(windowMap, "start", ""))
+		if err != nil {
+			continue
+		}
+		end, err := parseGraphTime(stringValue(windowMap, "end", ""))
+		if err != nil {
+			continue
+		}
+		intervals = append(intervals, calendarplan.Interval{Start: start, End: end, Status: stringValue(windowMap, "free_busy_type", "")})
+	}
+	return intervals
 }
 
 func formatAddress(address emailAddress) string {
@@ -2122,6 +2322,24 @@ func intValue(values map[string]any, key string, fallback int) int {
 	}
 }
 
+func floatValue(values map[string]any, key string, fallback float64) float64 {
+	if values == nil {
+		return fallback
+	}
+	value, ok := values[key]
+	if !ok {
+		return fallback
+	}
+	switch typed := value.(type) {
+	case int:
+		return float64(typed)
+	case float64:
+		return typed
+	default:
+		return fallback
+	}
+}
+
 func boolValue(values map[string]any, key string) (bool, bool) {
 	if values == nil {
 		return false, false
@@ -2150,6 +2368,13 @@ func stringSlice(value any) []string {
 	default:
 		return nil
 	}
+}
+
+func parseGraphTime(value string) (time.Time, error) {
+	if parsed, err := time.Parse(time.RFC3339, value); err == nil {
+		return parsed, nil
+	}
+	return time.ParseInLocation("2006-01-02T15:04:05", value, time.UTC)
 }
 
 func messageIDs(payload map[string]any) []string {

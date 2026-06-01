@@ -2138,6 +2138,185 @@ func TestTransportExecutesCalendarAvailability(t *testing.T) {
 	}
 }
 
+func TestTransportExecutesPeopleSearch(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		if request.Method != http.MethodGet || request.URL.Path != "/v1.0/me/people" {
+			t.Fatalf("unexpected request: %s %s", request.Method, request.URL.String())
+		}
+		if request.URL.Query().Get("$search") != "vlad" {
+			t.Fatalf("expected people search query, got %q", request.URL.Query().Get("$search"))
+		}
+		response.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(response).Encode(map[string]any{
+			"value": []any{
+				map[string]any{
+					"id":          "person-1",
+					"displayName": "Vlad Cheshenko",
+					"scoredEmailAddresses": []any{
+						map[string]any{"address": "vlad.cheshenko@example.com"},
+					},
+				},
+			},
+		})
+	}))
+	defer server.Close()
+
+	client := graph.NewTransport(graph.Config{
+		BaseURL:   server.URL + "/v1.0",
+		SecretRef: secret.Ref("memory:graph"),
+	}, secret.NewMemoryStore(map[string]string{"memory:graph": "token-secret"}), server.Client())
+
+	result := client.Execute(context.Background(), transport.ActionRequest{
+		Name:    "people.search",
+		Payload: map[string]any{"query": "vlad"},
+	})
+
+	if !result.OK {
+		t.Fatalf("expected people.search ok, got %#v", result)
+	}
+	people := result.Data["people"].([]any)
+	person := people[0].(map[string]any)
+	if person["display_name"] != "Vlad Cheshenko" || person["email"] != "vlad.cheshenko@example.com" {
+		t.Fatalf("unexpected person metadata: %#v", person)
+	}
+}
+
+func TestTransportPeopleSearchUsesMailboxTarget(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		if request.Method != http.MethodGet || request.URL.Path != "/v1.0/users/shared@example.com/people" {
+			t.Fatalf("unexpected request: %s %s", request.Method, request.URL.String())
+		}
+		response.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(response).Encode(map[string]any{"value": []any{}})
+	}))
+	defer server.Close()
+
+	client := graph.NewTransport(graph.Config{
+		BaseURL:   server.URL + "/v1.0",
+		SecretRef: secret.Ref("memory:graph"),
+	}, secret.NewMemoryStore(map[string]string{"memory:graph": "token-secret"}), server.Client())
+
+	result := client.Execute(context.Background(), transport.ActionRequest{
+		Name:    "people.search",
+		Payload: map[string]any{"query": "vlad", "mailbox": "shared@example.com"},
+	})
+
+	if !result.OK {
+		t.Fatalf("expected people.search ok, got %#v", result)
+	}
+}
+
+func TestTransportPeopleResolveAmbiguousDoesNotGuess(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		if request.Method != http.MethodGet || request.URL.Path != "/v1.0/me/people" {
+			t.Fatalf("unexpected request: %s %s", request.Method, request.URL.String())
+		}
+		response.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(response).Encode(map[string]any{
+			"value": []any{
+				map[string]any{"id": "person-1", "displayName": "Alex Morgan", "userPrincipalName": "alex.morgan@example.com"},
+				map[string]any{"id": "person-2", "displayName": "Alex Rivera", "userPrincipalName": "alex.rivera@example.com"},
+			},
+		})
+	}))
+	defer server.Close()
+
+	client := graph.NewTransport(graph.Config{
+		BaseURL:   server.URL + "/v1.0",
+		SecretRef: secret.Ref("memory:graph"),
+	}, secret.NewMemoryStore(map[string]string{"memory:graph": "token-secret"}), server.Client())
+
+	result := client.Execute(context.Background(), transport.ActionRequest{
+		Name:    "people.resolve",
+		Payload: map[string]any{"query": "alex"},
+	})
+
+	if result.OK {
+		t.Fatalf("expected ambiguous people.resolve to fail, got %#v", result)
+	}
+	if result.Data == nil {
+		t.Fatalf("expected ambiguous candidates in response data, got %#v", result)
+	}
+	candidates, ok := result.Data["candidates"].([]any)
+	if !ok {
+		t.Fatalf("expected ambiguous candidates, got %#v", result.Data)
+	}
+	if len(candidates) != 2 || !strings.Contains(result.Error, "ambiguous") {
+		t.Fatalf("expected ambiguous candidates, got %#v", result)
+	}
+}
+
+func TestTransportCalendarFindTimeUsesGetScheduleIntersection(t *testing.T) {
+	var sawGetSchedule bool
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		switch {
+		case request.Method == http.MethodGet && request.URL.Path == "/v1.0/me/calendarView":
+			response.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(response).Encode(map[string]any{
+				"value": []any{
+					graphEventResponse("event-1", "Private focus", "2026-05-28T09:00:00", "2026-05-28T09:30:00", "Room 1"),
+				},
+			})
+		case request.Method == http.MethodPost && request.URL.Path == "/v1.0/me/calendar/getSchedule":
+			sawGetSchedule = true
+			var body map[string]any
+			if err := json.NewDecoder(request.Body).Decode(&body); err != nil {
+				t.Fatalf("decode request body: %v", err)
+			}
+			schedules := body["schedules"].([]any)
+			if len(schedules) != 1 || schedules[0] != "vlad.cheshenko@example.com" {
+				t.Fatalf("unexpected getSchedule body: %#v", body)
+			}
+			response.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(response).Encode(map[string]any{
+				"value": []any{
+					map[string]any{
+						"scheduleId": "vlad.cheshenko@example.com",
+						"scheduleItems": []any{
+							graphScheduleItemResponse("busy", "2026-05-28T09:30:00", "2026-05-28T10:00:00", "Hidden busy event"),
+						},
+					},
+				},
+			})
+		default:
+			t.Fatalf("unexpected request: %s %s", request.Method, request.URL.String())
+		}
+	}))
+	defer server.Close()
+
+	client := graph.NewTransport(graph.Config{
+		BaseURL:   server.URL + "/v1.0",
+		SecretRef: secret.Ref("memory:graph"),
+	}, secret.NewMemoryStore(map[string]string{"memory:graph": "token-secret"}), server.Client())
+
+	result := client.Execute(context.Background(), transport.ActionRequest{
+		Name: "calendar.find_time",
+		Payload: map[string]any{
+			"attendees":        []any{"vlad.cheshenko@example.com"},
+			"start":            "2026-05-28T09:00:00Z",
+			"end":              "2026-05-28T12:00:00Z",
+			"duration_minutes": float64(30),
+			"time_zone":        "UTC",
+			"tentative":        "busy",
+		},
+	})
+
+	if !result.OK {
+		t.Fatalf("expected calendar.find_time ok, got %#v", result)
+	}
+	if !sawGetSchedule {
+		t.Fatal("expected calendar.find_time to use getSchedule")
+	}
+	suggestions := result.Data["suggestions"].([]any)
+	first := suggestions[0].(map[string]any)
+	if first["start"] != "2026-05-28T10:00:00Z" || first["end"] != "2026-05-28T10:30:00Z" {
+		t.Fatalf("unexpected first suggestion: %#v", first)
+	}
+	if strings.Contains(fmt.Sprintf("%#v", result.Data), "Private focus") || strings.Contains(fmt.Sprintf("%#v", result.Data), "Hidden busy event") {
+		t.Fatalf("find-time suggestions must not expose subjects: %#v", result.Data)
+	}
+}
+
 func TestTransportReportsHTTPErrorWithoutToken(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
 		response.Header().Set("Content-Type", "application/json")

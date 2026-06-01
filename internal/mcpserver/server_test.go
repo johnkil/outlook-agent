@@ -46,8 +46,11 @@ func TestCatalogContainsInitialTools(t *testing.T) {
 		"outlook.mail_rules_list",
 		"outlook.mail_rule_set_enabled",
 		"outlook.mailbox_settings_get",
+		"outlook.people_search",
+		"outlook.people_resolve",
 		"outlook.calendar_list",
 		"outlook.calendar_availability",
+		"outlook.calendar_find_time",
 		"outlook.calendar_respond",
 		"outlook.action_dry_run",
 		"outlook.action_confirm",
@@ -139,6 +142,19 @@ func TestToolDescriptionsGuideAgentWorkflow(t *testing.T) {
 		"outlook.mail_rule_set_enabled": {
 			"dry-run",
 			"settings",
+		},
+		"outlook.people_search": {
+			"people",
+			"bounded",
+		},
+		"outlook.people_resolve": {
+			"ambiguous",
+			"does not guess",
+		},
+		"outlook.calendar_find_time": {
+			"mutual",
+			"free",
+			"planning-only",
 		},
 		"outlook.action_dry_run": {
 			"required",
@@ -279,8 +295,11 @@ func TestMCPClientCanListAndCallInitialTools(t *testing.T) {
 		{name: "outlook.mail_mark_read", arguments: map[string]any{"ids": []string{"msg-1"}, "is_read": true}},
 		{name: "outlook.mail_rules_list", arguments: map[string]any{"folder_id": "inbox"}},
 		{name: "outlook.mailbox_settings_get", arguments: map[string]any{"setting": "timeZone"}},
+		{name: "outlook.people_search", arguments: map[string]any{"query": "vlad"}},
+		{name: "outlook.people_resolve", arguments: map[string]any{"query": "vlad"}},
 		{name: "outlook.calendar_list", arguments: map[string]any{"start": "2026-05-27T00:00:00+02:00", "end": "2026-05-28T00:00:00+02:00"}},
 		{name: "outlook.calendar_availability", arguments: map[string]any{"start": "2026-05-27T09:00:00+02:00", "end": "2026-05-27T18:00:00+02:00"}},
+		{name: "outlook.calendar_find_time", arguments: map[string]any{"attendees": []string{"vlad.cheshenko@example.com"}, "start": "2026-05-28T09:00:00Z", "end": "2026-05-28T12:00:00Z", "duration_minutes": 30, "tentative": "busy"}},
 		{name: "outlook.raw_action", arguments: map[string]any{"action": "mail.fetch_metadata", "payload": map[string]any{"id": "msg-1"}}},
 	} {
 		t.Run(call.name, func(t *testing.T) {
@@ -342,6 +361,136 @@ func TestMCPMailFetchBodiesReportsCoverageAndForwardsMailbox(t *testing.T) {
 		if request.Name != "mail.fetch_body" || request.Payload["mailbox"] != "shared@example.com" {
 			t.Fatalf("expected mailbox-aware fetch_body request, got %#v", request)
 		}
+	}
+}
+
+func TestMCPPeopleAndFindTimeToolsForwardInputs(t *testing.T) {
+	ctx := context.Background()
+	capturing := &capturingTransport{}
+	serverTransport, clientTransport := mcp.NewInMemoryTransports()
+
+	serverSession, err := mcpserver.NewWithTransport(capturing).Connect(ctx, serverTransport, nil)
+	if err != nil {
+		t.Fatalf("connect server: %v", err)
+	}
+	defer serverSession.Close()
+	defer serverSession.Wait()
+
+	client := mcp.NewClient(&mcp.Implementation{Name: "test-client", Version: "0.0.1"}, nil)
+	clientSession, err := client.Connect(ctx, clientTransport, nil)
+	if err != nil {
+		t.Fatalf("connect client: %v", err)
+	}
+	defer clientSession.Close()
+
+	searchResult, err := clientSession.CallTool(ctx, &mcp.CallToolParams{
+		Name:      "outlook.people_search",
+		Arguments: map[string]any{"query": "vlad", "mailbox": "shared@example.com"},
+	})
+	if err != nil {
+		t.Fatalf("call people search: %v", err)
+	}
+	search := decodeStructured[map[string]any](t, searchResult)
+	if len(search["people"].([]any)) != 1 {
+		t.Fatalf("expected one people result, got %#v", search)
+	}
+	if capturing.lastRequest.Name != "people.search" || capturing.lastRequest.Payload["query"] != "vlad" || capturing.lastRequest.Payload["mailbox"] != "shared@example.com" {
+		t.Fatalf("expected people.search payload forwarded, got %#v", capturing.lastRequest)
+	}
+
+	resolveResult, err := clientSession.CallTool(ctx, &mcp.CallToolParams{
+		Name:      "outlook.people_resolve",
+		Arguments: map[string]any{"query": "vlad"},
+	})
+	if err != nil {
+		t.Fatalf("call people resolve: %v", err)
+	}
+	resolve := decodeStructured[map[string]any](t, resolveResult)
+	if resolve["person"] == nil {
+		t.Fatalf("expected resolved person, got %#v", resolve)
+	}
+	if capturing.lastRequest.Name != "people.resolve" || capturing.lastRequest.Payload["query"] != "vlad" {
+		t.Fatalf("expected people.resolve payload forwarded, got %#v", capturing.lastRequest)
+	}
+
+	findTimeResult, err := clientSession.CallTool(ctx, &mcp.CallToolParams{
+		Name: "outlook.calendar_find_time",
+		Arguments: map[string]any{
+			"attendees":        []string{"vlad.cheshenko@example.com"},
+			"start":            "2026-05-28T09:00:00Z",
+			"end":              "2026-05-28T12:00:00Z",
+			"duration_minutes": 30,
+			"timezone":         "UTC",
+			"tentative":        "free",
+		},
+	})
+	if err != nil {
+		t.Fatalf("call calendar find-time: %v", err)
+	}
+	findTime := decodeStructured[map[string]any](t, findTimeResult)
+	if len(findTime["suggestions"].([]any)) != 1 {
+		t.Fatalf("expected one find-time suggestion, got %#v", findTime)
+	}
+	if capturing.lastRequest.Name != "calendar.find_time" {
+		t.Fatalf("expected calendar.find_time request, got %#v", capturing.lastRequest)
+	}
+	if capturing.lastRequest.Payload["time_zone"] != "UTC" || capturing.lastRequest.Payload["tentative"] != "free" || capturing.lastRequest.Payload["duration_minutes"] != float64(30) {
+		t.Fatalf("expected find-time planning options forwarded, got %#v", capturing.lastRequest.Payload)
+	}
+	if attendees := capturing.lastRequest.Payload["attendees"].([]string); len(attendees) != 1 || attendees[0] != "vlad.cheshenko@example.com" {
+		t.Fatalf("expected attendees forwarded, got %#v", capturing.lastRequest.Payload)
+	}
+
+	_, err = clientSession.CallTool(ctx, &mcp.CallToolParams{
+		Name: "outlook.calendar_find_time",
+		Arguments: map[string]any{
+			"attendees": []string{"vlad.cheshenko@example.com"},
+			"start":     "2026-05-28T09:00:00Z",
+			"end":       "2026-05-28T12:00:00Z",
+		},
+	})
+	if err != nil {
+		t.Fatalf("call calendar find-time without duration: %v", err)
+	}
+	if _, ok := capturing.lastRequest.Payload["duration_minutes"]; ok {
+		t.Fatalf("expected omitted duration_minutes to stay omitted, got %#v", capturing.lastRequest.Payload)
+	}
+}
+
+func TestMCPPeopleResolveAmbiguousReturnsCandidates(t *testing.T) {
+	ctx := context.Background()
+	serverTransport, clientTransport := mcp.NewInMemoryTransports()
+
+	serverSession, err := mcpserver.NewWithTransport(&ambiguousPeopleTransport{}).Connect(ctx, serverTransport, nil)
+	if err != nil {
+		t.Fatalf("connect server: %v", err)
+	}
+	defer serverSession.Close()
+	defer serverSession.Wait()
+
+	client := mcp.NewClient(&mcp.Implementation{Name: "test-client", Version: "0.0.1"}, nil)
+	clientSession, err := client.Connect(ctx, clientTransport, nil)
+	if err != nil {
+		t.Fatalf("connect client: %v", err)
+	}
+	defer clientSession.Close()
+
+	result, err := clientSession.CallTool(ctx, &mcp.CallToolParams{
+		Name:      "outlook.people_resolve",
+		Arguments: map[string]any{"query": "alex"},
+	})
+	if err != nil {
+		t.Fatalf("call people resolve: %v", err)
+	}
+	output := decodeStructured[map[string]any](t, result)
+	if output["error"] == "" {
+		t.Fatalf("expected ambiguity error in structured output, got %#v", output)
+	}
+	if len(output["candidates"].([]any)) != 2 {
+		t.Fatalf("expected ambiguous candidates, got %#v", output)
+	}
+	if output["person"] != nil {
+		t.Fatalf("ambiguous resolve must not guess a person, got %#v", output)
 	}
 }
 
@@ -610,8 +759,11 @@ func TestMCPHighLevelToolsReturnErrorResultOnTransportFailure(t *testing.T) {
 		{name: "outlook.mail_create_forward_draft", arguments: map[string]any{"message_id": "msg-1", "body": "Forward", "to": []string{"alex@example.com"}}},
 		{name: "outlook.mail_rules_list", arguments: map[string]any{"folder_id": "inbox"}},
 		{name: "outlook.mailbox_settings_get", arguments: map[string]any{"setting": "timeZone"}},
+		{name: "outlook.people_search", arguments: map[string]any{"query": "vlad"}},
+		{name: "outlook.people_resolve", arguments: map[string]any{"query": "vlad"}},
 		{name: "outlook.calendar_list", arguments: map[string]any{"start": "2026-05-27T00:00:00+02:00", "end": "2026-05-28T00:00:00+02:00"}},
 		{name: "outlook.calendar_availability", arguments: map[string]any{"start": "2026-05-27T09:00:00+02:00", "end": "2026-05-27T18:00:00+02:00"}},
+		{name: "outlook.calendar_find_time", arguments: map[string]any{"attendees": []string{"vlad.cheshenko@example.com"}, "start": "2026-05-28T09:00:00Z", "end": "2026-05-28T12:00:00Z", "duration_minutes": 30}},
 	} {
 		t.Run(call.name, func(t *testing.T) {
 			result, err := clientSession.CallTool(ctx, &mcp.CallToolParams{Name: call.name, Arguments: call.arguments})
@@ -782,12 +934,19 @@ func (capturing *capturingTransport) Execute(_ context.Context, request transpor
 			"rules":       []any{map[string]any{"id": "rule-1", "display_name": "Keep"}},
 			"rule":        map[string]any{"id": "rule-1", "display_name": "Keep", "is_enabled": false},
 			"settings":    map[string]any{"timeZone": "UTC"},
+			"people": []any{
+				map[string]any{"display_name": "Vlad Cheshenko", "email": "vlad.cheshenko@example.com"},
+			},
+			"person": map[string]any{"display_name": "Vlad Cheshenko", "email": "vlad.cheshenko@example.com"},
 			"windows": []any{
 				map[string]any{
 					"start":          "2026-05-27T10:00:00+02:00",
 					"end":            "2026-05-27T11:00:00+02:00",
 					"free_busy_type": "Busy",
 				},
+			},
+			"suggestions": []any{
+				map[string]any{"start": "2026-05-28T10:00:00Z", "end": "2026-05-28T10:30:00Z"},
 			},
 			"events": []any{},
 		},
@@ -848,5 +1007,36 @@ func (failing *failingTransport) Execute(context.Context, transport.ActionReques
 }
 
 func (failing *failingTransport) DryRun(context.Context, transport.ActionRequest) transport.DryRunSummary {
+	return transport.DryRunSummary{}
+}
+
+type ambiguousPeopleTransport struct{}
+
+func (ambiguous *ambiguousPeopleTransport) Name() string {
+	return "ambiguous"
+}
+
+func (ambiguous *ambiguousPeopleTransport) Authenticate(context.Context, string) transport.AuthResult {
+	return transport.AuthResult{OK: true}
+}
+
+func (ambiguous *ambiguousPeopleTransport) Capabilities(context.Context) transport.CapabilitySet {
+	return transport.CapabilitySet{}
+}
+
+func (ambiguous *ambiguousPeopleTransport) Execute(context.Context, transport.ActionRequest) transport.ActionResponse {
+	return transport.ActionResponse{
+		OK:    false,
+		Error: "people.resolve is ambiguous",
+		Data: map[string]any{
+			"candidates": []any{
+				map[string]any{"display_name": "Alex Morgan", "email": "alex.morgan@example.com"},
+				map[string]any{"display_name": "Alex Rivera", "email": "alex.rivera@example.com"},
+			},
+		},
+	}
+}
+
+func (ambiguous *ambiguousPeopleTransport) DryRun(context.Context, transport.ActionRequest) transport.DryRunSummary {
 	return transport.DryRunSummary{}
 }

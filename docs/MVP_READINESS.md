@@ -26,7 +26,7 @@ artifacts and local verification commands:
 - High-level mail and calendar workflows cover search, metadata fetch, explicit
   body fetch, explicit attachment listing/fetch, draft creation, move to
   Deleted Items, read-only rules/settings metadata, bounded calendar listing,
-  and availability lookup.
+  availability lookup, people search/resolve, and mutual free-time planning.
 - Lower-level breadth is preserved with raw guarded execution for all discovered
   OWA actions, raw GraphRequest, and raw EWSRequest.
 - Mutating, destructive, send-like, settings, and broad reversible work is
