@@ -16,6 +16,7 @@ import (
 	"github.com/johnkil/outlook-agent/internal/capability"
 	"github.com/johnkil/outlook-agent/internal/confirm"
 	"github.com/johnkil/outlook-agent/internal/cursor"
+	"github.com/johnkil/outlook-agent/internal/manifest"
 	"github.com/johnkil/outlook-agent/internal/policy"
 	"github.com/johnkil/outlook-agent/internal/redact"
 	"github.com/johnkil/outlook-agent/internal/transport"
@@ -67,6 +68,7 @@ type ApprovalInfoOutput struct {
 
 type MailSearchInput struct {
 	Query   string `json:"query,omitempty" jsonschema:"search query"`
+	Folder  string `json:"folder,omitempty" jsonschema:"folder id or well-known folder name such as inbox, archive, deleteditems"`
 	Mailbox string `json:"mailbox,omitempty" jsonschema:"optional mailbox user id or user principal name"`
 }
 
@@ -101,6 +103,41 @@ type MailFetchMetadataOutput struct {
 type MailFetchBodyOutput struct {
 	ID       any    `json:"id"`
 	BodyText string `json:"body_text"`
+}
+
+type MailFetchBodiesInput struct {
+	IDs     []string `json:"ids" jsonschema:"explicit message ids to fetch body text for"`
+	Max     int      `json:"max,omitempty" jsonschema:"maximum ids to process, capped by the server"`
+	Mailbox string   `json:"mailbox,omitempty" jsonschema:"optional mailbox user id or user principal name"`
+}
+
+type MailFetchBodiesOutput struct {
+	Attempted int                       `json:"attempted"`
+	Succeeded int                       `json:"succeeded"`
+	Failed    int                       `json:"failed"`
+	Results   []MailFetchBodyItemOutput `json:"results"`
+}
+
+type MailAuditManifestBodiesInput struct {
+	ManifestID string `json:"manifest_id" jsonschema:"manifest id returned by a recent mutation"`
+	Max        int    `json:"max,omitempty" jsonschema:"maximum ids to process, capped by the server"`
+	Mailbox    string `json:"mailbox,omitempty" jsonschema:"optional mailbox user id or user principal name"`
+}
+
+type MailAuditManifestBodiesOutput struct {
+	ManifestID string                    `json:"manifest_id"`
+	Action     string                    `json:"action"`
+	Attempted  int                       `json:"attempted"`
+	Succeeded  int                       `json:"succeeded"`
+	Failed     int                       `json:"failed"`
+	Results    []MailFetchBodyItemOutput `json:"results"`
+}
+
+type MailFetchBodyItemOutput struct {
+	ID       string `json:"id"`
+	OK       bool   `json:"ok"`
+	BodyText string `json:"body_text,omitempty"`
+	Error    string `json:"error,omitempty"`
 }
 
 type MailListAttachmentsOutput struct {
@@ -224,9 +261,11 @@ type MailboxSettingsGetOutput struct {
 }
 
 type ActionResultOutput struct {
-	OK    bool           `json:"ok"`
-	Data  map[string]any `json:"data,omitempty"`
-	Error string         `json:"error,omitempty"`
+	OK                 bool           `json:"ok"`
+	Data               map[string]any `json:"data,omitempty"`
+	Error              string         `json:"error,omitempty"`
+	ManifestID         string         `json:"manifest_id,omitempty"`
+	ManifestTTLSeconds int            `json:"manifest_ttl_seconds,omitempty"`
 }
 
 type CalendarWindowInput struct {
@@ -312,6 +351,7 @@ type Runtime struct {
 	confirm        *confirm.Store
 	approval       *approval.Store
 	cursors        *cursor.Store
+	manifests      *manifest.Store
 	audit          *audit.Recorder
 	profile        string
 	approvalPolicy approval.Policy
@@ -332,6 +372,9 @@ type toolRegistration struct {
 
 const ApprovalTokenEnv = approval.LegacyTokenEnv
 const searchCursorLeaseTTL = 2 * time.Minute
+const mutationManifestTTL = 30 * time.Minute
+const maxBatchBodyFetch = 50
+const mutationManifestIDsDataKey = "mutation_manifest_ids"
 
 var toolRegistrations = []toolRegistration{
 	{name: "outlook.auth_check", add: func(server *mcp.Server, runtime *Runtime, name string) {
@@ -351,6 +394,12 @@ var toolRegistrations = []toolRegistration{
 	}},
 	{name: "outlook.mail_fetch_body", add: func(server *mcp.Server, runtime *Runtime, name string) {
 		mcp.AddTool(server, mcpTool(name), mailFetchBodyHandler(runtime.client))
+	}},
+	{name: "outlook.mail_fetch_bodies", add: func(server *mcp.Server, runtime *Runtime, name string) {
+		mcp.AddTool(server, mcpTool(name), mailFetchBodiesHandler(runtime.client))
+	}},
+	{name: "outlook.mail_audit_manifest_bodies", add: func(server *mcp.Server, runtime *Runtime, name string) {
+		mcp.AddTool(server, mcpTool(name), mailAuditManifestBodiesHandler(runtime))
 	}},
 	{name: "outlook.mail_list_attachments", add: func(server *mcp.Server, runtime *Runtime, name string) {
 		mcp.AddTool(server, mcpTool(name), mailListAttachmentsHandler(runtime.client))
@@ -427,6 +476,8 @@ var toolDescriptionByName = map[string]string{
 	"outlook.mail_search_next":            "Fetch the next metadata-only mail search page using an opaque cursor from outlook.mail_search.",
 	"outlook.mail_fetch_metadata":         "Fetch metadata for one explicit message before body or attachment reads.",
 	"outlook.mail_fetch_body":             "Fetch body text for one explicit message; not a bulk body reader.",
+	"outlook.mail_fetch_bodies":           "Fetch body text for explicit ids in a capped batch; not a mailbox search or broad body reader.",
+	"outlook.mail_audit_manifest_bodies":  "Fetch body text for exact ids from a recent mutation manifest; not a folder scan.",
 	"outlook.mail_list_attachments":       "List attachment metadata for one explicit message; does not fetch attachment content.",
 	"outlook.mail_fetch_attachment":       "Fetch one explicit attachment by message id and attachment id.",
 	"outlook.mail_create_draft":           "Create a save-only draft; does not send mail.",
@@ -514,6 +565,7 @@ func NewRuntimeWithProfile(client transport.Transport, profile string) *Runtime 
 		confirm:        confirm.NewStore(time.Now),
 		approval:       approval.NewStore(time.Now),
 		cursors:        cursor.NewStore(time.Now),
+		manifests:      manifest.NewStore(time.Now),
 		audit:          recorder,
 		profile:        profile,
 		approvalPolicy: approval.PolicyFromEnv(client.Name(), os.Getenv),
@@ -601,7 +653,7 @@ func (runtime *Runtime) dryRunApprovalInfo(requiredForAction bool, challenge *ap
 
 func mailSearchHandler(runtime *Runtime) func(context.Context, *mcp.CallToolRequest, MailSearchInput) (*mcp.CallToolResult, MailSearchOutput, error) {
 	return func(ctx context.Context, _ *mcp.CallToolRequest, input MailSearchInput) (*mcp.CallToolResult, MailSearchOutput, error) {
-		payload := withMailbox(map[string]any{"query": input.Query}, input.Mailbox)
+		payload := withMailbox(map[string]any{"query": input.Query, "folder": input.Folder}, input.Mailbox)
 		response := runtime.client.Execute(ctx, transport.ActionRequest{
 			Name:    "mail.search",
 			Payload: payload,
@@ -691,7 +743,7 @@ func (runtime *Runtime) issueSearchCursor(input MailSearchInput, nextLink string
 		Action:    "mail.search",
 		Mailbox:   strings.TrimSpace(input.Mailbox),
 		Query:     input.Query,
-		QueryHash: transport.PayloadFingerprint(map[string]any{"query": input.Query}),
+		QueryHash: transport.PayloadFingerprint(map[string]any{"query": input.Query, "folder": input.Folder}),
 	}
 	return runtime.issueSearchCursorFromBinding(binding, nextLink)
 }
@@ -731,6 +783,73 @@ func mailFetchBodyHandler(client transport.Transport) func(context.Context, *mcp
 		body, _ := response.Data["body_text"].(string)
 		return nil, MailFetchBodyOutput{ID: response.Data["id"], BodyText: body}, nil
 	}
+}
+
+func mailFetchBodiesHandler(client transport.Transport) func(context.Context, *mcp.CallToolRequest, MailFetchBodiesInput) (*mcp.CallToolResult, MailFetchBodiesOutput, error) {
+	return func(ctx context.Context, _ *mcp.CallToolRequest, input MailFetchBodiesInput) (*mcp.CallToolResult, MailFetchBodiesOutput, error) {
+		output, err := fetchBodies(ctx, client, input.IDs, input.Max, input.Mailbox, "outlook.mail_fetch_bodies requires ids")
+		return nil, output, err
+	}
+}
+
+func mailAuditManifestBodiesHandler(runtime *Runtime) func(context.Context, *mcp.CallToolRequest, MailAuditManifestBodiesInput) (*mcp.CallToolResult, MailAuditManifestBodiesOutput, error) {
+	return func(ctx context.Context, _ *mcp.CallToolRequest, input MailAuditManifestBodiesInput) (*mcp.CallToolResult, MailAuditManifestBodiesOutput, error) {
+		manifestID := strings.TrimSpace(input.ManifestID)
+		if manifestID == "" {
+			return nil, MailAuditManifestBodiesOutput{}, errors.New("manifest_id required")
+		}
+		if runtime == nil || runtime.manifests == nil {
+			return nil, MailAuditManifestBodiesOutput{}, errors.New("mutation manifest is missing or expired; rerun metadata search and build an explicit id list")
+		}
+		record, ok := runtime.manifests.Get(manifestID)
+		if !ok {
+			return nil, MailAuditManifestBodiesOutput{}, errors.New("mutation manifest is missing or expired; rerun metadata search and build an explicit id list")
+		}
+		mailbox := strings.TrimSpace(input.Mailbox)
+		if mailbox == "" {
+			mailbox = record.Mailbox
+		}
+		batch, err := fetchBodies(ctx, runtime.client, record.IDs, input.Max, mailbox, "mutation manifest has no ids")
+		if err != nil {
+			return nil, MailAuditManifestBodiesOutput{}, err
+		}
+		return nil, MailAuditManifestBodiesOutput{
+			ManifestID: record.ID,
+			Action:     record.Action,
+			Attempted:  batch.Attempted,
+			Succeeded:  batch.Succeeded,
+			Failed:     batch.Failed,
+			Results:    batch.Results,
+		}, nil
+	}
+}
+
+func fetchBodies(ctx context.Context, client transport.Transport, ids []string, max int, mailbox string, emptyIDsMessage string) (MailFetchBodiesOutput, error) {
+	ids = nonEmptyStrings(ids)
+	if len(ids) == 0 {
+		return MailFetchBodiesOutput{}, errors.New(emptyIDsMessage)
+	}
+	limit := max
+	if limit <= 0 || limit > maxBatchBodyFetch {
+		limit = maxBatchBodyFetch
+	}
+	if len(ids) > limit {
+		ids = ids[:limit]
+	}
+	output := MailFetchBodiesOutput{Attempted: len(ids), Results: make([]MailFetchBodyItemOutput, 0, len(ids))}
+	for _, id := range ids {
+		response := client.Execute(ctx, transport.ActionRequest{Name: "mail.fetch_body", Payload: withMailbox(map[string]any{"id": id}, mailbox)})
+		item := MailFetchBodyItemOutput{ID: id, OK: response.OK}
+		if response.OK {
+			item.BodyText, _ = response.Data["body_text"].(string)
+			output.Succeeded++
+		} else {
+			item.Error = redact.String(response.Error)
+			output.Failed++
+		}
+		output.Results = append(output.Results, item)
+	}
+	return output, nil
 }
 
 func mailListAttachmentsHandler(client transport.Transport) func(context.Context, *mcp.CallToolRequest, MessageIDInput) (*mcp.CallToolResult, MailListAttachmentsOutput, error) {
@@ -946,7 +1065,9 @@ func executeReversibleMessageMutation(ctx context.Context, runtime *Runtime, act
 	}
 	response := runtime.client.Execute(ctx, transport.ActionRequest{Name: actionName, Payload: payload})
 	runtime.recordAudit(audit.TypeExecute, actionName, payload, runtime.profile, class, review, auditDecisionForResponse(response), summary.Count, response.Error)
-	return nil, actionResultFromResponse(response), nil
+	output := actionResultFromResponse(response)
+	runtime.attachMutationManifest(actionName, payload, &output)
+	return nil, output, nil
 }
 
 func mailMoveToDeletedItemsHandler(runtime *Runtime) func(context.Context, *mcp.CallToolRequest, MailMoveToDeletedItemsInput) (*mcp.CallToolResult, ActionResultOutput, error) {
@@ -972,7 +1093,9 @@ func mailMoveToDeletedItemsHandler(runtime *Runtime) func(context.Context, *mcp.
 		runtime.recordAudit(audit.TypeConfirm, "mail.move_to_deleted_items", payload, runtime.profile, class, review, "accepted", summary.Count, "")
 		response := runtime.client.Execute(ctx, transport.ActionRequest{Name: "mail.move_to_deleted_items", Payload: payload})
 		runtime.recordAudit(audit.TypeExecute, "mail.move_to_deleted_items", payload, runtime.profile, class, review, auditDecisionForResponse(response), summary.Count, response.Error)
-		return nil, actionResultFromResponse(response), nil
+		output := actionResultFromResponse(response)
+		runtime.attachMutationManifest("mail.move_to_deleted_items", payload, &output)
+		return nil, output, nil
 	}
 }
 
@@ -1137,6 +1260,86 @@ func actionResultFromResponse(response transport.ActionResponse) ActionResultOut
 	return output
 }
 
+func (runtime *Runtime) attachMutationManifest(actionName string, payload map[string]any, output *ActionResultOutput) {
+	if runtime == nil || runtime.manifests == nil || output == nil || !issuesMutationManifest(actionName) {
+		return
+	}
+	ids, hasManifestIDs := manifestIDsFromDataKey(output.Data, mutationManifestIDsDataKey)
+	if output.Data != nil {
+		delete(output.Data, mutationManifestIDsDataKey)
+	}
+	if !hasManifestIDs {
+		if moveLikeMutationAction(actionName) {
+			return
+		}
+		var hasExplicitSuccessList bool
+		ids, hasExplicitSuccessList = manifestIDsFromDataKey(output.Data, "succeeded")
+		if !output.OK && (!hasExplicitSuccessList || len(ids) == 0) {
+			return
+		}
+		if output.OK && len(ids) == 0 && !hasExplicitSuccessList {
+			ids = manifestIDsFromValue(payload["ids"])
+		}
+	}
+	ids = nonEmptyStrings(ids)
+	if len(ids) == 0 {
+		return
+	}
+	record, err := runtime.manifests.Issue(manifest.Record{
+		Action:  actionName,
+		IDs:     ids,
+		Mailbox: stringMetadata(payload, "mailbox"),
+	}, mutationManifestTTL)
+	if err != nil {
+		return
+	}
+	output.ManifestID = record.ID
+	output.ManifestTTLSeconds = int(mutationManifestTTL.Seconds())
+}
+
+func issuesMutationManifest(actionName string) bool {
+	return actionName == "mail.move_to_deleted_items" || isReversibleMessageMutationAction(actionName)
+}
+
+func moveLikeMutationAction(actionName string) bool {
+	return actionName == "mail.move_to_deleted_items" || actionName == "mail.move_to_folder" || actionName == "mail.archive"
+}
+
+func manifestIDsFromDataKey(data map[string]any, key string) ([]string, bool) {
+	if data == nil {
+		return nil, false
+	}
+	value, ok := data[key]
+	if !ok {
+		return nil, false
+	}
+	return manifestIDsFromValue(value), true
+}
+
+func manifestIDsFromValue(value any) []string {
+	switch typed := value.(type) {
+	case string:
+		return []string{typed}
+	case []string:
+		return append([]string(nil), typed...)
+	case []any:
+		ids := make([]string, 0, len(typed))
+		for _, item := range typed {
+			ids = append(ids, manifestIDsFromValue(item)...)
+		}
+		return ids
+	case map[string]any:
+		for _, key := range []string{"id", "Id"} {
+			if id, ok := typed[key].(string); ok {
+				return []string{id}
+			}
+		}
+		return nil
+	default:
+		return nil
+	}
+}
+
 func dryRunHandler(runtime *Runtime) func(context.Context, *mcp.CallToolRequest, DryRunInput) (*mcp.CallToolResult, DryRunOutput, error) {
 	return func(ctx context.Context, _ *mcp.CallToolRequest, input DryRunInput) (*mcp.CallToolResult, DryRunOutput, error) {
 		if reason := actionPreflightRejection(input.Action); reason != "" {
@@ -1252,7 +1455,9 @@ func actionConfirmHandler(runtime *Runtime) func(context.Context, *mcp.CallToolR
 		runtime.recordAudit(audit.TypeConfirm, input.Action, input.Payload, runtime.profileOrDefault(input.Profile), class, review, "accepted", summary.Count, "")
 		response := runtime.client.Execute(ctx, transport.ActionRequest{Name: input.Action, Payload: input.Payload, UnsafeMode: input.UnsafeMode})
 		runtime.recordAudit(audit.TypeExecute, input.Action, input.Payload, runtime.profileOrDefault(input.Profile), class, review, auditDecisionForResponse(response), summary.Count, response.Error)
-		return nil, actionResultFromResponse(response), nil
+		output := actionResultFromResponse(response)
+		runtime.attachMutationManifest(input.Action, input.Payload, &output)
+		return nil, output, nil
 	}
 }
 
@@ -1285,6 +1490,9 @@ func rawActionHandler(runtime *Runtime) func(context.Context, *mcp.CallToolReque
 func actionPreflightRejection(actionName string) string {
 	if actionName == "mail.search_next" {
 		return "mail.search_next requires an opaque cursor; use outlook.mail_search_next"
+	}
+	if actionName == "mail.fetch_bodies" {
+		return "mail.fetch_bodies is an MCP-only typed helper; use outlook.mail_fetch_bodies"
 	}
 	return ""
 }

@@ -17,6 +17,8 @@ Compatibility version `0.1` includes these tool names:
 - `outlook.mail_search_next`
 - `outlook.mail_fetch_metadata`
 - `outlook.mail_fetch_body`
+- `outlook.mail_fetch_bodies`
+- `outlook.mail_audit_manifest_bodies`
 - `outlook.mail_list_attachments`
 - `outlook.mail_fetch_attachment`
 - `outlook.mail_create_draft`
@@ -61,6 +63,14 @@ high-level mail and calendar tools. Transports that support delegated or shared
 mailbox targeting may use it; transports that do not support it keep their
 existing behavior or return a normal transport error.
 
+Compatibility version `0.1` includes the additive optional
+`outlook.mail_search.folder` input. It accepts a well-known folder name such as
+`inbox`, `archive`, or `deleteditems`, or a backend folder id where the
+transport supports that form. Omitted `folder` keeps the existing Inbox search
+default. The older transport-internal `folder_id` payload remains compatible
+for direct transport tests and raw integration code, but MCP clients should use
+`folder`.
+
 Compatibility version `0.1` also returns opaque `next_cursor` values from
 paginated mail search responses when a transport supports continuation. Clients
 must call `outlook.mail_search_next` with that cursor instead of storing or
@@ -104,7 +114,10 @@ helpers: `outlook.mail_move_to_folder`, `outlook.mail_archive`,
 when the request contains the exact id and new state. Bulk changes require
 `outlook.action_dry_run` for the matching action, user/host review of the
 returned packet, and exact confirmation fields when calling the high-level
-tool.
+tool. Successful reversible message mutations may return a transient
+`manifest_id` and `manifest_ttl_seconds` so clients can audit the exact
+target set before falling back to folder search. Move-like actions only return
+body-audit manifests when the transport can retain audit-safe post-move ids.
 
 Compatibility version `0.1` also includes additive review-packet metadata:
 `completeness`, `warning_codes`, `omitted_target_count`, bounded attachment
@@ -119,6 +132,17 @@ dry-run review, exact confirmation, and host approval when approval mode
 requires it. Graph review packets include metadata-only meeting context such as
 subject, time, location, organizer, attendees, and current response status when
 available, never event body content.
+
+Compatibility version `0.1` also includes `outlook.mail_fetch_bodies`, an
+explicit-id batch helper capped at 50 ids per call. It is not a mailbox search,
+broad body reader, or raw transport action; clients should report attempted,
+succeeded, and failed counts when using it for body audits.
+
+Compatibility version `0.1` also includes `outlook.mail_audit_manifest_bodies`
+for post-mutation body audits from a recent `manifest_id`. It reuses the exact
+message ids retained by the mutation manifest and never scans a folder by
+itself. If no manifest was returned, or the manifest is missing or expired,
+clients must rerun metadata search and build a new explicit id list.
 
 Clients must ignore unknown output fields and unknown capability detail fields.
 Servers must keep existing fields present with compatible meanings.

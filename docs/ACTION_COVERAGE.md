@@ -28,6 +28,8 @@ level 5: workflow skill guidance
 | Mail | `outlook.mail_search_next` | 4 |
 | Mail | `outlook.mail_fetch_metadata` | 4 |
 | Mail | `outlook.mail_fetch_body` | 4 |
+| Mail | `outlook.mail_fetch_bodies` | 4 |
+| Mail | `outlook.mail_audit_manifest_bodies` | 4 |
 | Mail | `outlook.mail_list_attachments` | 4 |
 | Mail | `outlook.mail_fetch_attachment` | 4 |
 | Mail | `outlook.mail_create_draft` | 4 |
@@ -68,6 +70,11 @@ level 5: workflow skill guidance
 - High-use actions graduate to typed schemas and high-level MCP tools.
 - Dry-run confirmation is a gate, not a bypass: confirmed actions still pass
   policy checks before transport execution.
+- Reversible message mutations return a transient mutation manifest id when the
+  exact audit-safe target set is retained in memory. Move-like actions only
+  issue one when the transport returns post-move ids. Use
+  `outlook.mail_audit_manifest_bodies` for manifest-based body audit before
+  falling back to a folder scan.
 - Live MCP dry-run smoke verifies representative reversible, destructive,
   send-like, and settings/rules OWA raw actions after authentication without
   calling confirmation or executing any action.
@@ -128,12 +135,14 @@ Implemented high-level OWA mappings:
 
 | Public action | OWA service action | Status |
 | --- | --- | --- |
-| `mail.search` | `FindItem` | implemented and live smoke-tested |
+| `mail.search` | `FindItem` | implemented and live smoke-tested; MCP accepts optional `outlook.mail_search.folder` for folder-scoped metadata search |
 | `mail.fetch_metadata` | `GetItem` | implemented and live smoke-tested through a real inbox item id |
 | `mail.fetch_body` | `GetItem` | implemented and live MCP smoke-tested only against an explicit draft fixture target |
 | `mail.list_attachments` | `GetItem` | implemented as metadata-only for explicit message ids and live MCP smoke-tested against a controlled draft attachment fixture |
 | `mail.fetch_attachment` | OWA `GetFileAttachment` download endpoint | implemented for explicit attachment ids and live MCP smoke-tested against a controlled draft attachment fixture |
 | `mail.create_draft` | `CreateItem` | implemented as `SaveOnly` draft and live MCP smoke-tested with a fixture |
+| `mail.move_to_folder` | `MoveItem` | implemented as a high-level reversible action for exact message ids with unit coverage and partial-result reporting; raw `MoveItem` remains the guarded escape hatch |
+| `mail.archive` | `MoveItem` to `archive` | implemented as a high-level reversible action for exact message ids with unit coverage; raw `MoveItem` remains the guarded escape hatch |
 | `mail.move_to_deleted_items` | `DeleteItem` | implemented as `MoveToDeletedItems` and live MCP smoke-tested through dry-run/confirmation cleanup of the draft fixture |
 | `mail.rules.list` | Graph `messageRules` / transport capability | implemented as read-only typed MCP tool where the selected transport supports it |
 | `mail.rules.set_enabled` | Graph `PATCH messageRules/{id}` / transport capability | implemented as a typed settings/rules MCP tool requiring dry-run confirmation before enabling or disabling an existing rule |

@@ -10,6 +10,7 @@ import (
 
 	"github.com/johnkil/outlook-agent/internal/action"
 	"github.com/johnkil/outlook-agent/internal/approval"
+	"github.com/johnkil/outlook-agent/internal/manifest"
 	"github.com/johnkil/outlook-agent/internal/policy"
 	"github.com/johnkil/outlook-agent/internal/secret"
 	"github.com/johnkil/outlook-agent/internal/transport"
@@ -62,6 +63,16 @@ func TestActionConfirmConsumesTokenAndExecutesExactAction(t *testing.T) {
 	}
 	if output.Data["moved_count"] != 1 {
 		t.Fatalf("expected moved_count=1, got %#v", output.Data["moved_count"])
+	}
+	if output.ManifestID == "" || output.ManifestTTLSeconds == 0 {
+		t.Fatalf("expected confirmed move to return mutation manifest metadata: %#v", output)
+	}
+	manifest, ok := runtime.manifests.Get(output.ManifestID)
+	if !ok {
+		t.Fatalf("expected manifest %q to be retained", output.ManifestID)
+	}
+	if manifest.Action != "mail.move_to_deleted_items" || len(manifest.IDs) != 1 || manifest.IDs[0] != "msg-1" {
+		t.Fatalf("unexpected manifest contents: %#v", manifest)
 	}
 }
 
@@ -520,6 +531,16 @@ func TestReversibleMessageMutationSingleExecutesAndBulkRequiresConfirmation(t *t
 	if !singleOutput.OK || !client.executed {
 		t.Fatalf("expected single explicit message mutation to execute directly: %#v executed=%v", singleOutput, client.executed)
 	}
+	if singleOutput.ManifestID == "" || singleOutput.ManifestTTLSeconds == 0 {
+		t.Fatalf("expected direct single mutation to return manifest metadata: %#v", singleOutput)
+	}
+	singleManifest, ok := runtime.manifests.Get(singleOutput.ManifestID)
+	if !ok {
+		t.Fatalf("expected direct mutation manifest %q to be retained", singleOutput.ManifestID)
+	}
+	if singleManifest.Action != "mail.mark_read" || len(singleManifest.IDs) != 1 || singleManifest.IDs[0] != "msg-1" {
+		t.Fatalf("unexpected direct mutation manifest contents: %#v", singleManifest)
+	}
 
 	client.executed = false
 	_, missingConfirm, err := mailMarkReadHandler(runtime)(context.Background(), nil, MailMarkReadInput{
@@ -557,6 +578,16 @@ func TestReversibleMessageMutationSingleExecutesAndBulkRequiresConfirmation(t *t
 	}
 	if !confirmed.OK || !client.executed {
 		t.Fatalf("expected confirmed bulk mutation to execute: %#v executed=%v", confirmed, client.executed)
+	}
+	if confirmed.ManifestID == "" || confirmed.ManifestTTLSeconds == 0 {
+		t.Fatalf("expected confirmed bulk mutation to return manifest metadata: %#v", confirmed)
+	}
+	bulkManifest, ok := runtime.manifests.Get(confirmed.ManifestID)
+	if !ok {
+		t.Fatalf("expected bulk mutation manifest %q to be retained", confirmed.ManifestID)
+	}
+	if bulkManifest.Action != "mail.mark_read" || len(bulkManifest.IDs) != 2 || bulkManifest.IDs[0] != "msg-1" || bulkManifest.IDs[1] != "msg-2" {
+		t.Fatalf("unexpected bulk mutation manifest contents: %#v", bulkManifest)
 	}
 }
 
@@ -1090,6 +1121,9 @@ func TestActionConfirmReturnsTransportFailureWithoutData(t *testing.T) {
 	if output.OK || output.Error != "transport failed" || output.Data != nil {
 		t.Fatalf("expected transport failure without data to be returned, got %#v", output)
 	}
+	if output.ManifestID != "" || output.ManifestTTLSeconds != 0 {
+		t.Fatalf("failed action must not return manifest metadata: %#v", output)
+	}
 }
 
 func TestMailMoveToDeletedItemsReturnsTransportFailureWithoutData(t *testing.T) {
@@ -1110,6 +1144,68 @@ func TestMailMoveToDeletedItemsReturnsTransportFailureWithoutData(t *testing.T) 
 	}
 	if output.OK || output.Error != "transport failed" || output.Data != nil {
 		t.Fatalf("expected transport failure without data to be returned, got %#v", output)
+	}
+	if output.ManifestID != "" || output.ManifestTTLSeconds != 0 {
+		t.Fatalf("failed action must not return manifest metadata: %#v", output)
+	}
+}
+
+func TestMailMoveToDeletedItemsReturnsManifestForPartialSuccess(t *testing.T) {
+	client := newPartialSuccessMutationTransport(action.Definition{Name: "mail.move_to_deleted_items", Transport: "test", Class: policy.ReversibleBulk, Level: action.LevelHighLevelMCPTool})
+	runtime := NewRuntime(client)
+	payload := map[string]any{"ids": []any{"msg-1", "msg-2"}, "mailbox": "shared@example.com"}
+	token, err := runtime.confirm.Generate(bindingFor(client, "default", "mail.move_to_deleted_items", payload, false), 10*time.Minute)
+	if err != nil {
+		t.Fatalf("generate confirmation token: %v", err)
+	}
+
+	_, output, err := mailMoveToDeletedItemsHandler(runtime)(context.Background(), nil, MailMoveToDeletedItemsInput{
+		IDs:          []string{"msg-1", "msg-2"},
+		ConfirmToken: token,
+		Mailbox:      "shared@example.com",
+	})
+	if err != nil {
+		t.Fatalf("move handler: %v", err)
+	}
+	if output.OK || output.Error != "some messages failed to move to Deleted Items" {
+		t.Fatalf("expected partial transport failure to be returned, got %#v", output)
+	}
+	if output.ManifestID == "" || output.ManifestTTLSeconds == 0 {
+		t.Fatalf("expected partial success to return mutation manifest metadata: %#v", output)
+	}
+	record, ok := runtime.manifests.Get(output.ManifestID)
+	if !ok {
+		t.Fatalf("expected partial success manifest %q to be retained", output.ManifestID)
+	}
+	if record.Action != "mail.move_to_deleted_items" || len(record.IDs) != 1 || record.IDs[0] != "moved-msg-1" {
+		t.Fatalf("expected manifest to cover only provider returned ids, got %#v", record)
+	}
+	if record.Mailbox != "shared@example.com" {
+		t.Fatalf("expected manifest to retain mailbox, got %#v", record)
+	}
+}
+
+func TestMailMoveToDeletedItemsSkipsManifestWithoutPostMoveIDs(t *testing.T) {
+	client := newSourceOnlyMoveTransport(action.Definition{Name: "mail.move_to_deleted_items", Transport: "test", Class: policy.ReversibleBulk, Level: action.LevelHighLevelMCPTool})
+	runtime := NewRuntime(client)
+	payload := map[string]any{"ids": []any{"msg-1"}}
+	token, err := runtime.confirm.Generate(bindingFor(client, "default", "mail.move_to_deleted_items", payload, false), 10*time.Minute)
+	if err != nil {
+		t.Fatalf("generate confirmation token: %v", err)
+	}
+
+	_, output, err := mailMoveToDeletedItemsHandler(runtime)(context.Background(), nil, MailMoveToDeletedItemsInput{
+		IDs:          []string{"msg-1"},
+		ConfirmToken: token,
+	})
+	if err != nil {
+		t.Fatalf("move handler: %v", err)
+	}
+	if !output.OK {
+		t.Fatalf("expected source-only move to execute: %#v", output)
+	}
+	if output.ManifestID != "" || output.ManifestTTLSeconds != 0 {
+		t.Fatalf("source-only move ids must not return body-audit manifest metadata: %#v", output)
 	}
 }
 
@@ -1349,6 +1445,121 @@ func TestRawActionRejectsCursorBoundSearchNext(t *testing.T) {
 	}
 }
 
+func TestGenericActionPathsRejectBatchBodyHelper(t *testing.T) {
+	client := newRecordingTransport(action.Definition{Name: "mail.fetch_bodies", Transport: "test", Class: policy.ReadBodyExplicit, Level: action.LevelHighLevelMCPTool})
+	runtime := NewRuntime(client)
+
+	_, rawOutput, err := rawActionHandler(runtime)(context.Background(), nil, RawActionInput{
+		Action:  "mail.fetch_bodies",
+		Payload: map[string]any{"ids": []any{"msg-1", "msg-2"}},
+	})
+	if err != nil {
+		t.Fatalf("raw action handler: %v", err)
+	}
+	if rawOutput.OK || !strings.Contains(rawOutput.Error, "outlook.mail_fetch_bodies") {
+		t.Fatalf("expected raw batch body helper to be rejected with typed-tool guidance, got %#v", rawOutput)
+	}
+
+	_, confirmOutput, err := actionConfirmHandler(runtime)(context.Background(), nil, ActionConfirmInput{
+		ConfirmToken: "unused",
+		Action:       "mail.fetch_bodies",
+		Payload:      map[string]any{"ids": []any{"msg-1", "msg-2"}},
+	})
+	if err != nil {
+		t.Fatalf("confirm handler: %v", err)
+	}
+	if confirmOutput.OK || !strings.Contains(confirmOutput.Error, "outlook.mail_fetch_bodies") {
+		t.Fatalf("expected generic confirm batch body helper to be rejected with typed-tool guidance, got %#v", confirmOutput)
+	}
+	if client.executed {
+		t.Fatal("batch body helper must not execute through generic action paths")
+	}
+}
+
+func TestMailAuditManifestBodiesUsesExactManifestIDs(t *testing.T) {
+	client := &manifestAuditBodyTransport{}
+	runtime := NewRuntime(client)
+	record, err := runtime.manifests.Issue(manifest.Record{
+		Action: "mail.move_to_deleted_items",
+		IDs:    []string{"msg-1", "msg-2"},
+	}, time.Minute)
+	if err != nil {
+		t.Fatalf("issue manifest: %v", err)
+	}
+
+	_, output, err := mailAuditManifestBodiesHandler(runtime)(context.Background(), nil, MailAuditManifestBodiesInput{
+		ManifestID: record.ID,
+		Mailbox:    "shared@example.com",
+	})
+	if err != nil {
+		t.Fatalf("manifest audit handler: %v", err)
+	}
+	if output.ManifestID != record.ID || output.Action != "mail.move_to_deleted_items" {
+		t.Fatalf("unexpected manifest metadata: %#v", output)
+	}
+	if output.Attempted != 2 || output.Succeeded != 2 || output.Failed != 0 || len(output.Results) != 2 {
+		t.Fatalf("unexpected manifest audit coverage: %#v", output)
+	}
+	if len(client.requests) != 2 {
+		t.Fatalf("expected exactly two body fetches from manifest ids, got %d", len(client.requests))
+	}
+	for index, request := range client.requests {
+		wantID := []string{"msg-1", "msg-2"}[index]
+		if request.Name != "mail.fetch_body" || request.Payload["id"] != wantID {
+			t.Fatalf("expected body fetch for %s, got %#v", wantID, request)
+		}
+		if request.Payload["mailbox"] != "shared@example.com" {
+			t.Fatalf("expected mailbox forwarded, got %#v", request.Payload)
+		}
+		if _, ok := request.Payload["folder"]; ok {
+			t.Fatalf("manifest audit must not scan folders, got %#v", request.Payload)
+		}
+		if _, ok := request.Payload["folder_id"]; ok {
+			t.Fatalf("manifest audit must not scan folders, got %#v", request.Payload)
+		}
+	}
+}
+
+func TestMailAuditManifestBodiesDefaultsToManifestMailbox(t *testing.T) {
+	client := &manifestAuditBodyTransport{}
+	runtime := NewRuntime(client)
+	record, err := runtime.manifests.Issue(manifest.Record{
+		Action:  "mail.move_to_deleted_items",
+		IDs:     []string{"msg-1"},
+		Mailbox: "shared@example.com",
+	}, time.Minute)
+	if err != nil {
+		t.Fatalf("issue manifest: %v", err)
+	}
+
+	_, output, err := mailAuditManifestBodiesHandler(runtime)(context.Background(), nil, MailAuditManifestBodiesInput{
+		ManifestID: record.ID,
+	})
+	if err != nil {
+		t.Fatalf("manifest audit handler: %v", err)
+	}
+	if output.Attempted != 1 || output.Succeeded != 1 || output.Failed != 0 {
+		t.Fatalf("unexpected manifest audit coverage: %#v", output)
+	}
+	if len(client.requests) != 1 {
+		t.Fatalf("expected exactly one body fetch from manifest ids, got %d", len(client.requests))
+	}
+	if client.requests[0].Payload["mailbox"] != "shared@example.com" {
+		t.Fatalf("expected audit to default to manifest mailbox, got %#v", client.requests[0].Payload)
+	}
+}
+
+func TestMailAuditManifestBodiesRejectsMissingManifest(t *testing.T) {
+	runtime := NewRuntime(fake.New())
+
+	_, _, err := mailAuditManifestBodiesHandler(runtime)(context.Background(), nil, MailAuditManifestBodiesInput{
+		ManifestID: "missing",
+	})
+	if err == nil || !strings.Contains(err.Error(), "mutation manifest is missing or expired") {
+		t.Fatalf("expected missing manifest guidance, got %v", err)
+	}
+}
+
 func TestRawActionDoesNotTrustCallerSuppliedExplicitTarget(t *testing.T) {
 	client := newRecordingTransport(action.Definition{Name: "SearchMailboxes", Transport: "test", Class: policy.ReadBodyExplicit, Level: action.LevelRawGuardedExecution})
 	runtime := NewRuntime(client)
@@ -1489,6 +1700,10 @@ type recordingTransport struct {
 	payload    map[string]any
 }
 
+type manifestAuditBodyTransport struct {
+	requests []transport.ActionRequest
+}
+
 func newRecordingTransport(definition action.Definition) *recordingTransport {
 	return &recordingTransport{definition: definition}
 }
@@ -1517,6 +1732,28 @@ func (client *recordingTransport) Execute(_ context.Context, request transport.A
 
 func (client *recordingTransport) DryRun(context.Context, transport.ActionRequest) transport.DryRunSummary {
 	return transport.DryRunSummary{Action: client.definition.Name, Count: 1, RequiresConfirmation: true}
+}
+
+func (client *manifestAuditBodyTransport) Name() string {
+	return "test"
+}
+
+func (client *manifestAuditBodyTransport) Authenticate(context.Context, string) transport.AuthResult {
+	return transport.AuthResult{OK: true}
+}
+
+func (client *manifestAuditBodyTransport) Capabilities(context.Context) transport.CapabilitySet {
+	return transport.CapabilitySet{}
+}
+
+func (client *manifestAuditBodyTransport) Execute(_ context.Context, request transport.ActionRequest) transport.ActionResponse {
+	client.requests = append(client.requests, request)
+	id, _ := request.Payload["id"].(string)
+	return transport.ActionResponse{OK: true, Data: map[string]any{"id": id, "body_text": "body for " + id}}
+}
+
+func (client *manifestAuditBodyTransport) DryRun(context.Context, transport.ActionRequest) transport.DryRunSummary {
+	return transport.DryRunSummary{}
 }
 
 type reviewChangingTransport struct {
@@ -1570,8 +1807,24 @@ type failingResponseTransport struct {
 	definition action.Definition
 }
 
+type partialSuccessMutationTransport struct {
+	definition action.Definition
+}
+
+type sourceOnlyMoveTransport struct {
+	definition action.Definition
+}
+
 func newFailingResponseTransport(definition action.Definition) *failingResponseTransport {
 	return &failingResponseTransport{definition: definition}
+}
+
+func newPartialSuccessMutationTransport(definition action.Definition) *partialSuccessMutationTransport {
+	return &partialSuccessMutationTransport{definition: definition}
+}
+
+func newSourceOnlyMoveTransport(definition action.Definition) *sourceOnlyMoveTransport {
+	return &sourceOnlyMoveTransport{definition: definition}
 }
 
 func (client *failingResponseTransport) Name() string {
@@ -1591,5 +1844,65 @@ func (client *failingResponseTransport) Execute(context.Context, transport.Actio
 }
 
 func (client *failingResponseTransport) DryRun(context.Context, transport.ActionRequest) transport.DryRunSummary {
+	return transport.DryRunSummary{Action: client.definition.Name, Count: 1, RequiresConfirmation: true}
+}
+
+func (client *partialSuccessMutationTransport) Name() string {
+	return "test"
+}
+
+func (client *partialSuccessMutationTransport) Authenticate(context.Context, string) transport.AuthResult {
+	return transport.AuthResult{OK: true}
+}
+
+func (client *partialSuccessMutationTransport) Capabilities(context.Context) transport.CapabilitySet {
+	return transport.CapabilitySet{Actions: []action.Definition{client.definition}}
+}
+
+func (client *partialSuccessMutationTransport) Execute(context.Context, transport.ActionRequest) transport.ActionResponse {
+	return transport.ActionResponse{
+		OK:    false,
+		Error: "some messages failed to move to Deleted Items",
+		Data: map[string]any{
+			"moved_count":           1,
+			"reversible":            true,
+			"succeeded":             []any{"msg-1"},
+			"mutation_manifest_ids": []any{"moved-msg-1"},
+			"failed": []any{
+				map[string]any{"id": "msg-2", "error": "not found"},
+			},
+		},
+	}
+}
+
+func (client *partialSuccessMutationTransport) DryRun(context.Context, transport.ActionRequest) transport.DryRunSummary {
+	return transport.DryRunSummary{Action: client.definition.Name, Count: 2, RequiresConfirmation: true}
+}
+
+func (client *sourceOnlyMoveTransport) Name() string {
+	return "test"
+}
+
+func (client *sourceOnlyMoveTransport) Authenticate(context.Context, string) transport.AuthResult {
+	return transport.AuthResult{OK: true}
+}
+
+func (client *sourceOnlyMoveTransport) Capabilities(context.Context) transport.CapabilitySet {
+	return transport.CapabilitySet{Actions: []action.Definition{client.definition}}
+}
+
+func (client *sourceOnlyMoveTransport) Execute(context.Context, transport.ActionRequest) transport.ActionResponse {
+	return transport.ActionResponse{
+		OK: true,
+		Data: map[string]any{
+			"moved_count": 1,
+			"reversible":  true,
+			"succeeded":   []any{"msg-1"},
+			"failed":      []map[string]any{},
+		},
+	}
+}
+
+func (client *sourceOnlyMoveTransport) DryRun(context.Context, transport.ActionRequest) transport.DryRunSummary {
 	return transport.DryRunSummary{Action: client.definition.Name, Count: 1, RequiresConfirmation: true}
 }

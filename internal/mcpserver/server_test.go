@@ -28,6 +28,8 @@ func TestCatalogContainsInitialTools(t *testing.T) {
 		"outlook.mail_search_next",
 		"outlook.mail_fetch_metadata",
 		"outlook.mail_fetch_body",
+		"outlook.mail_fetch_bodies",
+		"outlook.mail_audit_manifest_bodies",
 		"outlook.mail_list_attachments",
 		"outlook.mail_fetch_attachment",
 		"outlook.mail_create_draft",
@@ -77,6 +79,16 @@ func TestToolDescriptionsGuideAgentWorkflow(t *testing.T) {
 		"outlook.mail_fetch_body": {
 			"explicit message",
 			"not a bulk",
+		},
+		"outlook.mail_fetch_bodies": {
+			"explicit ids",
+			"capped",
+			"not a mailbox search",
+		},
+		"outlook.mail_audit_manifest_bodies": {
+			"manifest",
+			"exact ids",
+			"not a folder scan",
 		},
 		"outlook.mail_create_draft": {
 			"save-only",
@@ -253,6 +265,7 @@ func TestMCPClientCanListAndCallInitialTools(t *testing.T) {
 	}{
 		{name: "outlook.mail_fetch_metadata", arguments: map[string]any{"id": "msg-1"}},
 		{name: "outlook.mail_fetch_body", arguments: map[string]any{"id": "msg-1"}},
+		{name: "outlook.mail_fetch_bodies", arguments: map[string]any{"ids": []string{"msg-1", "msg-2"}}},
 		{name: "outlook.mail_list_attachments", arguments: map[string]any{"id": "msg-1"}},
 		{name: "outlook.mail_fetch_attachment", arguments: map[string]any{"message_id": "msg-1", "attachment_id": "att-1"}},
 		{name: "outlook.mail_create_draft", arguments: map[string]any{"subject": "Draft", "body": "Hello"}},
@@ -279,6 +292,56 @@ func TestMCPClientCanListAndCallInitialTools(t *testing.T) {
 				t.Fatalf("expected %s success, got error result: %#v", call.name, result)
 			}
 		})
+	}
+}
+
+func TestMCPMailFetchBodiesReportsCoverageAndForwardsMailbox(t *testing.T) {
+	ctx := context.Background()
+	batch := &batchBodyTransport{failIDs: map[string]bool{"msg-2": true}}
+	serverTransport, clientTransport := mcp.NewInMemoryTransports()
+
+	serverSession, err := mcpserver.NewWithTransport(batch).Connect(ctx, serverTransport, nil)
+	if err != nil {
+		t.Fatalf("connect server: %v", err)
+	}
+	defer serverSession.Close()
+	defer serverSession.Wait()
+
+	client := mcp.NewClient(&mcp.Implementation{Name: "test-client", Version: "0.0.1"}, nil)
+	clientSession, err := client.Connect(ctx, clientTransport, nil)
+	if err != nil {
+		t.Fatalf("connect client: %v", err)
+	}
+	defer clientSession.Close()
+
+	result, err := clientSession.CallTool(ctx, &mcp.CallToolParams{
+		Name: "outlook.mail_fetch_bodies",
+		Arguments: map[string]any{
+			"ids":     []string{"msg-1", "msg-2", "msg-3"},
+			"max":     2,
+			"mailbox": "shared@example.com",
+		},
+	})
+	if err != nil {
+		t.Fatalf("call mail_fetch_bodies: %v", err)
+	}
+	output := decodeStructured[mcpserver.MailFetchBodiesOutput](t, result)
+	if output.Attempted != 2 || output.Succeeded != 1 || output.Failed != 1 || len(output.Results) != 2 {
+		t.Fatalf("unexpected batch body coverage: %#v", output)
+	}
+	if output.Results[0].ID != "msg-1" || !output.Results[0].OK || output.Results[0].BodyText == "" {
+		t.Fatalf("unexpected first body result: %#v", output.Results[0])
+	}
+	if output.Results[1].ID != "msg-2" || output.Results[1].OK || !strings.Contains(output.Results[1].Error, "failed") {
+		t.Fatalf("unexpected failed body result: %#v", output.Results[1])
+	}
+	if len(batch.requests) != 2 {
+		t.Fatalf("expected max=2 provider calls, got %d", len(batch.requests))
+	}
+	for _, request := range batch.requests {
+		if request.Name != "mail.fetch_body" || request.Payload["mailbox"] != "shared@example.com" {
+			t.Fatalf("expected mailbox-aware fetch_body request, got %#v", request)
+		}
 	}
 }
 
@@ -453,7 +516,7 @@ func TestMCPHighLevelToolsForwardMailboxTarget(t *testing.T) {
 		arguments map[string]any
 		action    string
 	}{
-		{name: "outlook.mail_search", arguments: map[string]any{"query": "x", "mailbox": "shared@example.com"}, action: "mail.search"},
+		{name: "outlook.mail_search", arguments: map[string]any{"query": "x", "folder": "deleteditems", "mailbox": "shared@example.com"}, action: "mail.search"},
 		{name: "outlook.mail_fetch_metadata", arguments: map[string]any{"id": "msg-1", "mailbox": "shared@example.com"}, action: "mail.fetch_metadata"},
 		{name: "outlook.calendar_list", arguments: map[string]any{"start": "2026-05-27T00:00:00+02:00", "end": "2026-05-28T00:00:00+02:00", "mailbox": "shared@example.com"}, action: "calendar.list"},
 		{name: "outlook.calendar_availability", arguments: map[string]any{"start": "2026-05-27T09:00:00+02:00", "end": "2026-05-27T18:00:00+02:00", "email": "person@example.com", "mailbox": "shared@example.com"}, action: "calendar.availability"},
@@ -472,6 +535,9 @@ func TestMCPHighLevelToolsForwardMailboxTarget(t *testing.T) {
 			}
 			if capturing.lastRequest.Payload["mailbox"] != "shared@example.com" {
 				t.Fatalf("expected mailbox forwarded to %s, got %#v", call.action, capturing.lastRequest.Payload)
+			}
+			if call.name == "outlook.mail_search" && capturing.lastRequest.Payload["folder"] != "deleteditems" {
+				t.Fatalf("expected folder forwarded to mail.search, got %#v", capturing.lastRequest.Payload)
 			}
 		})
 	}
@@ -677,6 +743,11 @@ type capturingTransport struct {
 	lastRequest transport.ActionRequest
 }
 
+type batchBodyTransport struct {
+	requests []transport.ActionRequest
+	failIDs  map[string]bool
+}
+
 type rulesListOutput struct {
 	Rules []any `json:"rules"`
 }
@@ -725,6 +796,37 @@ func (capturing *capturingTransport) Execute(_ context.Context, request transpor
 
 func (capturing *capturingTransport) DryRun(_ context.Context, request transport.ActionRequest) transport.DryRunSummary {
 	return transport.DryRunSummary{Action: request.Name, Count: 1, Reversible: true, RequiresConfirmation: true}
+}
+
+func (batch *batchBodyTransport) Name() string {
+	return "batch"
+}
+
+func (batch *batchBodyTransport) Authenticate(context.Context, string) transport.AuthResult {
+	return transport.AuthResult{OK: true}
+}
+
+func (batch *batchBodyTransport) Capabilities(context.Context) transport.CapabilitySet {
+	return transport.CapabilitySet{}
+}
+
+func (batch *batchBodyTransport) Execute(_ context.Context, request transport.ActionRequest) transport.ActionResponse {
+	batch.requests = append(batch.requests, request)
+	id, _ := request.Payload["id"].(string)
+	if batch.failIDs[id] {
+		return transport.ActionResponse{OK: false, Error: "failed to fetch body"}
+	}
+	return transport.ActionResponse{
+		OK: true,
+		Data: map[string]any{
+			"id":        id,
+			"body_text": "body for " + id,
+		},
+	}
+}
+
+func (batch *batchBodyTransport) DryRun(context.Context, transport.ActionRequest) transport.DryRunSummary {
+	return transport.DryRunSummary{}
 }
 
 type failingTransport struct{}

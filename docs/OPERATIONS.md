@@ -114,6 +114,47 @@ Before promoting an upgrade:
 8. Confirm logs do not contain secrets, session material, raw message bodies,
    attachment contents, or raw discovery assets.
 
+## Live Mail Cleanup Checklist
+
+Use this checklist before a live Inbox cleanup, subscription cleanup, or
+post-cleanup recovery audit. Keep tenant-specific evidence outside this public
+repository.
+
+1. Run `outlook-agent doctor` against the private profile before the first
+   mutation. For live cleanup, approval mode should be understood and host
+   approval must be configured when the policy requires it.
+2. Start the target agent host and call `outlook.capabilities`. Prefer
+   high-level tools. Use raw actions only after capability discovery shows the
+   action is available and no high-level tool fits.
+3. Treat body reads and mutations as separate phases. Metadata-first discovery
+   is appropriate, but broad cleanup needs a content-risk review before the
+   mutation dry-run.
+   Before broad cleanup, report target count, protected count, skipped count,
+   body-read coverage, destination, and manifest/audit plan.
+4. Body-read every unread, high-importance, human-sender, corporate/system
+   announcement, IT/security/access/training/compliance, Confluence
+   announcement, or ambiguous candidate before moving it out of Inbox. Only
+   skip body reads for clearly low-risk automated noise and report that
+   coverage.
+5. Prefer archive or a review/quarantine folder for non-spam work mail. Use
+   Deleted Items only for obvious noise or when the operator explicitly asked
+   for it.
+6. Keep the exact target ids in process until post-action verification is
+   complete. Do not write raw message bodies, cookies, canary values, provider
+   responses, or session dumps to disk.
+7. For large body-read batches, use one persistent MCP session and
+   `outlook.mail_fetch_bodies` with exact ids. Avoid one helper process per
+   message because repeated OWA logins can be slow and intermittently fail.
+8. After a broad move, use the returned `manifest_id`, when present, with
+   `outlook.mail_audit_manifest_bodies` before scanning a whole folder. If no
+   manifest was returned, or the manifest is missing or expired, rerun metadata
+   search and build an explicit id list.
+9. After execution, perform fresh metadata verification of Inbox, archive,
+   review/quarantine, or Deleted Items state before reporting completion.
+
+For the live cleanup lessons that motivated this checklist, see
+`docs/LIVE_MAIL_CLEANUP_RETRO.md`.
+
 ## Runtime Audit Logging
 
 Audit logging is disabled by default. Enable it only in an operator-controlled

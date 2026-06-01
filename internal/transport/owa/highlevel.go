@@ -18,7 +18,12 @@ func (client *Transport) executeHighLevel(ctx context.Context, request transport
 		if err != nil {
 			return transport.ActionResponse{OK: false, Error: err.Error()}, true
 		}
-		response := client.executeService(ctx, "FindItem", client.buildFindInboxItemsRequest(limit.Value), false)
+		folderID := strings.TrimSpace(stringValue(request.Payload, "folder"))
+		if folderID == "" {
+			folderID = strings.TrimSpace(stringValue(request.Payload, "folder_id"))
+		}
+		folderID = normalizeFolderID(folderID)
+		response := client.executeService(ctx, "FindItem", client.buildFindItemsRequest(limit.Value, folderID), false)
 		if !response.OK {
 			return response, true
 		}
@@ -111,6 +116,33 @@ func (client *Transport) executeHighLevel(ctx context.Context, request transport
 		}
 		drafts := normalizeMailItems(extractItems(response.Data))
 		return transport.ActionResponse{OK: true, Data: map[string]any{"draft": firstAny(drafts)}}, true
+	case "mail.move_to_folder":
+		ids := anySlice(request.Payload["ids"])
+		if len(ids) == 0 {
+			return transport.ActionResponse{OK: false, Error: "mail.move_to_folder requires ids"}, true
+		}
+		folderID := strings.TrimSpace(stringValue(request.Payload, "folder_id"))
+		if folderID == "" {
+			folderID = strings.TrimSpace(stringValue(request.Payload, "folder"))
+		}
+		if folderID == "" {
+			return transport.ActionResponse{OK: false, Error: "mail.move_to_folder requires folder_id"}, true
+		}
+		response := client.executeService(ctx, "MoveItem", client.buildMoveItemRequest(ids, folderID), false)
+		if !response.OK {
+			return response, true
+		}
+		return moveItemResult(ids, response.Data), true
+	case "mail.archive":
+		ids := anySlice(request.Payload["ids"])
+		if len(ids) == 0 {
+			return transport.ActionResponse{OK: false, Error: "mail.archive requires ids"}, true
+		}
+		response := client.executeService(ctx, "MoveItem", client.buildMoveItemRequest(ids, "archive"), false)
+		if !response.OK {
+			return response, true
+		}
+		return moveItemResult(ids, response.Data), true
 	case "mail.move_to_deleted_items":
 		ids := anySlice(request.Payload["ids"])
 		if len(ids) == 0 {
@@ -151,6 +183,7 @@ func moveToDeletedResult(ids []any, payload map[string]any) transport.ActionResp
 		}}
 	}
 	succeeded := make([]string, 0, len(requested))
+	manifestIDs := make([]string, 0, len(requested))
 	failed := make([]map[string]any, 0)
 	for index, id := range requested {
 		message := map[string]any{}
@@ -160,6 +193,9 @@ func moveToDeletedResult(ids []any, payload map[string]any) transport.ActionResp
 		responseClass := strings.TrimSpace(stringValue(message, "ResponseClass"))
 		if responseClass == "" || strings.EqualFold(responseClass, "Success") {
 			succeeded = append(succeeded, id)
+			if movedID := responseMessageItemID(message); movedID != "" {
+				manifestIDs = append(manifestIDs, movedID)
+			}
 			continue
 		}
 		failed = append(failed, map[string]any{"id": id, "error": responseMessageError(message)})
@@ -170,8 +206,55 @@ func moveToDeletedResult(ids []any, payload map[string]any) transport.ActionResp
 		"succeeded":   succeeded,
 		"failed":      failed,
 	}
+	if len(manifestIDs) > 0 {
+		data["mutation_manifest_ids"] = manifestIDs
+	}
 	if len(failed) > 0 {
 		return transport.ActionResponse{OK: false, Error: "some messages failed to move to Deleted Items", Data: data}
+	}
+	return transport.ActionResponse{OK: true, Data: data}
+}
+
+func moveItemResult(ids []any, payload map[string]any) transport.ActionResponse {
+	requested := anyStrings(ids)
+	messages := responseMessages(payload)
+	if len(messages) == 0 {
+		return transport.ActionResponse{OK: true, Data: map[string]any{
+			"updated_count": len(requested),
+			"reversible":    true,
+			"succeeded":     requested,
+			"failed":        []map[string]any{},
+		}}
+	}
+	succeeded := make([]string, 0, len(requested))
+	manifestIDs := make([]string, 0, len(requested))
+	failed := make([]map[string]any, 0)
+	for index, id := range requested {
+		message := map[string]any{}
+		if index < len(messages) {
+			message, _ = messages[index].(map[string]any)
+		}
+		responseClass := strings.TrimSpace(stringValue(message, "ResponseClass"))
+		if responseClass == "" || strings.EqualFold(responseClass, "Success") {
+			succeeded = append(succeeded, id)
+			if movedID := responseMessageItemID(message); movedID != "" {
+				manifestIDs = append(manifestIDs, movedID)
+			}
+			continue
+		}
+		failed = append(failed, map[string]any{"id": id, "error": responseMessageError(message)})
+	}
+	data := map[string]any{
+		"updated_count": len(succeeded),
+		"reversible":    true,
+		"succeeded":     succeeded,
+		"failed":        failed,
+	}
+	if len(manifestIDs) > 0 {
+		data["mutation_manifest_ids"] = manifestIDs
+	}
+	if len(failed) > 0 {
+		return transport.ActionResponse{OK: false, Error: "some messages failed to move", Data: data}
 	}
 	return transport.ActionResponse{OK: true, Data: data}
 }
@@ -190,6 +273,19 @@ func responseMessageError(message map[string]any) string {
 		return code
 	}
 	return "unknown error"
+}
+
+func responseMessageItemID(message map[string]any) string {
+	for _, item := range anySlice(message["Items"]) {
+		itemMap, ok := item.(map[string]any)
+		if !ok {
+			continue
+		}
+		if id := strings.TrimSpace(itemID(itemMap)["id"]); id != "" {
+			return id
+		}
+	}
+	return ""
 }
 
 func (client *Transport) downloadFileAttachment(ctx context.Context, attachmentID string) (map[string]any, error) {
@@ -248,13 +344,14 @@ func filenameFromContentDisposition(value string) string {
 	return params["filename"]
 }
 
-func (client *Transport) buildFindInboxItemsRequest(maxItems int) any {
+func (client *Transport) buildFindItemsRequest(maxItems int, folderID string) any {
 	if maxItems <= 0 {
 		maxItems = transport.DefaultPageSize
 	}
 	if maxItems > transport.MaxPageSize {
 		maxItems = transport.MaxPageSize
 	}
+	folderID = normalizeFolderID(folderID)
 	return object(
 		field("__type", "FindItemJsonRequest:#Exchange"),
 		field("Header", client.requestHeaderPayload("Exchange2013")),
@@ -279,11 +376,48 @@ func (client *Transport) buildFindInboxItemsRequest(maxItems int) any {
 				field("MaxEntriesReturned", maxItems),
 			)),
 			field("ParentFolderIds", []any{
-				object(field("__type", "DistinguishedFolderId:#Exchange"), field("Id", "inbox")),
+				owaFolderID(folderID),
 			}),
 			field("Traversal", "Shallow"),
 		)),
 	)
+}
+
+func normalizeFolderID(value string) string {
+	folderID := strings.TrimSpace(value)
+	if folderID == "" {
+		return "inbox"
+	}
+	switch strings.ToLower(folderID) {
+	case "inbox":
+		return "inbox"
+	case "archive", "archives":
+		return "archive"
+	case "deleted", "deleteditem", "deleteditems", "deleted items":
+		return "deleteditems"
+	case "draft", "drafts":
+		return "drafts"
+	case "sent", "sentitem", "sentitems", "sent items":
+		return "sentitems"
+	default:
+		return folderID
+	}
+}
+
+func owaFolderID(folderID string) any {
+	if isOWADistinguishedFolderID(folderID) {
+		return object(field("__type", "DistinguishedFolderId:#Exchange"), field("Id", folderID))
+	}
+	return object(field("__type", "FolderId:#Exchange"), field("Id", folderID))
+}
+
+func isOWADistinguishedFolderID(folderID string) bool {
+	switch folderID {
+	case "inbox", "archive", "deleteditems", "drafts", "sentitems":
+		return true
+	default:
+		return false
+	}
 }
 
 func (client *Transport) buildCalendarViewRequest(start string, end string) any {
@@ -456,6 +590,30 @@ func (client *Transport) buildMoveToDeletedItemsRequest(ids []any) any {
 			field("__type", "DeleteItemRequest:#Exchange"),
 			field("DeleteType", "MoveToDeletedItems"),
 			field("SendMeetingCancellations", "SendToNone"),
+			field("ItemIds", itemIDs),
+		)),
+	)
+}
+
+func (client *Transport) buildMoveItemRequest(ids []any, folderID string) any {
+	itemIDs := make([]any, 0, len(ids))
+	for _, id := range ids {
+		switch typed := id.(type) {
+		case string:
+			itemIDs = append(itemIDs, object(field("__type", "ItemId:#Exchange"), field("Id", typed)))
+		case map[string]any:
+			itemIDs = append(itemIDs, typed)
+		}
+	}
+	return object(
+		field("__type", "MoveItemJsonRequest:#Exchange"),
+		field("Header", client.requestHeaderPayload("Exchange2013")),
+		field("Body", object(
+			field("__type", "MoveItemRequest:#Exchange"),
+			field("ToFolderId", object(
+				field("__type", "TargetFolderId:#Exchange"),
+				field("BaseFolderId", owaFolderID(normalizeFolderID(folderID))),
+			)),
 			field("ItemIds", itemIDs),
 		)),
 	)

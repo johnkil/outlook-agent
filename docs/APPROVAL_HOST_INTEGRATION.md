@@ -21,6 +21,22 @@ The approval HMAC secret is read from `OUTLOOK_AGENT_APPROVAL_SECRET`. The agent
 must not know or print this secret. Store it only in the trusted host/operator
 environment.
 
+## Setup Helper
+
+Use `setup approval` to plan, review, and apply host-owned wrapper material:
+
+```bash
+outlook-agent setup approval plan  --client codex --scope project --config .local/outlook-agent.json
+outlook-agent setup approval diff  --client codex --scope project --config .local/outlook-agent.json
+outlook-agent setup approval apply --client codex --scope project --config .local/outlook-agent.json --yes
+```
+
+The helper creates a wrapper that reads the approval secret from a separate
+host-owned file and exports `OUTLOOK_AGENT_APPROVAL_SECRET` only for the child
+`outlook-agent mcp` process. It does not embed the approval secret in MCP
+config, command arguments, docs, or logs. Review `plan` and `diff` before
+`apply`; project-scope approval material should live under `.local/`.
+
 ## Readiness Metadata
 
 Before high-risk live work, hosts can inspect `outlook-agent doctor` and

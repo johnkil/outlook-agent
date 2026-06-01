@@ -369,6 +369,31 @@ func TestTransportExecutesMailSearchMetadata(t *testing.T) {
 	}
 }
 
+func TestTransportExecutesMailSearchWithFolder(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		if request.Method != http.MethodGet || request.URL.Path != "/v1.0/me/mailFolders/deleteditems/messages" {
+			t.Fatalf("unexpected request: %s %s", request.Method, request.URL.String())
+		}
+		response.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(response).Encode(map[string]any{"value": []any{}})
+	}))
+	defer server.Close()
+
+	client := graph.NewTransport(graph.Config{
+		BaseURL:   server.URL + "/v1.0",
+		SecretRef: secret.Ref("memory:graph"),
+	}, secret.NewMemoryStore(map[string]string{"memory:graph": "token-secret"}), server.Client())
+
+	result := client.Execute(context.Background(), transport.ActionRequest{
+		Name:    "mail.search",
+		Payload: map[string]any{"folder": "deleteditems"},
+	})
+
+	if !result.OK {
+		t.Fatalf("expected mail.search ok, got %#v", result)
+	}
+}
+
 func TestTransportMailSearchClampsHugePageSize(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
 		if request.URL.Query().Get("$top") != "250" {
@@ -1539,7 +1564,7 @@ func TestTransportMailMoveToDeletedItemsReportsPartialResults(t *testing.T) {
 		response.Header().Set("Content-Type", "application/json")
 		switch request.URL.Path {
 		case "/v1.0/me/messages/message-1/move":
-			_ = json.NewEncoder(response).Encode(graphMessageResponse("message-1", "Moved", "Alice", "alice@example.com"))
+			_ = json.NewEncoder(response).Encode(graphMessageResponse("moved-message-1", "Moved", "Alice", "alice@example.com"))
 		case "/v1.0/me/messages/message-2/move":
 			response.WriteHeader(http.StatusTooManyRequests)
 			_ = json.NewEncoder(response).Encode(map[string]any{"error": map[string]any{"code": "TooManyRequests"}})
@@ -1568,6 +1593,10 @@ func TestTransportMailMoveToDeletedItemsReportsPartialResults(t *testing.T) {
 	succeeded := result.Data["succeeded"].([]string)
 	if len(succeeded) != 1 || succeeded[0] != "message-1" {
 		t.Fatalf("unexpected succeeded ids: %#v", succeeded)
+	}
+	manifestIDs := result.Data["mutation_manifest_ids"].([]string)
+	if len(manifestIDs) != 1 || manifestIDs[0] != "moved-message-1" {
+		t.Fatalf("unexpected mutation manifest ids: %#v", result.Data)
 	}
 	failed := result.Data["failed"].([]map[string]any)
 	if len(failed) != 1 || failed[0]["id"] != "message-2" {

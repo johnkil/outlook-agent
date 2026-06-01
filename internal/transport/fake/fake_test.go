@@ -52,6 +52,22 @@ func TestFakeTransportExecutesMailSearch(t *testing.T) {
 	}
 }
 
+func TestFakeTransportMailSearchPreservesFolder(t *testing.T) {
+	client := fake.New()
+
+	response := client.Execute(context.Background(), transport.ActionRequest{
+		Name:    "mail.search",
+		Payload: map[string]any{"folder": "deleteditems"},
+	})
+
+	if !response.OK {
+		t.Fatalf("expected fake mail search to succeed: %#v", response)
+	}
+	if response.Data["folder"] != "deleteditems" {
+		t.Fatalf("expected folder echoed, got %#v", response.Data)
+	}
+}
+
 func TestFakeTransportExecutesInitialHighLevelActions(t *testing.T) {
 	client := fake.New()
 

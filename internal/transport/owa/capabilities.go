@@ -13,6 +13,8 @@ func highLevelCapabilities() []action.Definition {
 		{Name: "mail.list_attachments", Transport: "owa", Class: policy.ReadAttachmentExplicit, Level: action.LevelHighLevelMCPTool},
 		{Name: "mail.fetch_attachment", Transport: "owa", Class: policy.ReadAttachmentExplicit, Level: action.LevelHighLevelMCPTool},
 		{Name: "mail.create_draft", Transport: "owa", Class: policy.DraftOnly, Level: action.LevelHighLevelMCPTool},
+		{Name: "mail.move_to_folder", Transport: "owa", Class: policy.ReversibleBulk, Level: action.LevelHighLevelMCPTool},
+		{Name: "mail.archive", Transport: "owa", Class: policy.ReversibleBulk, Level: action.LevelHighLevelMCPTool},
 		{Name: "mail.move_to_deleted_items", Transport: "owa", Class: policy.ReversibleBulk, Level: action.LevelHighLevelMCPTool},
 		{Name: "calendar.list", Transport: "owa", Class: policy.ReadMetadata, Level: action.LevelHighLevelMCPTool},
 		{Name: "calendar.availability", Transport: "owa", Class: policy.ReadMetadata, Level: action.LevelHighLevelMCPTool},

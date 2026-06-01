@@ -58,6 +58,15 @@ Go version:
 - published install path smoke:
 - installed OpenCode MCP smoke:
 
+### Cleanup hardening evidence
+
+- `setup approval plan|diff|apply` smoke:
+- `outlook.mail_search.folder` smoke:
+- OWA high-level `mail.archive` / `mail.move_to_folder` smoke:
+- transient `manifest_id` on reversible message mutations:
+- `outlook.mail_fetch_bodies` coverage:
+- `outlook.mail_audit_manifest_bodies` coverage:
+
 ### Artifacts
 
 - SHA256SUMS.txt:

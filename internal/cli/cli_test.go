@@ -284,6 +284,29 @@ func TestDoctorWarnsWhenRequiredApprovalSecretMissing(t *testing.T) {
 	}
 }
 
+func TestDoctorNextStepsRecommendSetupApprovalWhenRequiredSecretMissing(t *testing.T) {
+	output := doctorOutput{
+		Config: doctorConfigOutput{Kind: "file", Path: "/tmp/outlook-agent.json"},
+		SecretStore: doctorSecretStoreOutput{
+			Available: true,
+		},
+		Approval: doctorApprovalOutput{
+			Mode:                    "required",
+			RequiredByDefault:       true,
+			HostIntegrationRequired: true,
+			SecretConfigured:        false,
+			Warning:                 "OUTLOOK_AGENT_APPROVAL_SECRET is required for high-risk actions in required approval mode",
+		},
+	}
+
+	steps := doctorNextSteps(output)
+
+	joined := strings.Join(steps, "\n")
+	if !strings.Contains(joined, "outlook-agent setup approval plan") {
+		t.Fatalf("expected setup approval guidance, got %q", joined)
+	}
+}
+
 func TestDoctorReportsMissingExplicitConfig(t *testing.T) {
 	missingConfig := filepath.Join(t.TempDir(), "missing.json")
 	var stdout bytes.Buffer
@@ -443,6 +466,28 @@ func TestSetupSkillsPlanReportsClientAndScopeTargets(t *testing.T) {
 	}
 	if len(payload.Operations) == 0 || !strings.Contains(stdout.String(), filepath.Join(".agents", "skills", "outlook-mail", "SKILL.md")) {
 		t.Fatalf("expected outlook-mail operation under .agents, got %s", stdout.String())
+	}
+}
+
+func TestSetupApprovalPlanCLI(t *testing.T) {
+	projectDir := t.TempDir()
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+
+	code := Run([]string{
+		"setup", "approval", "plan",
+		"--client", "codex",
+		"--scope", "project",
+		"--project-dir", projectDir,
+		"--home-dir", t.TempDir(),
+		"--config", ".local/outlook-agent.json",
+	}, &stdout, &stderr)
+
+	if code != 0 {
+		t.Fatalf("expected setup approval plan to pass, code=%d stderr=%s", code, stderr.String())
+	}
+	if !strings.Contains(stdout.String(), `"command": "setup approval plan"`) {
+		t.Fatalf("expected setup approval JSON, got %s", stdout.String())
 	}
 }
 
