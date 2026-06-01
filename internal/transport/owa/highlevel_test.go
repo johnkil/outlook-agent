@@ -527,6 +527,43 @@ func TestHighLevelMailMoveToFolderReturnsPartialFailures(t *testing.T) {
 	}
 }
 
+func TestHighLevelMailMoveToFolderReportsPostMoveManifestIDs(t *testing.T) {
+	var calls []recordedServiceCall
+	server := newOWAServiceServer(t, &calls, map[string]any{
+		"Body": map[string]any{
+			"ResponseMessages": map[string]any{
+				"Items": []any{
+					map[string]any{
+						"ResponseClass": "Success",
+						"Items": []any{
+							map[string]any{"ItemId": map[string]any{"Id": "moved-msg-1", "ChangeKey": "moved-ck-1"}},
+						},
+					},
+				},
+			},
+		},
+	})
+	defer server.Close()
+	client := newTestTransport(server)
+
+	response := client.Execute(context.Background(), transport.ActionRequest{
+		Name:    "mail.move_to_folder",
+		Payload: map[string]any{"ids": []any{"msg-1"}, "folder_id": "target-folder"},
+	})
+
+	if !response.OK {
+		t.Fatalf("expected move to folder success, got %#v", response)
+	}
+	succeeded := response.Data["succeeded"].([]string)
+	if len(succeeded) != 1 || succeeded[0] != "msg-1" {
+		t.Fatalf("unexpected succeeded ids: %#v", response.Data)
+	}
+	manifestIDs := response.Data["mutation_manifest_ids"].([]string)
+	if len(manifestIDs) != 1 || manifestIDs[0] != "moved-msg-1" {
+		t.Fatalf("unexpected mutation manifest ids: %#v", response.Data)
+	}
+}
+
 func TestHighLevelMailFetchMetadataCallsGetItem(t *testing.T) {
 	var calls []recordedServiceCall
 	server := newOWAServiceServer(t, &calls, map[string]any{

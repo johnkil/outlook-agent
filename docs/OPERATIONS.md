@@ -145,10 +145,10 @@ repository.
 7. For large body-read batches, use one persistent MCP session and
    `outlook.mail_fetch_bodies` with exact ids. Avoid one helper process per
    message because repeated OWA logins can be slow and intermittently fail.
-8. After a broad move, use the returned `manifest_id` with
-   `outlook.mail_audit_manifest_bodies` before scanning a whole folder. If the
-   manifest is missing or expired, rerun metadata search and build an explicit
-   id list.
+8. After a broad move, use the returned `manifest_id`, when present, with
+   `outlook.mail_audit_manifest_bodies` before scanning a whole folder. If no
+   manifest was returned, or the manifest is missing or expired, rerun metadata
+   search and build an explicit id list.
 9. After execution, perform fresh metadata verification of Inbox, archive,
    review/quarantine, or Deleted Items state before reporting completion.
 

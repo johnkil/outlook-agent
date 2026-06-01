@@ -158,21 +158,27 @@ func (client *Transport) Execute(_ context.Context, request transport.ActionRequ
 		if len(ids) == 0 {
 			ids = []string{"msg-1"}
 		}
-		return transport.ActionResponse{
-			OK: true,
-			Data: map[string]any{
-				"updated_count": len(ids),
-				"reversible":    true,
-				"succeeded":     ids,
-				"failed":        []map[string]any{},
-			},
+		data := map[string]any{
+			"updated_count": len(ids),
+			"reversible":    true,
+			"succeeded":     ids,
+			"failed":        []map[string]any{},
 		}
+		if request.Name == "mail.move_to_folder" || request.Name == "mail.archive" {
+			data["mutation_manifest_ids"] = ids
+		}
+		return transport.ActionResponse{OK: true, Data: data}
 	case "mail.move_to_deleted_items":
+		ids := stringSlice(request.Payload["ids"])
+		if len(ids) == 0 {
+			ids = []string{"msg-1"}
+		}
 		return transport.ActionResponse{
 			OK: true,
 			Data: map[string]any{
-				"moved_count": countIDs(request.Payload),
-				"reversible":  true,
+				"moved_count":           len(ids),
+				"reversible":            true,
+				"mutation_manifest_ids": ids,
 			},
 		}
 	case "mail.rules.list":

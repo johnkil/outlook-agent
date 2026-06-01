@@ -1177,11 +1177,35 @@ func TestMailMoveToDeletedItemsReturnsManifestForPartialSuccess(t *testing.T) {
 	if !ok {
 		t.Fatalf("expected partial success manifest %q to be retained", output.ManifestID)
 	}
-	if record.Action != "mail.move_to_deleted_items" || len(record.IDs) != 1 || record.IDs[0] != "msg-1" {
-		t.Fatalf("expected manifest to cover only succeeded ids, got %#v", record)
+	if record.Action != "mail.move_to_deleted_items" || len(record.IDs) != 1 || record.IDs[0] != "moved-msg-1" {
+		t.Fatalf("expected manifest to cover only provider returned ids, got %#v", record)
 	}
 	if record.Mailbox != "shared@example.com" {
 		t.Fatalf("expected manifest to retain mailbox, got %#v", record)
+	}
+}
+
+func TestMailMoveToDeletedItemsSkipsManifestWithoutPostMoveIDs(t *testing.T) {
+	client := newSourceOnlyMoveTransport(action.Definition{Name: "mail.move_to_deleted_items", Transport: "test", Class: policy.ReversibleBulk, Level: action.LevelHighLevelMCPTool})
+	runtime := NewRuntime(client)
+	payload := map[string]any{"ids": []any{"msg-1"}}
+	token, err := runtime.confirm.Generate(bindingFor(client, "default", "mail.move_to_deleted_items", payload, false), 10*time.Minute)
+	if err != nil {
+		t.Fatalf("generate confirmation token: %v", err)
+	}
+
+	_, output, err := mailMoveToDeletedItemsHandler(runtime)(context.Background(), nil, MailMoveToDeletedItemsInput{
+		IDs:          []string{"msg-1"},
+		ConfirmToken: token,
+	})
+	if err != nil {
+		t.Fatalf("move handler: %v", err)
+	}
+	if !output.OK {
+		t.Fatalf("expected source-only move to execute: %#v", output)
+	}
+	if output.ManifestID != "" || output.ManifestTTLSeconds != 0 {
+		t.Fatalf("source-only move ids must not return body-audit manifest metadata: %#v", output)
 	}
 }
 
@@ -1787,12 +1811,20 @@ type partialSuccessMutationTransport struct {
 	definition action.Definition
 }
 
+type sourceOnlyMoveTransport struct {
+	definition action.Definition
+}
+
 func newFailingResponseTransport(definition action.Definition) *failingResponseTransport {
 	return &failingResponseTransport{definition: definition}
 }
 
 func newPartialSuccessMutationTransport(definition action.Definition) *partialSuccessMutationTransport {
 	return &partialSuccessMutationTransport{definition: definition}
+}
+
+func newSourceOnlyMoveTransport(definition action.Definition) *sourceOnlyMoveTransport {
+	return &sourceOnlyMoveTransport{definition: definition}
 }
 
 func (client *failingResponseTransport) Name() string {
@@ -1832,9 +1864,10 @@ func (client *partialSuccessMutationTransport) Execute(context.Context, transpor
 		OK:    false,
 		Error: "some messages failed to move to Deleted Items",
 		Data: map[string]any{
-			"moved_count": 1,
-			"reversible":  true,
-			"succeeded":   []any{"msg-1"},
+			"moved_count":           1,
+			"reversible":            true,
+			"succeeded":             []any{"msg-1"},
+			"mutation_manifest_ids": []any{"moved-msg-1"},
 			"failed": []any{
 				map[string]any{"id": "msg-2", "error": "not found"},
 			},
@@ -1844,4 +1877,32 @@ func (client *partialSuccessMutationTransport) Execute(context.Context, transpor
 
 func (client *partialSuccessMutationTransport) DryRun(context.Context, transport.ActionRequest) transport.DryRunSummary {
 	return transport.DryRunSummary{Action: client.definition.Name, Count: 2, RequiresConfirmation: true}
+}
+
+func (client *sourceOnlyMoveTransport) Name() string {
+	return "test"
+}
+
+func (client *sourceOnlyMoveTransport) Authenticate(context.Context, string) transport.AuthResult {
+	return transport.AuthResult{OK: true}
+}
+
+func (client *sourceOnlyMoveTransport) Capabilities(context.Context) transport.CapabilitySet {
+	return transport.CapabilitySet{Actions: []action.Definition{client.definition}}
+}
+
+func (client *sourceOnlyMoveTransport) Execute(context.Context, transport.ActionRequest) transport.ActionResponse {
+	return transport.ActionResponse{
+		OK: true,
+		Data: map[string]any{
+			"moved_count": 1,
+			"reversible":  true,
+			"succeeded":   []any{"msg-1"},
+			"failed":      []map[string]any{},
+		},
+	}
+}
+
+func (client *sourceOnlyMoveTransport) DryRun(context.Context, transport.ActionRequest) transport.DryRunSummary {
+	return transport.DryRunSummary{Action: client.definition.Name, Count: 1, RequiresConfirmation: true}
 }

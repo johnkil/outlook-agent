@@ -71,7 +71,8 @@ level 5: workflow skill guidance
 - Dry-run confirmation is a gate, not a bypass: confirmed actions still pass
   policy checks before transport execution.
 - Reversible message mutations return a transient mutation manifest id when the
-  exact target set is retained in memory. Use
+  exact audit-safe target set is retained in memory. Move-like actions only
+  issue one when the transport returns post-move ids. Use
   `outlook.mail_audit_manifest_bodies` for manifest-based body audit before
   falling back to a folder scan.
 - Live MCP dry-run smoke verifies representative reversible, destructive,

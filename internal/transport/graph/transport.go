@@ -227,6 +227,9 @@ func (client *Transport) Execute(ctx context.Context, request transport.ActionRe
 			"succeeded":   result.Succeeded,
 			"failed":      result.Failed,
 		}
+		if len(result.MutationManifestIDs) > 0 {
+			data["mutation_manifest_ids"] = result.MutationManifestIDs
+		}
 		if len(result.Failed) > 0 {
 			return transport.ActionResponse{OK: false, Data: data, Error: "some messages failed to move to Deleted Items"}
 		}
@@ -653,8 +656,9 @@ type messageSearchResult struct {
 }
 
 type bulkMoveResult struct {
-	Succeeded []string
-	Failed    []map[string]any
+	Succeeded           []string
+	MutationManifestIDs []string
+	Failed              []map[string]any
 }
 
 type message struct {
@@ -1124,6 +1128,9 @@ func (client *Transport) moveMessages(ctx context.Context, mailbox string, ids [
 			continue
 		}
 		result.Succeeded = append(result.Succeeded, id)
+		if strings.TrimSpace(moved.ID) != "" {
+			result.MutationManifestIDs = append(result.MutationManifestIDs, moved.ID)
+		}
 	}
 	return result
 }
@@ -1152,6 +1159,9 @@ func reversibleMutationResponse(result bulkMoveResult) transport.ActionResponse 
 		"reversible":    true,
 		"succeeded":     result.Succeeded,
 		"failed":        result.Failed,
+	}
+	if len(result.MutationManifestIDs) > 0 {
+		data["mutation_manifest_ids"] = result.MutationManifestIDs
 	}
 	if len(result.Failed) > 0 {
 		return transport.ActionResponse{OK: false, Data: data, Error: "some messages failed to update"}

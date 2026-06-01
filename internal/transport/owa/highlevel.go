@@ -179,6 +179,7 @@ func moveToDeletedResult(ids []any, payload map[string]any) transport.ActionResp
 		}}
 	}
 	succeeded := make([]string, 0, len(requested))
+	manifestIDs := make([]string, 0, len(requested))
 	failed := make([]map[string]any, 0)
 	for index, id := range requested {
 		message := map[string]any{}
@@ -188,6 +189,9 @@ func moveToDeletedResult(ids []any, payload map[string]any) transport.ActionResp
 		responseClass := strings.TrimSpace(stringValue(message, "ResponseClass"))
 		if responseClass == "" || strings.EqualFold(responseClass, "Success") {
 			succeeded = append(succeeded, id)
+			if movedID := responseMessageItemID(message); movedID != "" {
+				manifestIDs = append(manifestIDs, movedID)
+			}
 			continue
 		}
 		failed = append(failed, map[string]any{"id": id, "error": responseMessageError(message)})
@@ -197,6 +201,9 @@ func moveToDeletedResult(ids []any, payload map[string]any) transport.ActionResp
 		"reversible":  true,
 		"succeeded":   succeeded,
 		"failed":      failed,
+	}
+	if len(manifestIDs) > 0 {
+		data["mutation_manifest_ids"] = manifestIDs
 	}
 	if len(failed) > 0 {
 		return transport.ActionResponse{OK: false, Error: "some messages failed to move to Deleted Items", Data: data}
@@ -216,6 +223,7 @@ func moveItemResult(ids []any, payload map[string]any) transport.ActionResponse 
 		}}
 	}
 	succeeded := make([]string, 0, len(requested))
+	manifestIDs := make([]string, 0, len(requested))
 	failed := make([]map[string]any, 0)
 	for index, id := range requested {
 		message := map[string]any{}
@@ -225,6 +233,9 @@ func moveItemResult(ids []any, payload map[string]any) transport.ActionResponse 
 		responseClass := strings.TrimSpace(stringValue(message, "ResponseClass"))
 		if responseClass == "" || strings.EqualFold(responseClass, "Success") {
 			succeeded = append(succeeded, id)
+			if movedID := responseMessageItemID(message); movedID != "" {
+				manifestIDs = append(manifestIDs, movedID)
+			}
 			continue
 		}
 		failed = append(failed, map[string]any{"id": id, "error": responseMessageError(message)})
@@ -234,6 +245,9 @@ func moveItemResult(ids []any, payload map[string]any) transport.ActionResponse 
 		"reversible":    true,
 		"succeeded":     succeeded,
 		"failed":        failed,
+	}
+	if len(manifestIDs) > 0 {
+		data["mutation_manifest_ids"] = manifestIDs
 	}
 	if len(failed) > 0 {
 		return transport.ActionResponse{OK: false, Error: "some messages failed to move", Data: data}
@@ -255,6 +269,19 @@ func responseMessageError(message map[string]any) string {
 		return code
 	}
 	return "unknown error"
+}
+
+func responseMessageItemID(message map[string]any) string {
+	for _, item := range anySlice(message["Items"]) {
+		itemMap, ok := item.(map[string]any)
+		if !ok {
+			continue
+		}
+		if id := strings.TrimSpace(itemID(itemMap)["id"]); id != "" {
+			return id
+		}
+	}
+	return ""
 }
 
 func (client *Transport) downloadFileAttachment(ctx context.Context, attachmentID string) (map[string]any, error) {

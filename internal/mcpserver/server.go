@@ -374,6 +374,7 @@ const ApprovalTokenEnv = approval.LegacyTokenEnv
 const searchCursorLeaseTTL = 2 * time.Minute
 const mutationManifestTTL = 30 * time.Minute
 const maxBatchBodyFetch = 50
+const mutationManifestIDsDataKey = "mutation_manifest_ids"
 
 var toolRegistrations = []toolRegistration{
 	{name: "outlook.auth_check", add: func(server *mcp.Server, runtime *Runtime, name string) {
@@ -1263,12 +1264,22 @@ func (runtime *Runtime) attachMutationManifest(actionName string, payload map[st
 	if runtime == nil || runtime.manifests == nil || output == nil || !issuesMutationManifest(actionName) {
 		return
 	}
-	ids, hasExplicitSuccessList := manifestIDsFromData(output.Data)
-	if !output.OK && (!hasExplicitSuccessList || len(ids) == 0) {
-		return
+	ids, hasManifestIDs := manifestIDsFromDataKey(output.Data, mutationManifestIDsDataKey)
+	if output.Data != nil {
+		delete(output.Data, mutationManifestIDsDataKey)
 	}
-	if output.OK && len(ids) == 0 && !hasExplicitSuccessList {
-		ids = manifestIDsFromValue(payload["ids"])
+	if !hasManifestIDs {
+		if moveLikeMutationAction(actionName) {
+			return
+		}
+		var hasExplicitSuccessList bool
+		ids, hasExplicitSuccessList = manifestIDsFromDataKey(output.Data, "succeeded")
+		if !output.OK && (!hasExplicitSuccessList || len(ids) == 0) {
+			return
+		}
+		if output.OK && len(ids) == 0 && !hasExplicitSuccessList {
+			ids = manifestIDsFromValue(payload["ids"])
+		}
 	}
 	ids = nonEmptyStrings(ids)
 	if len(ids) == 0 {
@@ -1290,11 +1301,15 @@ func issuesMutationManifest(actionName string) bool {
 	return actionName == "mail.move_to_deleted_items" || isReversibleMessageMutationAction(actionName)
 }
 
-func manifestIDsFromData(data map[string]any) ([]string, bool) {
+func moveLikeMutationAction(actionName string) bool {
+	return actionName == "mail.move_to_deleted_items" || actionName == "mail.move_to_folder" || actionName == "mail.archive"
+}
+
+func manifestIDsFromDataKey(data map[string]any, key string) ([]string, bool) {
 	if data == nil {
 		return nil, false
 	}
-	value, ok := data["succeeded"]
+	value, ok := data[key]
 	if !ok {
 		return nil, false
 	}

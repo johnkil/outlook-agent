@@ -116,7 +116,8 @@ when the request contains the exact id and new state. Bulk changes require
 returned packet, and exact confirmation fields when calling the high-level
 tool. Successful reversible message mutations may return a transient
 `manifest_id` and `manifest_ttl_seconds` so clients can audit the exact
-target set before falling back to folder search.
+target set before falling back to folder search. Move-like actions only return
+body-audit manifests when the transport can retain audit-safe post-move ids.
 
 Compatibility version `0.1` also includes additive review-packet metadata:
 `completeness`, `warning_codes`, `omitted_target_count`, bounded attachment
@@ -140,8 +141,8 @@ succeeded, and failed counts when using it for body audits.
 Compatibility version `0.1` also includes `outlook.mail_audit_manifest_bodies`
 for post-mutation body audits from a recent `manifest_id`. It reuses the exact
 message ids retained by the mutation manifest and never scans a folder by
-itself. If the manifest is missing or expired, clients must rerun metadata
-search and build a new explicit id list.
+itself. If no manifest was returned, or the manifest is missing or expired,
+clients must rerun metadata search and build a new explicit id list.
 
 Clients must ignore unknown output fields and unknown capability detail fields.
 Servers must keep existing fields present with compatible meanings.

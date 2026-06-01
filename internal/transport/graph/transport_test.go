@@ -1564,7 +1564,7 @@ func TestTransportMailMoveToDeletedItemsReportsPartialResults(t *testing.T) {
 		response.Header().Set("Content-Type", "application/json")
 		switch request.URL.Path {
 		case "/v1.0/me/messages/message-1/move":
-			_ = json.NewEncoder(response).Encode(graphMessageResponse("message-1", "Moved", "Alice", "alice@example.com"))
+			_ = json.NewEncoder(response).Encode(graphMessageResponse("moved-message-1", "Moved", "Alice", "alice@example.com"))
 		case "/v1.0/me/messages/message-2/move":
 			response.WriteHeader(http.StatusTooManyRequests)
 			_ = json.NewEncoder(response).Encode(map[string]any{"error": map[string]any{"code": "TooManyRequests"}})
@@ -1593,6 +1593,10 @@ func TestTransportMailMoveToDeletedItemsReportsPartialResults(t *testing.T) {
 	succeeded := result.Data["succeeded"].([]string)
 	if len(succeeded) != 1 || succeeded[0] != "message-1" {
 		t.Fatalf("unexpected succeeded ids: %#v", succeeded)
+	}
+	manifestIDs := result.Data["mutation_manifest_ids"].([]string)
+	if len(manifestIDs) != 1 || manifestIDs[0] != "moved-message-1" {
+		t.Fatalf("unexpected mutation manifest ids: %#v", result.Data)
 	}
 	failed := result.Data["failed"].([]map[string]any)
 	if len(failed) != 1 || failed[0]["id"] != "message-2" {
