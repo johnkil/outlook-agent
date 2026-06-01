@@ -1276,6 +1276,10 @@ func (client *Transport) getMailboxSettings(ctx context.Context, mailbox string,
 }
 
 func (client *Transport) searchPeople(ctx context.Context, mailbox string, query string) ([]any, error) {
+	query = strings.TrimSpace(query)
+	if query == "" {
+		return nil, fmt.Errorf("people.search requires query")
+	}
 	requestURL, err := client.peopleURL(mailbox, query)
 	if err != nil {
 		return nil, err

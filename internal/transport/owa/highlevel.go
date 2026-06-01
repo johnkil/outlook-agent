@@ -381,25 +381,31 @@ func (client *Transport) findMeetingTime(ctx context.Context, payload map[string
 	if len(attendees) == 0 {
 		return transport.ActionResponse{}, fmt.Errorf("calendar.find_time requires attendees")
 	}
-	windowStart, err := parseOWATime(start)
+	timeZone := stringValue(payload, "time_zone")
+	if strings.TrimSpace(timeZone) == "" {
+		timeZone = client.config.effectiveTimeZoneID()
+	}
+	windowStart, err := parseOWATimeInZone(start, timeZone)
 	if err != nil {
 		return transport.ActionResponse{}, fmt.Errorf("calendar.find_time requires parseable start")
 	}
-	windowEnd, err := parseOWATime(end)
+	windowEnd, err := parseOWATimeInZone(end, timeZone)
 	if err != nil {
 		return transport.ActionResponse{}, fmt.Errorf("calendar.find_time requires parseable end")
 	}
-	calendarResponse := client.executeService(ctx, "GetCalendarView", client.buildCalendarViewRequest(start, end), true)
+	requestStart := windowStart.Format(time.RFC3339)
+	requestEnd := windowEnd.Format(time.RFC3339)
+	calendarResponse := client.executeService(ctx, "GetCalendarView", client.buildCalendarViewRequest(requestStart, requestEnd), true)
 	if !calendarResponse.OK {
 		return calendarResponse, nil
 	}
-	busy := intervalsFromCalendarItems(normalizeCalendarItems(extractItems(calendarResponse.Data)))
+	busy := intervalsFromCalendarItemsInZone(normalizeCalendarItems(extractItems(calendarResponse.Data)), timeZone)
 	for _, attendee := range attendees {
-		availabilityResponse := client.executeService(ctx, "GetUserAvailabilityInternal", client.buildAvailabilityRequest(start, end, attendee), true)
+		availabilityResponse := client.executeService(ctx, "GetUserAvailabilityInternal", client.buildAvailabilityRequest(requestStart, requestEnd, attendee), true)
 		if !availabilityResponse.OK {
 			return availabilityResponse, nil
 		}
-		busy = append(busy, intervalsFromAvailabilityWindows(normalizeAvailabilityWindows(availabilityResponse.Data))...)
+		busy = append(busy, intervalsFromAvailabilityWindowsInZone(normalizeAvailabilityWindows(availabilityResponse.Data), timeZone)...)
 	}
 	duration := calendarplan.DurationFromMinutes(floatValue(payload, "duration_minutes", 30))
 	slots := calendarplan.FindSuggestions(windowStart, windowEnd, busy, calendarplan.Options{
@@ -931,18 +937,18 @@ func normalizeAvailabilityResponseItems(items []any) []any {
 	return output
 }
 
-func intervalsFromCalendarItems(items []any) []calendarplan.Interval {
+func intervalsFromCalendarItemsInZone(items []any, timeZone string) []calendarplan.Interval {
 	intervals := make([]calendarplan.Interval, 0, len(items))
 	for _, item := range items {
 		itemMap, ok := item.(map[string]any)
 		if !ok {
 			continue
 		}
-		start, err := parseOWATime(stringValue(itemMap, "start"))
+		start, err := parseOWATimeInZone(stringValue(itemMap, "start"), timeZone)
 		if err != nil {
 			continue
 		}
-		end, err := parseOWATime(stringValue(itemMap, "end"))
+		end, err := parseOWATimeInZone(stringValue(itemMap, "end"), timeZone)
 		if err != nil {
 			continue
 		}
@@ -951,18 +957,18 @@ func intervalsFromCalendarItems(items []any) []calendarplan.Interval {
 	return intervals
 }
 
-func intervalsFromAvailabilityWindows(windows []any) []calendarplan.Interval {
+func intervalsFromAvailabilityWindowsInZone(windows []any, timeZone string) []calendarplan.Interval {
 	intervals := make([]calendarplan.Interval, 0, len(windows))
 	for _, window := range windows {
 		windowMap, ok := window.(map[string]any)
 		if !ok {
 			continue
 		}
-		start, err := parseOWATime(stringValue(windowMap, "start"))
+		start, err := parseOWATimeInZone(stringValue(windowMap, "start"), timeZone)
 		if err != nil {
 			continue
 		}
-		end, err := parseOWATime(stringValue(windowMap, "end"))
+		end, err := parseOWATimeInZone(stringValue(windowMap, "end"), timeZone)
 		if err != nil {
 			continue
 		}
@@ -1131,9 +1137,47 @@ func floatValue(values map[string]any, key string, fallback float64) float64 {
 	}
 }
 
-func parseOWATime(value string) (time.Time, error) {
+func parseOWATimeInZone(value string, timeZone string) (time.Time, error) {
 	if parsed, err := time.Parse(time.RFC3339, value); err == nil {
 		return parsed, nil
 	}
-	return time.ParseInLocation("2006-01-02T15:04:05", value, time.UTC)
+	location := time.UTC
+	if loaded, err := owaTimeLocation(timeZone); err == nil {
+		location = loaded
+	}
+	return time.ParseInLocation("2006-01-02T15:04:05", value, location)
+}
+
+func owaTimeLocation(timeZone string) (*time.Location, error) {
+	timeZone = strings.TrimSpace(timeZone)
+	if timeZone == "" {
+		return time.UTC, nil
+	}
+	if mapped := owaWindowsTimeZoneLocation(timeZone); mapped != "" {
+		timeZone = mapped
+	}
+	return time.LoadLocation(timeZone)
+}
+
+func owaWindowsTimeZoneLocation(timeZone string) string {
+	switch strings.ToLower(strings.TrimSpace(timeZone)) {
+	case "utc", "coordinated universal time":
+		return "UTC"
+	case "gmt standard time":
+		return "Europe/London"
+	case "w. europe standard time", "central european standard time", "romance standard time":
+		return "Europe/Berlin"
+	case "russian standard time":
+		return "Europe/Moscow"
+	case "eastern standard time":
+		return "America/New_York"
+	case "central standard time":
+		return "America/Chicago"
+	case "mountain standard time":
+		return "America/Denver"
+	case "pacific standard time":
+		return "America/Los_Angeles"
+	default:
+		return ""
+	}
 }

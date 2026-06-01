@@ -2246,6 +2246,35 @@ func TestTransportPeopleResolveAmbiguousDoesNotGuess(t *testing.T) {
 	}
 }
 
+func TestTransportPeopleResolveRequiresQueryBeforeSearch(t *testing.T) {
+	var called bool
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		called = true
+		t.Fatalf("people.resolve must not call Graph without a query: %s %s", request.Method, request.URL.String())
+	}))
+	defer server.Close()
+
+	client := graph.NewTransport(graph.Config{
+		BaseURL:   server.URL + "/v1.0",
+		SecretRef: secret.Ref("memory:graph"),
+	}, secret.NewMemoryStore(map[string]string{"memory:graph": "token-secret"}), server.Client())
+
+	result := client.Execute(context.Background(), transport.ActionRequest{
+		Name:    "people.resolve",
+		Payload: map[string]any{"query": "   "},
+	})
+
+	if result.OK {
+		t.Fatalf("expected people.resolve without query to fail, got %#v", result)
+	}
+	if called {
+		t.Fatal("expected people.resolve to fail before Graph request")
+	}
+	if !strings.Contains(result.Error, "query") {
+		t.Fatalf("expected query validation error, got %q", result.Error)
+	}
+}
+
 func TestTransportCalendarFindTimeUsesGetScheduleIntersection(t *testing.T) {
 	var sawGetSchedule bool
 	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
