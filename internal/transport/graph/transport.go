@@ -1339,7 +1339,9 @@ func (client *Transport) findMeetingTime(ctx context.Context, mailbox string, pa
 	if err != nil {
 		return nil, fmt.Errorf("calendar.find_time requires parseable end")
 	}
-	events, err := client.listCalendarEvents(ctx, mailbox, start, end)
+	calendarViewStart := windowStart.UTC().Format(time.RFC3339)
+	calendarViewEnd := windowEnd.UTC().Format(time.RFC3339)
+	events, err := client.listCalendarEvents(ctx, mailbox, calendarViewStart, calendarViewEnd)
 	if err != nil {
 		return nil, err
 	}
