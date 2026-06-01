@@ -775,6 +775,7 @@ type personEmailAddress struct {
 type calendarEvent struct {
 	ID             string           `json:"id"`
 	Subject        string           `json:"subject"`
+	ShowAs         string           `json:"showAs"`
 	Start          dateTimeTimeZone `json:"start"`
 	End            dateTimeTimeZone `json:"end"`
 	Location       eventLocation    `json:"location"`
@@ -838,7 +839,7 @@ type tokenRefreshResponse struct {
 const messageMetadataSelect = "id,subject,from,receivedDateTime,importance,isRead,hasAttachments"
 const messageBodySelect = "id,body"
 const draftSendReviewSelect = "id,subject,body,toRecipients,ccRecipients,bccRecipients,hasAttachments"
-const eventMetadataSelect = "id,subject,start,end,location,organizer,attendees,responseStatus"
+const eventMetadataSelect = "id,subject,showAs,start,end,location,organizer,attendees,responseStatus"
 const maxReviewAttachmentPages = 10
 
 func (client *Transport) getMailFolder(ctx context.Context, mailbox string, folderID string) (mailFolder, error) {
@@ -2143,14 +2144,34 @@ func normalizeGraphAttachmentMetadata(item attachment) map[string]any {
 }
 
 func normalizeGraphEvent(item calendarEvent) map[string]any {
+	startTimeZone := graphDateTimeZone(item.Start.TimeZone, "UTC")
+	endTimeZone := graphDateTimeZone(item.End.TimeZone, "UTC")
 	return map[string]any{
 		"id":              item.ID,
 		"title":           item.Subject,
+		"free_busy_type":  graphEventAvailabilityStatus(item.ShowAs),
 		"start":           item.Start.DateTime,
-		"start_time_zone": graphDateTimeZone(item.Start.TimeZone, "UTC"),
+		"start_time_zone": startTimeZone,
 		"end":             item.End.DateTime,
-		"end_time_zone":   graphDateTimeZone(item.End.TimeZone, "UTC"),
+		"end_time_zone":   endTimeZone,
 		"location":        item.Location.DisplayName,
+	}
+}
+
+func graphEventAvailabilityStatus(showAs string) string {
+	switch strings.ToLower(strings.TrimSpace(showAs)) {
+	case "free":
+		return "free"
+	case "tentative":
+		return "tentative"
+	case "busy":
+		return "busy"
+	case "oof", "outofoffice":
+		return "oof"
+	case "workingelsewhere", "working_elsewhere":
+		return "workingelsewhere"
+	default:
+		return "busy"
 	}
 }
 
@@ -2201,7 +2222,7 @@ func intervalsFromGraphEvents(events []any) []calendarplan.Interval {
 		if err != nil {
 			continue
 		}
-		intervals = append(intervals, calendarplan.Interval{Start: start, End: end, Status: "busy"})
+		intervals = append(intervals, calendarplan.Interval{Start: start, End: end, Status: stringValue(eventMap, "free_busy_type", "busy")})
 	}
 	return intervals
 }
