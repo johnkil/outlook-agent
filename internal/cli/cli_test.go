@@ -284,6 +284,29 @@ func TestDoctorWarnsWhenRequiredApprovalSecretMissing(t *testing.T) {
 	}
 }
 
+func TestDoctorNextStepsRecommendSetupApprovalWhenRequiredSecretMissing(t *testing.T) {
+	output := doctorOutput{
+		Config: doctorConfigOutput{Kind: "file", Path: "/tmp/outlook-agent.json"},
+		SecretStore: doctorSecretStoreOutput{
+			Available: true,
+		},
+		Approval: doctorApprovalOutput{
+			Mode:                    "required",
+			RequiredByDefault:       true,
+			HostIntegrationRequired: true,
+			SecretConfigured:        false,
+			Warning:                 "OUTLOOK_AGENT_APPROVAL_SECRET is required for high-risk actions in required approval mode",
+		},
+	}
+
+	steps := doctorNextSteps(output)
+
+	joined := strings.Join(steps, "\n")
+	if !strings.Contains(joined, "outlook-agent setup approval plan") {
+		t.Fatalf("expected setup approval guidance, got %q", joined)
+	}
+}
+
 func TestDoctorReportsMissingExplicitConfig(t *testing.T) {
 	missingConfig := filepath.Join(t.TempDir(), "missing.json")
 	var stdout bytes.Buffer

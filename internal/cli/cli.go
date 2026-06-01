@@ -1047,6 +1047,7 @@ func doctorNextSteps(output doctorOutput) []string {
 	}
 	if output.Approval.HostIntegrationRequired && !output.Approval.SecretConfigured {
 		steps = append(steps, "Configure OUTLOOK_AGENT_APPROVAL_SECRET in the trusted host/operator environment before high-risk live actions.")
+		steps = append(steps, "Run outlook-agent setup approval plan --client <opencode|codex|claude-code> --scope <project|user> after choosing the trusted host secret location.")
 	}
 	if output.MCPStdio {
 		steps = append(steps, "OpenCode can run Outlook Agent through a local MCP entry that executes outlook-agent --config <path> mcp.")
