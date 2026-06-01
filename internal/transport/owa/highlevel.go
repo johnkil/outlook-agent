@@ -897,12 +897,13 @@ func normalizeCalendarItems(items []any) []any {
 		}
 		itemID := itemID(itemMap)
 		output = append(output, map[string]any{
-			"id":         itemID["id"],
-			"change_key": itemID["change_key"],
-			"title":      stringValue(itemMap, "Subject"),
-			"start":      stringValue(itemMap, "Start"),
-			"end":        stringValue(itemMap, "End"),
-			"location":   stringValue(itemMap, "Location"),
+			"id":             itemID["id"],
+			"change_key":     itemID["change_key"],
+			"title":          stringValue(itemMap, "Subject"),
+			"start":          stringValue(itemMap, "Start"),
+			"end":            stringValue(itemMap, "End"),
+			"location":       stringValue(itemMap, "Location"),
+			"free_busy_type": stringValue(itemMap, "FreeBusyType"),
 		})
 	}
 	return output
@@ -968,7 +969,11 @@ func intervalsFromCalendarItemsInZone(items []any, timeZone string) []calendarpl
 		if err != nil {
 			continue
 		}
-		intervals = append(intervals, calendarplan.Interval{Start: start, End: end, Status: "busy"})
+		status := strings.TrimSpace(stringValue(itemMap, "free_busy_type"))
+		if status == "" {
+			status = "busy"
+		}
+		intervals = append(intervals, calendarplan.Interval{Start: start, End: end, Status: status})
 	}
 	return intervals
 }
