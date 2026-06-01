@@ -118,6 +118,21 @@ type MailFetchBodiesOutput struct {
 	Results   []MailFetchBodyItemOutput `json:"results"`
 }
 
+type MailAuditManifestBodiesInput struct {
+	ManifestID string `json:"manifest_id" jsonschema:"manifest id returned by a recent mutation"`
+	Max        int    `json:"max,omitempty" jsonschema:"maximum ids to process, capped by the server"`
+	Mailbox    string `json:"mailbox,omitempty" jsonschema:"optional mailbox user id or user principal name"`
+}
+
+type MailAuditManifestBodiesOutput struct {
+	ManifestID string                    `json:"manifest_id"`
+	Action     string                    `json:"action"`
+	Attempted  int                       `json:"attempted"`
+	Succeeded  int                       `json:"succeeded"`
+	Failed     int                       `json:"failed"`
+	Results    []MailFetchBodyItemOutput `json:"results"`
+}
+
 type MailFetchBodyItemOutput struct {
 	ID       string `json:"id"`
 	OK       bool   `json:"ok"`
@@ -382,6 +397,9 @@ var toolRegistrations = []toolRegistration{
 	{name: "outlook.mail_fetch_bodies", add: func(server *mcp.Server, runtime *Runtime, name string) {
 		mcp.AddTool(server, mcpTool(name), mailFetchBodiesHandler(runtime.client))
 	}},
+	{name: "outlook.mail_audit_manifest_bodies", add: func(server *mcp.Server, runtime *Runtime, name string) {
+		mcp.AddTool(server, mcpTool(name), mailAuditManifestBodiesHandler(runtime))
+	}},
 	{name: "outlook.mail_list_attachments", add: func(server *mcp.Server, runtime *Runtime, name string) {
 		mcp.AddTool(server, mcpTool(name), mailListAttachmentsHandler(runtime.client))
 	}},
@@ -458,6 +476,7 @@ var toolDescriptionByName = map[string]string{
 	"outlook.mail_fetch_metadata":         "Fetch metadata for one explicit message before body or attachment reads.",
 	"outlook.mail_fetch_body":             "Fetch body text for one explicit message; not a bulk body reader.",
 	"outlook.mail_fetch_bodies":           "Fetch body text for explicit ids in a capped batch; not a mailbox search or broad body reader.",
+	"outlook.mail_audit_manifest_bodies":  "Fetch body text for exact ids from a recent mutation manifest; not a folder scan.",
 	"outlook.mail_list_attachments":       "List attachment metadata for one explicit message; does not fetch attachment content.",
 	"outlook.mail_fetch_attachment":       "Fetch one explicit attachment by message id and attachment id.",
 	"outlook.mail_create_draft":           "Create a save-only draft; does not send mail.",
@@ -767,32 +786,65 @@ func mailFetchBodyHandler(client transport.Transport) func(context.Context, *mcp
 
 func mailFetchBodiesHandler(client transport.Transport) func(context.Context, *mcp.CallToolRequest, MailFetchBodiesInput) (*mcp.CallToolResult, MailFetchBodiesOutput, error) {
 	return func(ctx context.Context, _ *mcp.CallToolRequest, input MailFetchBodiesInput) (*mcp.CallToolResult, MailFetchBodiesOutput, error) {
-		ids := nonEmptyStrings(input.IDs)
-		if len(ids) == 0 {
-			return nil, MailFetchBodiesOutput{}, errors.New("outlook.mail_fetch_bodies requires ids")
-		}
-		limit := input.Max
-		if limit <= 0 || limit > maxBatchBodyFetch {
-			limit = maxBatchBodyFetch
-		}
-		if len(ids) > limit {
-			ids = ids[:limit]
-		}
-		output := MailFetchBodiesOutput{Attempted: len(ids), Results: make([]MailFetchBodyItemOutput, 0, len(ids))}
-		for _, id := range ids {
-			response := client.Execute(ctx, transport.ActionRequest{Name: "mail.fetch_body", Payload: withMailbox(map[string]any{"id": id}, input.Mailbox)})
-			item := MailFetchBodyItemOutput{ID: id, OK: response.OK}
-			if response.OK {
-				item.BodyText, _ = response.Data["body_text"].(string)
-				output.Succeeded++
-			} else {
-				item.Error = redact.String(response.Error)
-				output.Failed++
-			}
-			output.Results = append(output.Results, item)
-		}
-		return nil, output, nil
+		output, err := fetchBodies(ctx, client, input.IDs, input.Max, input.Mailbox, "outlook.mail_fetch_bodies requires ids")
+		return nil, output, err
 	}
+}
+
+func mailAuditManifestBodiesHandler(runtime *Runtime) func(context.Context, *mcp.CallToolRequest, MailAuditManifestBodiesInput) (*mcp.CallToolResult, MailAuditManifestBodiesOutput, error) {
+	return func(ctx context.Context, _ *mcp.CallToolRequest, input MailAuditManifestBodiesInput) (*mcp.CallToolResult, MailAuditManifestBodiesOutput, error) {
+		manifestID := strings.TrimSpace(input.ManifestID)
+		if manifestID == "" {
+			return nil, MailAuditManifestBodiesOutput{}, errors.New("manifest_id required")
+		}
+		if runtime == nil || runtime.manifests == nil {
+			return nil, MailAuditManifestBodiesOutput{}, errors.New("mutation manifest is missing or expired; rerun metadata search and build an explicit id list")
+		}
+		record, ok := runtime.manifests.Get(manifestID)
+		if !ok {
+			return nil, MailAuditManifestBodiesOutput{}, errors.New("mutation manifest is missing or expired; rerun metadata search and build an explicit id list")
+		}
+		batch, err := fetchBodies(ctx, runtime.client, record.IDs, input.Max, input.Mailbox, "mutation manifest has no ids")
+		if err != nil {
+			return nil, MailAuditManifestBodiesOutput{}, err
+		}
+		return nil, MailAuditManifestBodiesOutput{
+			ManifestID: record.ID,
+			Action:     record.Action,
+			Attempted:  batch.Attempted,
+			Succeeded:  batch.Succeeded,
+			Failed:     batch.Failed,
+			Results:    batch.Results,
+		}, nil
+	}
+}
+
+func fetchBodies(ctx context.Context, client transport.Transport, ids []string, max int, mailbox string, emptyIDsMessage string) (MailFetchBodiesOutput, error) {
+	ids = nonEmptyStrings(ids)
+	if len(ids) == 0 {
+		return MailFetchBodiesOutput{}, errors.New(emptyIDsMessage)
+	}
+	limit := max
+	if limit <= 0 || limit > maxBatchBodyFetch {
+		limit = maxBatchBodyFetch
+	}
+	if len(ids) > limit {
+		ids = ids[:limit]
+	}
+	output := MailFetchBodiesOutput{Attempted: len(ids), Results: make([]MailFetchBodyItemOutput, 0, len(ids))}
+	for _, id := range ids {
+		response := client.Execute(ctx, transport.ActionRequest{Name: "mail.fetch_body", Payload: withMailbox(map[string]any{"id": id}, mailbox)})
+		item := MailFetchBodyItemOutput{ID: id, OK: response.OK}
+		if response.OK {
+			item.BodyText, _ = response.Data["body_text"].(string)
+			output.Succeeded++
+		} else {
+			item.Error = redact.String(response.Error)
+			output.Failed++
+		}
+		output.Results = append(output.Results, item)
+	}
+	return output, nil
 }
 
 func mailListAttachmentsHandler(client transport.Transport) func(context.Context, *mcp.CallToolRequest, MessageIDInput) (*mcp.CallToolResult, MailListAttachmentsOutput, error) {

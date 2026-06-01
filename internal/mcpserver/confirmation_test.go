@@ -10,6 +10,7 @@ import (
 
 	"github.com/johnkil/outlook-agent/internal/action"
 	"github.com/johnkil/outlook-agent/internal/approval"
+	"github.com/johnkil/outlook-agent/internal/manifest"
 	"github.com/johnkil/outlook-agent/internal/policy"
 	"github.com/johnkil/outlook-agent/internal/secret"
 	"github.com/johnkil/outlook-agent/internal/transport"
@@ -1416,6 +1417,61 @@ func TestGenericActionPathsRejectBatchBodyHelper(t *testing.T) {
 	}
 }
 
+func TestMailAuditManifestBodiesUsesExactManifestIDs(t *testing.T) {
+	client := &manifestAuditBodyTransport{}
+	runtime := NewRuntime(client)
+	record, err := runtime.manifests.Issue(manifest.Record{
+		Action: "mail.move_to_deleted_items",
+		IDs:    []string{"msg-1", "msg-2"},
+	}, time.Minute)
+	if err != nil {
+		t.Fatalf("issue manifest: %v", err)
+	}
+
+	_, output, err := mailAuditManifestBodiesHandler(runtime)(context.Background(), nil, MailAuditManifestBodiesInput{
+		ManifestID: record.ID,
+		Mailbox:    "shared@example.com",
+	})
+	if err != nil {
+		t.Fatalf("manifest audit handler: %v", err)
+	}
+	if output.ManifestID != record.ID || output.Action != "mail.move_to_deleted_items" {
+		t.Fatalf("unexpected manifest metadata: %#v", output)
+	}
+	if output.Attempted != 2 || output.Succeeded != 2 || output.Failed != 0 || len(output.Results) != 2 {
+		t.Fatalf("unexpected manifest audit coverage: %#v", output)
+	}
+	if len(client.requests) != 2 {
+		t.Fatalf("expected exactly two body fetches from manifest ids, got %d", len(client.requests))
+	}
+	for index, request := range client.requests {
+		wantID := []string{"msg-1", "msg-2"}[index]
+		if request.Name != "mail.fetch_body" || request.Payload["id"] != wantID {
+			t.Fatalf("expected body fetch for %s, got %#v", wantID, request)
+		}
+		if request.Payload["mailbox"] != "shared@example.com" {
+			t.Fatalf("expected mailbox forwarded, got %#v", request.Payload)
+		}
+		if _, ok := request.Payload["folder"]; ok {
+			t.Fatalf("manifest audit must not scan folders, got %#v", request.Payload)
+		}
+		if _, ok := request.Payload["folder_id"]; ok {
+			t.Fatalf("manifest audit must not scan folders, got %#v", request.Payload)
+		}
+	}
+}
+
+func TestMailAuditManifestBodiesRejectsMissingManifest(t *testing.T) {
+	runtime := NewRuntime(fake.New())
+
+	_, _, err := mailAuditManifestBodiesHandler(runtime)(context.Background(), nil, MailAuditManifestBodiesInput{
+		ManifestID: "missing",
+	})
+	if err == nil || !strings.Contains(err.Error(), "mutation manifest is missing or expired") {
+		t.Fatalf("expected missing manifest guidance, got %v", err)
+	}
+}
+
 func TestRawActionDoesNotTrustCallerSuppliedExplicitTarget(t *testing.T) {
 	client := newRecordingTransport(action.Definition{Name: "SearchMailboxes", Transport: "test", Class: policy.ReadBodyExplicit, Level: action.LevelRawGuardedExecution})
 	runtime := NewRuntime(client)
@@ -1556,6 +1612,10 @@ type recordingTransport struct {
 	payload    map[string]any
 }
 
+type manifestAuditBodyTransport struct {
+	requests []transport.ActionRequest
+}
+
 func newRecordingTransport(definition action.Definition) *recordingTransport {
 	return &recordingTransport{definition: definition}
 }
@@ -1584,6 +1644,28 @@ func (client *recordingTransport) Execute(_ context.Context, request transport.A
 
 func (client *recordingTransport) DryRun(context.Context, transport.ActionRequest) transport.DryRunSummary {
 	return transport.DryRunSummary{Action: client.definition.Name, Count: 1, RequiresConfirmation: true}
+}
+
+func (client *manifestAuditBodyTransport) Name() string {
+	return "test"
+}
+
+func (client *manifestAuditBodyTransport) Authenticate(context.Context, string) transport.AuthResult {
+	return transport.AuthResult{OK: true}
+}
+
+func (client *manifestAuditBodyTransport) Capabilities(context.Context) transport.CapabilitySet {
+	return transport.CapabilitySet{}
+}
+
+func (client *manifestAuditBodyTransport) Execute(_ context.Context, request transport.ActionRequest) transport.ActionResponse {
+	client.requests = append(client.requests, request)
+	id, _ := request.Payload["id"].(string)
+	return transport.ActionResponse{OK: true, Data: map[string]any{"id": id, "body_text": "body for " + id}}
+}
+
+func (client *manifestAuditBodyTransport) DryRun(context.Context, transport.ActionRequest) transport.DryRunSummary {
+	return transport.DryRunSummary{}
 }
 
 type reviewChangingTransport struct {

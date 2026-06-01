@@ -18,6 +18,7 @@ Compatibility version `0.1` includes these tool names:
 - `outlook.mail_fetch_metadata`
 - `outlook.mail_fetch_body`
 - `outlook.mail_fetch_bodies`
+- `outlook.mail_audit_manifest_bodies`
 - `outlook.mail_list_attachments`
 - `outlook.mail_fetch_attachment`
 - `outlook.mail_create_draft`
@@ -133,6 +134,12 @@ Compatibility version `0.1` also includes `outlook.mail_fetch_bodies`, an
 explicit-id batch helper capped at 50 ids per call. It is not a mailbox search,
 broad body reader, or raw transport action; clients should report attempted,
 succeeded, and failed counts when using it for body audits.
+
+Compatibility version `0.1` also includes `outlook.mail_audit_manifest_bodies`
+for post-mutation body audits from a recent `manifest_id`. It reuses the exact
+message ids retained by the mutation manifest and never scans a folder by
+itself. If the manifest is missing or expired, clients must rerun metadata
+search and build a new explicit id list.
 
 Clients must ignore unknown output fields and unknown capability detail fields.
 Servers must keep existing fields present with compatible meanings.

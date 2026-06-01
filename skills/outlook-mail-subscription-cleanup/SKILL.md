@@ -39,7 +39,9 @@ Separate analysis from mailbox changes.
    approval secret.
 8. Keep the exact target ids in process until the post-action verification is
    complete so accidental moves can be restored immediately. Do not write raw
-   message bodies, browser session secrets, or session dumps to disk.
+   message bodies, browser session secrets, or session dumps to disk. After a
+   broad move, use the returned `manifest_id` with
+   `outlook.mail_audit_manifest_bodies` before scanning a whole folder.
 9. Use `outlook.raw_action` only when `outlook.capabilities` shows the needed
    transport action and no high-level tool fits.
 

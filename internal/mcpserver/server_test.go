@@ -29,6 +29,7 @@ func TestCatalogContainsInitialTools(t *testing.T) {
 		"outlook.mail_fetch_metadata",
 		"outlook.mail_fetch_body",
 		"outlook.mail_fetch_bodies",
+		"outlook.mail_audit_manifest_bodies",
 		"outlook.mail_list_attachments",
 		"outlook.mail_fetch_attachment",
 		"outlook.mail_create_draft",
@@ -83,6 +84,11 @@ func TestToolDescriptionsGuideAgentWorkflow(t *testing.T) {
 			"explicit ids",
 			"capped",
 			"not a mailbox search",
+		},
+		"outlook.mail_audit_manifest_bodies": {
+			"manifest",
+			"exact ids",
+			"not a folder scan",
 		},
 		"outlook.mail_create_draft": {
 			"save-only",
