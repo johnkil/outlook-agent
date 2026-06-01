@@ -2317,6 +2317,130 @@ func TestTransportCalendarFindTimeUsesGetScheduleIntersection(t *testing.T) {
 	}
 }
 
+func TestTransportCalendarFindTimeUsesMailboxForGetSchedule(t *testing.T) {
+	const mailbox = "shared@example.com"
+	var sawCalendarView bool
+	var sawGetSchedule bool
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		switch {
+		case request.Method == http.MethodGet && request.URL.Path == "/v1.0/users/shared@example.com/calendarView":
+			sawCalendarView = true
+			response.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(response).Encode(map[string]any{"value": []any{}})
+		case request.Method == http.MethodPost && request.URL.Path == "/v1.0/users/shared@example.com/calendar/getSchedule":
+			sawGetSchedule = true
+			var body map[string]any
+			if err := json.NewDecoder(request.Body).Decode(&body); err != nil {
+				t.Fatalf("decode request body: %v", err)
+			}
+			schedules := body["schedules"].([]any)
+			if len(schedules) != 1 || schedules[0] != "vlad.cheshenko@example.com" {
+				t.Fatalf("unexpected getSchedule body: %#v", body)
+			}
+			response.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(response).Encode(map[string]any{
+				"value": []any{
+					map[string]any{
+						"scheduleId":       "vlad.cheshenko@example.com",
+						"scheduleItems":    []any{},
+						"availabilityView": "",
+					},
+				},
+			})
+		case request.Method == http.MethodPost && request.URL.Path == "/v1.0/me/calendar/getSchedule":
+			t.Fatal("calendar.find_time must preserve mailbox for attendee getSchedule calls")
+		default:
+			t.Fatalf("unexpected request: %s %s", request.Method, request.URL.String())
+		}
+	}))
+	defer server.Close()
+
+	client := graph.NewTransport(graph.Config{
+		BaseURL:   server.URL + "/v1.0",
+		SecretRef: secret.Ref("memory:graph"),
+	}, secret.NewMemoryStore(map[string]string{"memory:graph": "token-secret"}), server.Client())
+
+	result := client.Execute(context.Background(), transport.ActionRequest{
+		Name: "calendar.find_time",
+		Payload: map[string]any{
+			"mailbox":          mailbox,
+			"attendees":        []any{"vlad.cheshenko@example.com"},
+			"start":            "2026-05-28T09:00:00Z",
+			"end":              "2026-05-28T12:00:00Z",
+			"duration_minutes": float64(30),
+			"time_zone":        "UTC",
+			"tentative":        "busy",
+		},
+	})
+
+	if !result.OK {
+		t.Fatalf("expected calendar.find_time ok, got %#v", result)
+	}
+	if !sawCalendarView || !sawGetSchedule {
+		t.Fatalf("expected shared mailbox calendarView and getSchedule calls, saw calendarView=%v getSchedule=%v", sawCalendarView, sawGetSchedule)
+	}
+}
+
+func TestTransportCalendarFindTimeParsesScheduleTimezone(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		switch {
+		case request.Method == http.MethodGet && request.URL.Path == "/v1.0/me/calendarView":
+			response.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(response).Encode(map[string]any{"value": []any{}})
+		case request.Method == http.MethodPost && request.URL.Path == "/v1.0/me/calendar/getSchedule":
+			var body map[string]any
+			if err := json.NewDecoder(request.Body).Decode(&body); err != nil {
+				t.Fatalf("decode request body: %v", err)
+			}
+			start := body["startTime"].(map[string]any)
+			end := body["endTime"].(map[string]any)
+			if start["timeZone"] != "Europe/Berlin" || end["timeZone"] != "Europe/Berlin" {
+				t.Fatalf("expected requested timezone in getSchedule body, got %#v", body)
+			}
+			response.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(response).Encode(map[string]any{
+				"value": []any{
+					map[string]any{
+						"scheduleId": "vlad.cheshenko@example.com",
+						"scheduleItems": []any{
+							graphScheduleItemResponseWithTimeZone("busy", "2026-05-28T09:00:00", "2026-05-28T09:30:00", "Hidden busy event", "Europe/Berlin"),
+						},
+					},
+				},
+			})
+		default:
+			t.Fatalf("unexpected request: %s %s", request.Method, request.URL.String())
+		}
+	}))
+	defer server.Close()
+
+	client := graph.NewTransport(graph.Config{
+		BaseURL:   server.URL + "/v1.0",
+		SecretRef: secret.Ref("memory:graph"),
+	}, secret.NewMemoryStore(map[string]string{"memory:graph": "token-secret"}), server.Client())
+
+	result := client.Execute(context.Background(), transport.ActionRequest{
+		Name: "calendar.find_time",
+		Payload: map[string]any{
+			"attendees":        []any{"vlad.cheshenko@example.com"},
+			"start":            "2026-05-28T09:00:00+02:00",
+			"end":              "2026-05-28T11:00:00+02:00",
+			"duration_minutes": float64(30),
+			"time_zone":        "Europe/Berlin",
+			"tentative":        "busy",
+		},
+	})
+
+	if !result.OK {
+		t.Fatalf("expected calendar.find_time ok, got %#v", result)
+	}
+	suggestions := result.Data["suggestions"].([]any)
+	first := suggestions[0].(map[string]any)
+	if first["start"] != "2026-05-28T07:30:00Z" || first["end"] != "2026-05-28T08:00:00Z" {
+		t.Fatalf("unexpected first suggestion: %#v", first)
+	}
+}
+
 func TestTransportReportsHTTPErrorWithoutToken(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
 		response.Header().Set("Content-Type", "application/json")
@@ -2612,16 +2736,20 @@ func stringSliceContains(values []string, expected string) bool {
 }
 
 func graphScheduleItemResponse(status string, start string, end string, subject string) map[string]any {
+	return graphScheduleItemResponseWithTimeZone(status, start, end, subject, "UTC")
+}
+
+func graphScheduleItemResponseWithTimeZone(status string, start string, end string, subject string, timeZone string) map[string]any {
 	return map[string]any{
 		"status":  status,
 		"subject": subject,
 		"start": map[string]any{
 			"dateTime": start,
-			"timeZone": "UTC",
+			"timeZone": timeZone,
 		},
 		"end": map[string]any{
 			"dateTime": end,
-			"timeZone": "UTC",
+			"timeZone": timeZone,
 		},
 	}
 }

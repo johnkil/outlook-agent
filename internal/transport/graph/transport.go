@@ -1326,11 +1326,12 @@ func (client *Transport) findMeetingTime(ctx context.Context, mailbox string, pa
 	if len(attendees) == 0 {
 		return nil, fmt.Errorf("calendar.find_time requires attendees")
 	}
-	windowStart, err := parseGraphTime(start)
+	timeZone := stringValue(payload, "time_zone", "UTC")
+	windowStart, err := parseGraphTimeInZone(start, timeZone)
 	if err != nil {
 		return nil, fmt.Errorf("calendar.find_time requires parseable start")
 	}
-	windowEnd, err := parseGraphTime(end)
+	windowEnd, err := parseGraphTimeInZone(end, timeZone)
 	if err != nil {
 		return nil, fmt.Errorf("calendar.find_time requires parseable end")
 	}
@@ -1341,10 +1342,11 @@ func (client *Transport) findMeetingTime(ctx context.Context, mailbox string, pa
 	busy := intervalsFromGraphEvents(events)
 	for _, attendee := range attendees {
 		windows, err := client.getSchedule(ctx, map[string]any{
+			"mailbox":          mailbox,
 			"email":            attendee,
 			"start":            start,
 			"end":              end,
-			"time_zone":        stringValue(payload, "time_zone", "UTC"),
+			"time_zone":        timeZone,
 			"interval_minutes": intValue(payload, "interval_minutes", 30),
 		})
 		if err != nil {
@@ -1407,7 +1409,7 @@ func (client *Transport) getSchedule(ctx context.Context, payload map[string]any
 	windows := make([]any, 0)
 	for _, schedule := range response.Value {
 		for _, item := range schedule.ScheduleItems {
-			windows = append(windows, normalizeGraphScheduleItem(schedule.ScheduleID, item))
+			windows = append(windows, normalizeGraphScheduleItem(schedule.ScheduleID, item, timeZone))
 		}
 	}
 	if windows == nil {
@@ -2163,14 +2165,16 @@ func normalizeGraphPerson(item person) map[string]any {
 	}
 }
 
-func normalizeGraphScheduleItem(scheduleID string, item scheduleItem) map[string]any {
+func normalizeGraphScheduleItem(scheduleID string, item scheduleItem, fallbackTimeZone string) map[string]any {
 	return map[string]any{
-		"schedule_id":    scheduleID,
-		"start":          item.Start.DateTime,
-		"end":            item.End.DateTime,
-		"status":         item.Status,
-		"free_busy_type": item.Status,
-		"subject":        item.Subject,
+		"schedule_id":     scheduleID,
+		"start":           item.Start.DateTime,
+		"start_time_zone": graphDateTimeZone(item.Start.TimeZone, fallbackTimeZone),
+		"end":             item.End.DateTime,
+		"end_time_zone":   graphDateTimeZone(item.End.TimeZone, fallbackTimeZone),
+		"status":          item.Status,
+		"free_busy_type":  item.Status,
+		"subject":         item.Subject,
 	}
 }
 
@@ -2201,11 +2205,11 @@ func intervalsFromGraphWindows(windows []any) []calendarplan.Interval {
 		if !ok {
 			continue
 		}
-		start, err := parseGraphTime(stringValue(windowMap, "start", ""))
+		start, err := parseGraphTimeInZone(stringValue(windowMap, "start", ""), stringValue(windowMap, "start_time_zone", "UTC"))
 		if err != nil {
 			continue
 		}
-		end, err := parseGraphTime(stringValue(windowMap, "end", ""))
+		end, err := parseGraphTimeInZone(stringValue(windowMap, "end", ""), stringValue(windowMap, "end_time_zone", "UTC"))
 		if err != nil {
 			continue
 		}
@@ -2371,10 +2375,71 @@ func stringSlice(value any) []string {
 }
 
 func parseGraphTime(value string) (time.Time, error) {
+	return parseGraphTimeInZone(value, "UTC")
+}
+
+func parseGraphTimeInZone(value string, timeZone string) (time.Time, error) {
 	if parsed, err := time.Parse(time.RFC3339, value); err == nil {
 		return parsed, nil
 	}
-	return time.ParseInLocation("2006-01-02T15:04:05", value, time.UTC)
+	location := time.UTC
+	if loaded, err := graphTimeLocation(timeZone); err == nil {
+		location = loaded
+	}
+	return time.ParseInLocation("2006-01-02T15:04:05", value, location)
+}
+
+func graphTimeLocation(timeZone string) (*time.Location, error) {
+	timeZone = strings.TrimSpace(timeZone)
+	if timeZone == "" {
+		return time.UTC, nil
+	}
+	if mapped := graphWindowsTimeZoneLocation(timeZone); mapped != "" {
+		timeZone = mapped
+	}
+	return time.LoadLocation(timeZone)
+}
+
+func graphWindowsTimeZoneLocation(timeZone string) string {
+	switch strings.ToLower(strings.TrimSpace(timeZone)) {
+	case "utc", "coordinated universal time":
+		return "UTC"
+	case "gmt standard time":
+		return "Europe/London"
+	case "w. europe standard time", "central european standard time", "romance standard time":
+		return "Europe/Berlin"
+	case "russian standard time":
+		return "Europe/Moscow"
+	case "eastern standard time":
+		return "America/New_York"
+	case "central standard time":
+		return "America/Chicago"
+	case "mountain standard time":
+		return "America/Denver"
+	case "pacific standard time":
+		return "America/Los_Angeles"
+	default:
+		return ""
+	}
+}
+
+func graphDateTimeZone(value string, fallback string) string {
+	for _, candidate := range []string{value, fallback, "UTC"} {
+		candidate = strings.TrimSpace(candidate)
+		if candidate == "" {
+			continue
+		}
+		if _, err := graphTimeLocation(candidate); err == nil {
+			return candidate
+		}
+	}
+	for _, candidate := range []string{value, fallback} {
+		candidate = strings.TrimSpace(candidate)
+		if candidate != "" {
+			return candidate
+		}
+	}
+	return "UTC"
 }
 
 func messageIDs(payload map[string]any) []string {
