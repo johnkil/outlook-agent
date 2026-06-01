@@ -100,6 +100,9 @@ func TestCodexMarketplacePackageUsesPluginRootLayout(t *testing.T) {
 	if manifest["name"] != "outlook-agent" {
 		t.Fatalf("expected manifest name outlook-agent, got %s", mustJSON(t, manifest))
 	}
+	if codexPluginVersion != "0.4.0" {
+		t.Fatalf("expected Codex marketplace plugin version to be prepared for v0.4.0, got %s", codexPluginVersion)
+	}
 	if manifest["version"] != codexPluginVersion {
 		t.Fatalf("expected manifest version %s, got %s", codexPluginVersion, mustJSON(t, manifest))
 	}
