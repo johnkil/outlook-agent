@@ -114,7 +114,9 @@ helpers: `outlook.mail_move_to_folder`, `outlook.mail_archive`,
 when the request contains the exact id and new state. Bulk changes require
 `outlook.action_dry_run` for the matching action, user/host review of the
 returned packet, and exact confirmation fields when calling the high-level
-tool.
+tool. Successful reversible message mutations may return a transient
+`manifest_id` and `manifest_ttl_seconds` so clients can audit the exact
+target set before falling back to folder search.
 
 Compatibility version `0.1` also includes additive review-packet metadata:
 `completeness`, `warning_codes`, `omitted_target_count`, bounded attachment

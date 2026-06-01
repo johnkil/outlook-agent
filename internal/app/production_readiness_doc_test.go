@@ -428,6 +428,54 @@ func TestDocsTrackEWSMailFetchBodyEvidence(t *testing.T) {
 	}
 }
 
+func TestDocsTrackCleanupHardeningEvidence(t *testing.T) {
+	documents := map[string][]string{
+		filepath.Join("..", "..", "docs", "PRODUCTION_READINESS.md"): {
+			"setup approval plan|diff|apply",
+			"`outlook.mail_search.folder`",
+			"transient `manifest_id`",
+			"`outlook.mail_fetch_bodies`",
+			"`outlook.mail_audit_manifest_bodies`",
+			"manifest/audit plan",
+		},
+		filepath.Join("..", "..", "docs", "ACTION_COVERAGE.md"): {
+			"`outlook.mail_fetch_bodies`",
+			"`outlook.mail_audit_manifest_bodies`",
+			"`outlook.mail_search.folder`",
+			"transient mutation manifest",
+		},
+		filepath.Join("..", "..", "docs", "PRODUCTION_BACKLOG.md"): {
+			"Completed Near-Term Operator UX Items",
+			"Host approval setup UX",
+			"`setup approval plan/diff/apply`",
+			"manifest-based body audit",
+		},
+		filepath.Join("..", "..", "docs", "MCP_COMPATIBILITY.md"): {
+			"`manifest_id`",
+			"`outlook.mail_fetch_bodies`",
+			"`outlook.mail_audit_manifest_bodies`",
+		},
+		filepath.Join("..", "..", "docs", "RELEASE_EVIDENCE.md"): {
+			"Cleanup hardening evidence",
+			"`outlook.mail_fetch_bodies` coverage",
+			"`outlook.mail_audit_manifest_bodies` coverage",
+		},
+	}
+
+	for path, required := range documents {
+		data, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatalf("read %s: %v", path, err)
+		}
+		text := string(data)
+		for _, marker := range required {
+			if !strings.Contains(text, marker) {
+				t.Fatalf("expected %s to contain %q", path, marker)
+			}
+		}
+	}
+}
+
 func TestDocsTrackEWSLiveSmokeHarness(t *testing.T) {
 	documents := map[string][]string{
 		filepath.Join("..", "..", "docs", "ENTERPRISE_ENABLEMENT.md"): {

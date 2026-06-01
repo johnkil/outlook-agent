@@ -51,17 +51,18 @@ investigated with public-safe evidence.
   to 1Password, Bitwarden, Vault, or native wrapper tooling. Open a dedicated
   GitHub issue before implementing native backends for a concrete rollout.
 
-## Near-Term Operator UX Backlog
+## Completed Near-Term Operator UX Items
 
-These items came from a live mailbox cleanup run. Open dedicated GitHub issues
-before implementation and keep private live evidence outside the repository.
+These items came from a live mailbox cleanup run. Implementation is complete in
+the public-safe runtime; private live validation remains covered by the open
+OWA-compatible external gate above.
 
-| Item | Why it matters | Target behavior |
+| Item | Why it matters | Implemented behavior |
 | --- | --- | --- |
-| Host approval setup UX | Operators should learn about required approval before the first live mailbox mutation, not during a failed cleanup attempt. | Keep `install.sh` binary-only; add an explicit `setup approval plan/diff/apply` flow; make `doctor` print the next setup step when required approval is missing. |
-| OWA-compatible archive and folder move UX | The active OWA-compatible profile could move messages through raw `MoveItem`, but the high-level archive path was not viable. | High-level archive/move tools should work for the OWA-compatible profile or fail with a clear fallback path that still uses dry-run, confirmation, and host approval. |
-| Persistent body-read batches | Repeated one-off helper processes caused slow scans and transient OWA login failures. | Large body audits should use one persistent MCP session, explicit ids, bounded retries, progress reporting, and partial-result summaries. |
-| Exact cleanup manifest and audit | After a broad move, scanning the whole Deleted Items folder was slow and noisy because the exact moved set was not retained. | Keep an in-process target manifest until verification completes; audit exact targets first; use full-folder scans only as a paged, resumable fallback. |
+| Host approval setup UX | Operators should learn about required approval before the first live mailbox mutation, not during a failed cleanup attempt. | `install.sh` stays binary-only; `setup approval plan/diff/apply` configures explicit host approval material; `doctor` prints the next setup step when required approval is missing. |
+| OWA-compatible archive and folder move UX | The active OWA-compatible profile could move messages through raw `MoveItem`, but the high-level archive path was not viable. | High-level archive/move tools use OWA `MoveItem` for exact ids with dry-run, confirmation, host approval, and partial-result reporting. |
+| Persistent body-read batches | Repeated one-off helper processes caused slow scans and transient OWA login failures. | Large body audits can use one persistent MCP session through `outlook.mail_fetch_bodies`, explicit ids, capped batches, coverage reporting, and partial-result summaries. |
+| Exact cleanup manifest and audit | After a broad move, scanning the whole Deleted Items folder was slow and noisy because the exact moved set was not retained. | Reversible message mutations return a transient `manifest_id`; `outlook.mail_audit_manifest_bodies` provides manifest-based body audit of exact targets first and full-folder scans remain only a fallback. |
 
 ## Tracking Policy
 

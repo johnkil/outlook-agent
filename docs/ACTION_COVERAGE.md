@@ -28,6 +28,8 @@ level 5: workflow skill guidance
 | Mail | `outlook.mail_search_next` | 4 |
 | Mail | `outlook.mail_fetch_metadata` | 4 |
 | Mail | `outlook.mail_fetch_body` | 4 |
+| Mail | `outlook.mail_fetch_bodies` | 4 |
+| Mail | `outlook.mail_audit_manifest_bodies` | 4 |
 | Mail | `outlook.mail_list_attachments` | 4 |
 | Mail | `outlook.mail_fetch_attachment` | 4 |
 | Mail | `outlook.mail_create_draft` | 4 |
@@ -68,6 +70,10 @@ level 5: workflow skill guidance
 - High-use actions graduate to typed schemas and high-level MCP tools.
 - Dry-run confirmation is a gate, not a bypass: confirmed actions still pass
   policy checks before transport execution.
+- Reversible message mutations return a transient mutation manifest id when the
+  exact target set is retained in memory. Use
+  `outlook.mail_audit_manifest_bodies` for manifest-based body audit before
+  falling back to a folder scan.
 - Live MCP dry-run smoke verifies representative reversible, destructive,
   send-like, and settings/rules OWA raw actions after authentication without
   calling confirmation or executing any action.
@@ -128,7 +134,7 @@ Implemented high-level OWA mappings:
 
 | Public action | OWA service action | Status |
 | --- | --- | --- |
-| `mail.search` | `FindItem` | implemented and live smoke-tested |
+| `mail.search` | `FindItem` | implemented and live smoke-tested; MCP accepts optional `outlook.mail_search.folder` for folder-scoped metadata search |
 | `mail.fetch_metadata` | `GetItem` | implemented and live smoke-tested through a real inbox item id |
 | `mail.fetch_body` | `GetItem` | implemented and live MCP smoke-tested only against an explicit draft fixture target |
 | `mail.list_attachments` | `GetItem` | implemented as metadata-only for explicit message ids and live MCP smoke-tested against a controlled draft attachment fixture |
