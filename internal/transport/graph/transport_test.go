@@ -1405,10 +1405,10 @@ func TestTransportExecutesCalendarCreateMeeting(t *testing.T) {
 		if body["body"].(map[string]any)["content"] != "Discuss next steps" {
 			t.Fatalf("unexpected body: %#v", body)
 		}
-		if body["start"].(map[string]any)["dateTime"] != "2026-06-02T15:00:00+03:00" || body["start"].(map[string]any)["timeZone"] != "Russian Standard Time" {
+		if body["start"].(map[string]any)["dateTime"] != "2026-06-02T15:00:00" || body["start"].(map[string]any)["timeZone"] != "Russian Standard Time" {
 			t.Fatalf("unexpected start: %#v", body["start"])
 		}
-		if body["end"].(map[string]any)["dateTime"] != "2026-06-02T15:30:00+03:00" || body["end"].(map[string]any)["timeZone"] != "Russian Standard Time" {
+		if body["end"].(map[string]any)["dateTime"] != "2026-06-02T15:30:00" || body["end"].(map[string]any)["timeZone"] != "Russian Standard Time" {
 			t.Fatalf("unexpected end: %#v", body["end"])
 		}
 		if body["location"].(map[string]any)["displayName"] != "Room 1" {

@@ -1460,11 +1460,19 @@ func (client *Transport) createCalendarMeeting(ctx context.Context, mailbox stri
 	if err != nil {
 		return nil, err
 	}
+	startDateTime, err := graphScheduleDateTime(meeting.start, meeting.timeZone)
+	if err != nil {
+		return nil, fmt.Errorf("calendar.create_meeting requires parseable start")
+	}
+	endDateTime, err := graphScheduleDateTime(meeting.end, meeting.timeZone)
+	if err != nil {
+		return nil, fmt.Errorf("calendar.create_meeting requires parseable end")
+	}
 	body := map[string]any{
 		"subject":   meeting.subject,
 		"body":      map[string]any{"contentType": "text", "content": meeting.body},
-		"start":     map[string]any{"dateTime": meeting.start, "timeZone": meeting.timeZone},
-		"end":       map[string]any{"dateTime": meeting.end, "timeZone": meeting.timeZone},
+		"start":     map[string]any{"dateTime": startDateTime, "timeZone": meeting.timeZone},
+		"end":       map[string]any{"dateTime": endDateTime, "timeZone": meeting.timeZone},
 		"location":  map[string]any{"displayName": meeting.location},
 		"attendees": graphMeetingAttendees(meeting.attendees),
 	}
