@@ -82,7 +82,7 @@ func (client *Transport) executeHighLevel(ctx context.Context, request transport
 		if email == "" {
 			return transport.ActionResponse{OK: false, Error: "calendar.availability requires email payload or owa settings.mailbox_email"}, true
 		}
-		response := client.executeService(ctx, "GetUserAvailabilityInternal", client.buildAvailabilityRequest(stringValue(request.Payload, "start"), stringValue(request.Payload, "end"), email), true)
+		response := client.executeService(ctx, "GetUserAvailabilityInternal", client.buildAvailabilityRequestInTimeZone(stringValue(request.Payload, "start"), stringValue(request.Payload, "end"), email, stringValue(request.Payload, "time_zone")), true)
 		if !response.OK {
 			return response, true
 		}
@@ -579,10 +579,6 @@ func (client *Transport) buildCalendarViewRequestInTimeZone(start string, end st
 			field("RangeEnd", end),
 		)),
 	)
-}
-
-func (client *Transport) buildAvailabilityRequest(start string, end string, email string) any {
-	return client.buildAvailabilityRequestInTimeZone(start, end, email, "")
 }
 
 func (client *Transport) buildAvailabilityRequestInTimeZone(start string, end string, email string, timeZone string) any {

@@ -396,6 +396,52 @@ func TestHighLevelCalendarAvailabilityFailsOnResponseError(t *testing.T) {
 	}
 }
 
+func TestHighLevelCalendarAvailabilityUsesRequestedTimeZoneHeader(t *testing.T) {
+	var calls []recordedServiceCall
+	server := newOWAServiceServer(t, &calls, map[string]any{
+		"Body": map[string]any{
+			"ResponseMessages": map[string]any{
+				"Items": []any{
+					map[string]any{
+						"ResponseClass": "Success",
+						"ResponseCode":  "NoError",
+						"FreeBusyView": map[string]any{
+							"CalendarView": map[string]any{"Items": []any{}},
+						},
+					},
+				},
+			},
+		},
+	})
+	defer server.Close()
+	client := owa.NewTransport(owa.Config{
+		BaseURL:      server.URL,
+		Username:     "DOMAIN\\user",
+		SecretRef:    secret.Ref("memory:owa"),
+		MailboxEmail: "user@example.com",
+		TimeZoneID:   "UTC",
+	}, secret.NewMemoryStore(map[string]string{"memory:owa": "password"}), server.Client())
+
+	response := client.Execute(context.Background(), transport.ActionRequest{
+		Name: "calendar.availability",
+		Payload: map[string]any{
+			"start":     "2026-05-27T00:00:00",
+			"end":       "2026-05-28T00:00:00",
+			"time_zone": "America/Los_Angeles",
+		},
+	})
+
+	if !response.OK {
+		t.Fatalf("expected calendar.availability ok: %#v", response)
+	}
+	request := calls[0].Body["request"].(map[string]any)
+	header := request["Header"].(map[string]any)
+	timeZone := header["TimeZoneContext"].(map[string]any)["TimeZoneDefinition"].(map[string]any)
+	if timeZone["Id"] != "America/Los_Angeles" {
+		t.Fatalf("expected requested availability timezone header, got %#v", timeZone)
+	}
+}
+
 func TestHighLevelCalendarAvailabilityRequiresMailboxEmail(t *testing.T) {
 	var calls []recordedServiceCall
 	server := newOWAServiceServer(t, &calls, map[string]any{"Body": map[string]any{"ResponseMessages": map[string]any{"Items": []any{}}}})

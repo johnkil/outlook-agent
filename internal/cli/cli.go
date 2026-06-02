@@ -1032,7 +1032,7 @@ func applyDateWindow(payload map[string]any, workingHours bool) error {
 	}
 	location := time.Local
 	if zone := strings.TrimSpace(stringAny(payload["time_zone"])); zone != "" {
-		loaded, err := time.LoadLocation(zone)
+		loaded, err := cliTimeLocation(zone)
 		if err != nil {
 			return fmt.Errorf("unknown timezone %q", zone)
 		}
@@ -1063,6 +1063,39 @@ func applyDateWindow(payload map[string]any, workingHours bool) error {
 	payload["end"] = end.Format(time.RFC3339)
 	delete(payload, "date")
 	return nil
+}
+
+func cliTimeLocation(timeZone string) (*time.Location, error) {
+	timeZone = strings.TrimSpace(timeZone)
+	if mapped := cliWindowsTimeZoneLocation(timeZone); mapped != "" {
+		timeZone = mapped
+	}
+	return time.LoadLocation(timeZone)
+}
+
+func cliWindowsTimeZoneLocation(timeZone string) string {
+	switch strings.ToLower(strings.TrimSpace(timeZone)) {
+	case "utc", "coordinated universal time":
+		return "UTC"
+	case "gmt standard time":
+		return "Europe/London"
+	case "india standard time":
+		return "Asia/Kolkata"
+	case "w. europe standard time", "central european standard time", "romance standard time":
+		return "Europe/Berlin"
+	case "russian standard time":
+		return "Europe/Moscow"
+	case "eastern standard time":
+		return "America/New_York"
+	case "central standard time":
+		return "America/Chicago"
+	case "mountain standard time":
+		return "America/Denver"
+	case "pacific standard time":
+		return "America/Los_Angeles"
+	default:
+		return ""
+	}
 }
 
 func parseDurationMinutes(value string) (float64, error) {
