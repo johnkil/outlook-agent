@@ -3,6 +3,7 @@ package owa_test
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -693,6 +694,85 @@ func TestHighLevelCalendarFindTimeUsesCalendarAndAvailabilityWithoutSubjectLeak(
 	}
 	if strings.Contains(first["start"].(string), "Private") || strings.Contains(strings.Join(mapKeys(first), " "), "subject") {
 		t.Fatalf("find-time suggestion must not expose subjects: %#v", first)
+	}
+}
+
+func TestHighLevelCalendarFindTimeUsesAvailabilityResponseMessagesShape(t *testing.T) {
+	var calls []recordedServiceCall
+	server := newOWAServiceServerByAction(t, &calls, map[string]map[string]any{
+		"GetCalendarView": {
+			"Body": map[string]any{
+				"Items": []any{
+					map[string]any{
+						"Start":        "2026-06-02T10:00:00",
+						"End":          "2026-06-02T10:30:00",
+						"FreeBusyType": "Busy",
+					},
+				},
+			},
+		},
+		"GetUserAvailabilityInternal": {
+			"Body": map[string]any{
+				"ResponseMessages": map[string]any{
+					"Items": []any{
+						map[string]any{
+							"ResponseClass": "Success",
+							"ResponseCode":  "NoError",
+							"FreeBusyView": map[string]any{
+								"CalendarView": map[string]any{
+									"Items": []any{
+										map[string]any{
+											"FreeBusyType": "Busy",
+											"StartTime":    "2026-06-02T11:00:00",
+											"EndTime":      "2026-06-02T11:30:00",
+											"Subject":      "Hidden busy event",
+										},
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+	})
+	defer server.Close()
+	client := newTestTransport(server)
+
+	response := client.Execute(context.Background(), transport.ActionRequest{
+		Name: "calendar.find_time",
+		Payload: map[string]any{
+			"attendees":        []any{"teammate@example.com"},
+			"start":            "2026-06-02T10:00:00+03:00",
+			"end":              "2026-06-02T12:30:00+03:00",
+			"duration_minutes": float64(30),
+			"time_zone":        "Russian Standard Time",
+			"tentative":        "busy",
+		},
+	})
+
+	if !response.OK {
+		t.Fatalf("expected calendar.find_time ok: %#v", response)
+	}
+	if len(calls) != 2 || calls[0].Action != "GetCalendarView" || calls[1].Action != "GetUserAvailabilityInternal" {
+		t.Fatalf("expected calendar and availability calls, got %#v", calls)
+	}
+	suggestions := response.Data["suggestions"].([]any)
+	if len(suggestions) == 0 {
+		t.Fatalf("expected suggestions, got %#v", response.Data)
+	}
+	first := suggestions[0].(map[string]any)
+	if first["start"] != "2026-06-02T07:30:00Z" || first["end"] != "2026-06-02T08:00:00Z" {
+		t.Fatalf("expected organizer and attendee busy windows to be blocked, got %#v", first)
+	}
+	for _, rawSuggestion := range suggestions {
+		suggestion := rawSuggestion.(map[string]any)
+		if suggestion["start"] == "2026-06-02T08:00:00Z" && suggestion["end"] == "2026-06-02T08:30:00Z" {
+			t.Fatalf("expected attendee busy window to be blocked, got suggestion %#v", suggestion)
+		}
+	}
+	if text := fmt.Sprint(response.Data); strings.Contains(text, "Hidden busy event") {
+		t.Fatalf("find-time must not expose attendee subjects: %#v", response.Data)
 	}
 }
 
