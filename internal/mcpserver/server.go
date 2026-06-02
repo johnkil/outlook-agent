@@ -1729,6 +1729,9 @@ func canonicalActionPayload(actionName string, payload map[string]any) (map[stri
 		}
 		delete(canonical, "timezone")
 	}
+	if attendees, exists := canonical["attendees"]; exists {
+		canonical["attendees"] = nonEmptyStringValues(attendees)
+	}
 	return canonical, ""
 }
 
@@ -2087,6 +2090,28 @@ func nonEmptyStrings(values []string) []string {
 		}
 	}
 	return output
+}
+
+func nonEmptyStringValues(value any) []string {
+	switch typed := value.(type) {
+	case []string:
+		return nonEmptyStrings(typed)
+	case []any:
+		output := make([]string, 0, len(typed))
+		for _, item := range typed {
+			text, ok := item.(string)
+			if !ok {
+				continue
+			}
+			text = strings.TrimSpace(text)
+			if text != "" {
+				output = append(output, text)
+			}
+		}
+		return output
+	default:
+		return nil
+	}
 }
 
 func normalizeCalendarRespondInput(value string) (string, error) {

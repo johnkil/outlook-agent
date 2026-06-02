@@ -632,7 +632,7 @@ func TestMCPToolCalendarCreateMeetingExecutesConfirmedCanonicalPayload(t *testin
 		"subject":   "Planning",
 		"start":     "2026-06-02T15:00:00+03:00",
 		"end":       "2026-06-02T15:30:00+03:00",
-		"attendees": []any{"teammate@example.com", "other@example.com"},
+		"attendees": []any{" teammate@example.com ", "", "other@example.com"},
 		"timezone":  "Russian Standard Time",
 		"body":      "Discuss next steps",
 		"location":  "Room 1",
