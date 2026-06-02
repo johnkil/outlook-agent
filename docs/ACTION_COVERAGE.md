@@ -46,11 +46,11 @@ level 5: workflow skill guidance
 | Mail | `outlook.mail_rules_list` | 4 |
 | Mail | `outlook.mail_rule_set_enabled` | 4 |
 | Mail | `outlook.mailbox_settings_get` | 4 |
-| People | `outlook.people_search` | 3 |
-| People | `outlook.people_resolve` | 3 |
+| People | `outlook.people_search` | 4 |
+| People | `outlook.people_resolve` | 4 |
 | Calendar | `outlook.calendar_list` | 4 |
 | Calendar | `outlook.calendar_availability` | 4 |
-| Calendar | `outlook.calendar_find_time` | 3 |
+| Calendar | `outlook.calendar_find_time` | 4 |
 | Calendar | `outlook.calendar_respond` | 4 |
 | Raw | `outlook.action_dry_run` | 4 |
 | Raw | `outlook.action_confirm` | 4 |

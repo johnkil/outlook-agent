@@ -471,8 +471,8 @@ func TestHighLevelPeopleSearchCallsFindPeople(t *testing.T) {
 			"People": []any{
 				map[string]any{
 					"PersonaId":    map[string]any{"Id": "persona-1"},
-					"DisplayName":  "Vlad Cheshenko",
-					"EmailAddress": "vlad.cheshenko@example.com",
+					"DisplayName":  "Тестовый Коллега",
+					"EmailAddress": "teammate@example.com",
 				},
 			},
 		},
@@ -482,7 +482,7 @@ func TestHighLevelPeopleSearchCallsFindPeople(t *testing.T) {
 
 	response := client.Execute(context.Background(), transport.ActionRequest{
 		Name:    "people.search",
-		Payload: map[string]any{"query": "vlad"},
+		Payload: map[string]any{"query": "teammate"},
 	})
 
 	if !response.OK {
@@ -492,7 +492,7 @@ func TestHighLevelPeopleSearchCallsFindPeople(t *testing.T) {
 		t.Fatalf("expected FindPeople call, got %#v", calls)
 	}
 	body := calls[0].Body["Body"].(map[string]any)
-	if body["QueryString"] != "vlad" {
+	if body["QueryString"] != "teammate" {
 		t.Fatalf("expected query string forwarded, got %#v", body)
 	}
 	pageView := body["IndexedPageItemView"].(map[string]any)
@@ -505,7 +505,7 @@ func TestHighLevelPeopleSearchCallsFindPeople(t *testing.T) {
 	}
 	people := response.Data["people"].([]any)
 	person := people[0].(map[string]any)
-	if person["display_name"] != "Vlad Cheshenko" || person["email"] != "vlad.cheshenko@example.com" {
+	if person["display_name"] != "Тестовый Коллега" || person["email"] != "teammate@example.com" {
 		t.Fatalf("unexpected normalized person: %#v", person)
 	}
 }
@@ -610,7 +610,7 @@ func TestHighLevelCalendarFindTimeUsesCalendarAndAvailabilityWithoutSubjectLeak(
 	response := client.Execute(context.Background(), transport.ActionRequest{
 		Name: "calendar.find_time",
 		Payload: map[string]any{
-			"attendees":        []any{"vlad.cheshenko@example.com"},
+			"attendees":        []any{"teammate@example.com"},
 			"start":            "2026-05-28T09:00:00Z",
 			"end":              "2026-05-28T12:00:00Z",
 			"duration_minutes": float64(30),
@@ -658,7 +658,7 @@ func TestHighLevelCalendarFindTimeFailsOnAvailabilityError(t *testing.T) {
 	response := client.Execute(context.Background(), transport.ActionRequest{
 		Name: "calendar.find_time",
 		Payload: map[string]any{
-			"attendees":        []any{"vlad.cheshenko@example.com"},
+			"attendees":        []any{"teammate@example.com"},
 			"start":            "2026-05-28T09:00:00Z",
 			"end":              "2026-05-28T10:00:00Z",
 			"duration_minutes": float64(30),
@@ -708,7 +708,7 @@ func TestHighLevelCalendarFindTimeTreatsOrganizerFreeEventAsAvailable(t *testing
 	response := client.Execute(context.Background(), transport.ActionRequest{
 		Name: "calendar.find_time",
 		Payload: map[string]any{
-			"attendees":        []any{"vlad.cheshenko@example.com"},
+			"attendees":        []any{"teammate@example.com"},
 			"start":            "2026-05-28T09:00:00Z",
 			"end":              "2026-05-28T10:00:00Z",
 			"duration_minutes": float64(30),
@@ -756,7 +756,7 @@ func TestHighLevelCalendarFindTimeParsesWindowInRequestedTimezone(t *testing.T) 
 	response := client.Execute(context.Background(), transport.ActionRequest{
 		Name: "calendar.find_time",
 		Payload: map[string]any{
-			"attendees":        []any{"vlad.cheshenko@example.com"},
+			"attendees":        []any{"teammate@example.com"},
 			"start":            "2026-05-28T09:00:00",
 			"end":              "2026-05-28T11:00:00",
 			"duration_minutes": float64(30),
@@ -804,7 +804,7 @@ func TestHighLevelCalendarFindTimeParsesOWAWindowsTimeZone(t *testing.T) {
 	response := client.Execute(context.Background(), transport.ActionRequest{
 		Name: "calendar.find_time",
 		Payload: map[string]any{
-			"attendees":        []any{"vlad.cheshenko@example.com"},
+			"attendees":        []any{"teammate@example.com"},
 			"start":            "2026-05-28T03:30:00Z",
 			"end":              "2026-05-28T05:00:00Z",
 			"duration_minutes": float64(30),
@@ -852,7 +852,7 @@ func TestHighLevelCalendarFindTimeParsesAdditionalOWAWindowsTimeZones(t *testing
 	response := client.Execute(context.Background(), transport.ActionRequest{
 		Name: "calendar.find_time",
 		Payload: map[string]any{
-			"attendees":        []any{"vlad.cheshenko@example.com"},
+			"attendees":        []any{"teammate@example.com"},
 			"start":            "2026-05-27T23:00:00Z",
 			"end":              "2026-05-28T00:30:00Z",
 			"duration_minutes": float64(30),
@@ -893,7 +893,7 @@ func TestHighLevelCalendarFindTimeRejectsUnknownOWATimeZone(t *testing.T) {
 	response := client.Execute(context.Background(), transport.ActionRequest{
 		Name: "calendar.find_time",
 		Payload: map[string]any{
-			"attendees":        []any{"vlad.cheshenko@example.com"},
+			"attendees":        []any{"teammate@example.com"},
 			"start":            "2026-05-28T03:30:00Z",
 			"end":              "2026-05-28T05:00:00Z",
 			"duration_minutes": float64(30),
@@ -937,7 +937,7 @@ func TestHighLevelCalendarFindTimeUsesRequestedTimeZoneHeaders(t *testing.T) {
 	response := client.Execute(context.Background(), transport.ActionRequest{
 		Name: "calendar.find_time",
 		Payload: map[string]any{
-			"attendees":        []any{"vlad.cheshenko@example.com"},
+			"attendees":        []any{"teammate@example.com"},
 			"start":            "2026-05-28T09:00:00",
 			"end":              "2026-05-28T10:00:00",
 			"duration_minutes": float64(30),
@@ -1002,7 +1002,7 @@ func TestHighLevelCalendarFindTimeParsesFractionalBusyTimestamps(t *testing.T) {
 	response := client.Execute(context.Background(), transport.ActionRequest{
 		Name: "calendar.find_time",
 		Payload: map[string]any{
-			"attendees":        []any{"vlad.cheshenko@example.com"},
+			"attendees":        []any{"teammate@example.com"},
 			"start":            "2026-05-28T09:00:00Z",
 			"end":              "2026-05-28T12:00:00Z",
 			"duration_minutes": float64(30),

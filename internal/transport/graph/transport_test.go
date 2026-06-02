@@ -2130,8 +2130,14 @@ func TestTransportExecutesCalendarAvailability(t *testing.T) {
 		t.Fatalf("expected one availability window, got %#v", windows)
 	}
 	window := windows[0].(map[string]any)
-	if window["status"] != "busy" || window["subject"] != "Focus" {
+	if window["status"] != "busy" {
 		t.Fatalf("unexpected availability metadata: %#v", window)
+	}
+	if _, ok := window["subject"]; ok {
+		t.Fatalf("availability windows must not expose subjects by default: %#v", window)
+	}
+	if strings.Contains(fmt.Sprintf("%#v", result.Data), "Focus") {
+		t.Fatalf("availability response must not leak schedule subjects: %#v", result.Data)
 	}
 	if window["start"] != "2026-05-28T10:00:00" || window["end"] != "2026-05-28T10:30:00" {
 		t.Fatalf("unexpected availability time fields: %#v", window)
@@ -2143,7 +2149,7 @@ func TestTransportExecutesPeopleSearch(t *testing.T) {
 		if request.Method != http.MethodGet || request.URL.Path != "/v1.0/me/people" {
 			t.Fatalf("unexpected request: %s %s", request.Method, request.URL.String())
 		}
-		if request.URL.Query().Get("$search") != "vlad" {
+		if request.URL.Query().Get("$search") != "teammate" {
 			t.Fatalf("expected people search query, got %q", request.URL.Query().Get("$search"))
 		}
 		response.Header().Set("Content-Type", "application/json")
@@ -2151,9 +2157,9 @@ func TestTransportExecutesPeopleSearch(t *testing.T) {
 			"value": []any{
 				map[string]any{
 					"id":          "person-1",
-					"displayName": "Vlad Cheshenko",
+					"displayName": "Тестовый Коллега",
 					"scoredEmailAddresses": []any{
-						map[string]any{"address": "vlad.cheshenko@example.com"},
+						map[string]any{"address": "teammate@example.com"},
 					},
 				},
 			},
@@ -2168,7 +2174,7 @@ func TestTransportExecutesPeopleSearch(t *testing.T) {
 
 	result := client.Execute(context.Background(), transport.ActionRequest{
 		Name:    "people.search",
-		Payload: map[string]any{"query": "vlad"},
+		Payload: map[string]any{"query": "teammate"},
 	})
 
 	if !result.OK {
@@ -2176,7 +2182,7 @@ func TestTransportExecutesPeopleSearch(t *testing.T) {
 	}
 	people := result.Data["people"].([]any)
 	person := people[0].(map[string]any)
-	if person["display_name"] != "Vlad Cheshenko" || person["email"] != "vlad.cheshenko@example.com" {
+	if person["display_name"] != "Тестовый Коллега" || person["email"] != "teammate@example.com" {
 		t.Fatalf("unexpected person metadata: %#v", person)
 	}
 }
@@ -2198,7 +2204,7 @@ func TestTransportPeopleSearchUsesMailboxTarget(t *testing.T) {
 
 	result := client.Execute(context.Background(), transport.ActionRequest{
 		Name:    "people.search",
-		Payload: map[string]any{"query": "vlad", "mailbox": "shared@example.com"},
+		Payload: map[string]any{"query": "teammate", "mailbox": "shared@example.com"},
 	})
 
 	if !result.OK {
@@ -2293,14 +2299,14 @@ func TestTransportCalendarFindTimeUsesGetScheduleIntersection(t *testing.T) {
 				t.Fatalf("decode request body: %v", err)
 			}
 			schedules := body["schedules"].([]any)
-			if len(schedules) != 1 || schedules[0] != "vlad.cheshenko@example.com" {
+			if len(schedules) != 1 || schedules[0] != "teammate@example.com" {
 				t.Fatalf("unexpected getSchedule body: %#v", body)
 			}
 			response.Header().Set("Content-Type", "application/json")
 			_ = json.NewEncoder(response).Encode(map[string]any{
 				"value": []any{
 					map[string]any{
-						"scheduleId": "vlad.cheshenko@example.com",
+						"scheduleId": "teammate@example.com",
 						"scheduleItems": []any{
 							graphScheduleItemResponse("busy", "2026-05-28T09:30:00", "2026-05-28T10:00:00", "Hidden busy event"),
 						},
@@ -2321,7 +2327,7 @@ func TestTransportCalendarFindTimeUsesGetScheduleIntersection(t *testing.T) {
 	result := client.Execute(context.Background(), transport.ActionRequest{
 		Name: "calendar.find_time",
 		Payload: map[string]any{
-			"attendees":        []any{"vlad.cheshenko@example.com"},
+			"attendees":        []any{"teammate@example.com"},
 			"start":            "2026-05-28T09:00:00Z",
 			"end":              "2026-05-28T12:00:00Z",
 			"duration_minutes": float64(30),
@@ -2370,7 +2376,7 @@ func TestTransportCalendarFindTimePagesOrganizerEvents(t *testing.T) {
 			_ = json.NewEncoder(response).Encode(map[string]any{
 				"value": []any{
 					map[string]any{
-						"scheduleId": "vlad.cheshenko@example.com",
+						"scheduleId": "teammate@example.com",
 						"scheduleItems": []any{
 							graphScheduleItemResponse("busy", "2026-05-28T09:00:00", "2026-05-28T10:00:00", "Hidden busy event"),
 						},
@@ -2392,7 +2398,7 @@ func TestTransportCalendarFindTimePagesOrganizerEvents(t *testing.T) {
 	result := client.Execute(context.Background(), transport.ActionRequest{
 		Name: "calendar.find_time",
 		Payload: map[string]any{
-			"attendees":        []any{"vlad.cheshenko@example.com"},
+			"attendees":        []any{"teammate@example.com"},
 			"start":            "2026-05-28T09:00:00Z",
 			"end":              "2026-05-28T12:00:00Z",
 			"duration_minutes": float64(30),
@@ -2425,7 +2431,7 @@ func TestTransportCalendarFindTimeFailsOnAttendeeScheduleError(t *testing.T) {
 			_ = json.NewEncoder(response).Encode(map[string]any{
 				"value": []any{
 					map[string]any{
-						"scheduleId":       "vlad.cheshenko@example.com",
+						"scheduleId":       "teammate@example.com",
 						"scheduleItems":    []any{},
 						"availabilityView": "",
 						"error": map[string]any{
@@ -2449,7 +2455,7 @@ func TestTransportCalendarFindTimeFailsOnAttendeeScheduleError(t *testing.T) {
 	result := client.Execute(context.Background(), transport.ActionRequest{
 		Name: "calendar.find_time",
 		Payload: map[string]any{
-			"attendees":        []any{"vlad.cheshenko@example.com"},
+			"attendees":        []any{"teammate@example.com"},
 			"start":            "2026-05-28T09:00:00Z",
 			"end":              "2026-05-28T10:00:00Z",
 			"duration_minutes": float64(30),
@@ -2483,14 +2489,14 @@ func TestTransportCalendarFindTimeUsesMailboxForGetSchedule(t *testing.T) {
 				t.Fatalf("decode request body: %v", err)
 			}
 			schedules := body["schedules"].([]any)
-			if len(schedules) != 1 || schedules[0] != "vlad.cheshenko@example.com" {
+			if len(schedules) != 1 || schedules[0] != "teammate@example.com" {
 				t.Fatalf("unexpected getSchedule body: %#v", body)
 			}
 			response.Header().Set("Content-Type", "application/json")
 			_ = json.NewEncoder(response).Encode(map[string]any{
 				"value": []any{
 					map[string]any{
-						"scheduleId":       "vlad.cheshenko@example.com",
+						"scheduleId":       "teammate@example.com",
 						"scheduleItems":    []any{},
 						"availabilityView": "",
 					},
@@ -2513,7 +2519,7 @@ func TestTransportCalendarFindTimeUsesMailboxForGetSchedule(t *testing.T) {
 		Name: "calendar.find_time",
 		Payload: map[string]any{
 			"mailbox":          mailbox,
-			"attendees":        []any{"vlad.cheshenko@example.com"},
+			"attendees":        []any{"teammate@example.com"},
 			"start":            "2026-05-28T09:00:00Z",
 			"end":              "2026-05-28T12:00:00Z",
 			"duration_minutes": float64(30),
@@ -2553,7 +2559,7 @@ func TestTransportCalendarFindTimeParsesScheduleTimezone(t *testing.T) {
 			_ = json.NewEncoder(response).Encode(map[string]any{
 				"value": []any{
 					map[string]any{
-						"scheduleId": "vlad.cheshenko@example.com",
+						"scheduleId": "teammate@example.com",
 						"scheduleItems": []any{
 							graphScheduleItemResponseWithTimeZone("busy", "2026-05-28T09:00:00", "2026-05-28T09:30:00", "Hidden busy event", "Europe/Berlin"),
 						},
@@ -2574,7 +2580,7 @@ func TestTransportCalendarFindTimeParsesScheduleTimezone(t *testing.T) {
 	result := client.Execute(context.Background(), transport.ActionRequest{
 		Name: "calendar.find_time",
 		Payload: map[string]any{
-			"attendees":        []any{"vlad.cheshenko@example.com"},
+			"attendees":        []any{"teammate@example.com"},
 			"start":            "2026-05-28T09:00:00+02:00",
 			"end":              "2026-05-28T11:00:00+02:00",
 			"duration_minutes": float64(30),
@@ -2614,7 +2620,7 @@ func TestTransportCalendarFindTimeNormalizesCalendarViewWindowTimezone(t *testin
 			_ = json.NewEncoder(response).Encode(map[string]any{
 				"value": []any{
 					map[string]any{
-						"scheduleId":       "vlad.cheshenko@example.com",
+						"scheduleId":       "teammate@example.com",
 						"scheduleItems":    []any{},
 						"availabilityView": "",
 					},
@@ -2634,7 +2640,7 @@ func TestTransportCalendarFindTimeNormalizesCalendarViewWindowTimezone(t *testin
 	result := client.Execute(context.Background(), transport.ActionRequest{
 		Name: "calendar.find_time",
 		Payload: map[string]any{
-			"attendees":        []any{"vlad.cheshenko@example.com"},
+			"attendees":        []any{"teammate@example.com"},
 			"start":            "2026-05-28T09:00:00",
 			"end":              "2026-05-28T11:00:00",
 			"duration_minutes": float64(30),
@@ -2668,7 +2674,7 @@ func TestTransportCalendarFindTimeParsesOrganizerEventTimezone(t *testing.T) {
 			_ = json.NewEncoder(response).Encode(map[string]any{
 				"value": []any{
 					map[string]any{
-						"scheduleId":       "vlad.cheshenko@example.com",
+						"scheduleId":       "teammate@example.com",
 						"scheduleItems":    []any{},
 						"availabilityView": "",
 					},
@@ -2688,7 +2694,7 @@ func TestTransportCalendarFindTimeParsesOrganizerEventTimezone(t *testing.T) {
 	result := client.Execute(context.Background(), transport.ActionRequest{
 		Name: "calendar.find_time",
 		Payload: map[string]any{
-			"attendees":        []any{"vlad.cheshenko@example.com"},
+			"attendees":        []any{"teammate@example.com"},
 			"start":            "2026-05-28T09:00:00+02:00",
 			"end":              "2026-05-28T11:00:00+02:00",
 			"duration_minutes": float64(30),
@@ -2722,7 +2728,7 @@ func TestTransportCalendarFindTimeTreatsOrganizerFreeEventAsAvailable(t *testing
 			_ = json.NewEncoder(response).Encode(map[string]any{
 				"value": []any{
 					map[string]any{
-						"scheduleId":       "vlad.cheshenko@example.com",
+						"scheduleId":       "teammate@example.com",
 						"scheduleItems":    []any{},
 						"availabilityView": "",
 					},
@@ -2742,7 +2748,7 @@ func TestTransportCalendarFindTimeTreatsOrganizerFreeEventAsAvailable(t *testing
 	result := client.Execute(context.Background(), transport.ActionRequest{
 		Name: "calendar.find_time",
 		Payload: map[string]any{
-			"attendees":        []any{"vlad.cheshenko@example.com"},
+			"attendees":        []any{"teammate@example.com"},
 			"start":            "2026-05-28T09:00:00Z",
 			"end":              "2026-05-28T10:00:00Z",
 			"duration_minutes": float64(30),
@@ -2776,7 +2782,7 @@ func TestTransportCalendarFindTimeParsesFractionalGraphDateTimeTimeZone(t *testi
 			_ = json.NewEncoder(response).Encode(map[string]any{
 				"value": []any{
 					map[string]any{
-						"scheduleId": "vlad.cheshenko@example.com",
+						"scheduleId": "teammate@example.com",
 						"scheduleItems": []any{
 							graphScheduleItemResponse("busy", "2026-05-28T09:30:00.0000000", "2026-05-28T10:00:00.0000000", "Hidden busy event"),
 						},
@@ -2797,7 +2803,7 @@ func TestTransportCalendarFindTimeParsesFractionalGraphDateTimeTimeZone(t *testi
 	result := client.Execute(context.Background(), transport.ActionRequest{
 		Name: "calendar.find_time",
 		Payload: map[string]any{
-			"attendees":        []any{"vlad.cheshenko@example.com"},
+			"attendees":        []any{"teammate@example.com"},
 			"start":            "2026-05-28T09:00:00Z",
 			"end":              "2026-05-28T12:00:00Z",
 			"duration_minutes": float64(30),
@@ -2831,7 +2837,7 @@ func TestTransportCalendarFindTimeParsesGraphWindowsTimeZone(t *testing.T) {
 			_ = json.NewEncoder(response).Encode(map[string]any{
 				"value": []any{
 					map[string]any{
-						"scheduleId":       "vlad.cheshenko@example.com",
+						"scheduleId":       "teammate@example.com",
 						"scheduleItems":    []any{},
 						"availabilityView": "",
 					},
@@ -2851,7 +2857,7 @@ func TestTransportCalendarFindTimeParsesGraphWindowsTimeZone(t *testing.T) {
 	result := client.Execute(context.Background(), transport.ActionRequest{
 		Name: "calendar.find_time",
 		Payload: map[string]any{
-			"attendees":        []any{"vlad.cheshenko@example.com"},
+			"attendees":        []any{"teammate@example.com"},
 			"start":            "2026-05-28T03:30:00Z",
 			"end":              "2026-05-28T05:00:00Z",
 			"duration_minutes": float64(30),
@@ -2885,7 +2891,7 @@ func TestTransportCalendarFindTimeParsesAdditionalGraphWindowsTimeZones(t *testi
 			_ = json.NewEncoder(response).Encode(map[string]any{
 				"value": []any{
 					map[string]any{
-						"scheduleId":       "vlad.cheshenko@example.com",
+						"scheduleId":       "teammate@example.com",
 						"scheduleItems":    []any{},
 						"availabilityView": "",
 					},
@@ -2905,7 +2911,7 @@ func TestTransportCalendarFindTimeParsesAdditionalGraphWindowsTimeZones(t *testi
 	result := client.Execute(context.Background(), transport.ActionRequest{
 		Name: "calendar.find_time",
 		Payload: map[string]any{
-			"attendees":        []any{"vlad.cheshenko@example.com"},
+			"attendees":        []any{"teammate@example.com"},
 			"start":            "2026-05-28T00:00:00Z",
 			"end":              "2026-05-28T01:30:00Z",
 			"duration_minutes": float64(30),
@@ -2939,7 +2945,7 @@ func TestTransportCalendarFindTimeRejectsUnknownGraphWindowsTimeZone(t *testing.
 			_ = json.NewEncoder(response).Encode(map[string]any{
 				"value": []any{
 					map[string]any{
-						"scheduleId":       "vlad.cheshenko@example.com",
+						"scheduleId":       "teammate@example.com",
 						"scheduleItems":    []any{},
 						"availabilityView": "",
 					},
@@ -2959,7 +2965,7 @@ func TestTransportCalendarFindTimeRejectsUnknownGraphWindowsTimeZone(t *testing.
 	result := client.Execute(context.Background(), transport.ActionRequest{
 		Name: "calendar.find_time",
 		Payload: map[string]any{
-			"attendees":        []any{"vlad.cheshenko@example.com"},
+			"attendees":        []any{"teammate@example.com"},
 			"start":            "2026-05-28T09:00:00Z",
 			"end":              "2026-05-28T10:00:00Z",
 			"duration_minutes": float64(30),

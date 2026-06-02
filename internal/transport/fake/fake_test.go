@@ -109,7 +109,7 @@ func TestFakeTransportExecutesInitialHighLevelActions(t *testing.T) {
 					"ids":           []any{"msg-1"},
 					"attachment_id": "att-1",
 					"subject":       "Draft",
-					"attendees":     []any{"vlad.cheshenko@example.com"},
+					"attendees":     []any{"teammate@example.com"},
 					"start":         "2026-05-28T09:00:00+00:00",
 					"end":           "2026-05-28T12:00:00+00:00",
 				},
@@ -129,7 +129,7 @@ func TestFakeTransportSearchesPeopleByQuery(t *testing.T) {
 
 	response := client.Execute(context.Background(), transport.ActionRequest{
 		Name:    "people.search",
-		Payload: map[string]any{"query": "vlad"},
+		Payload: map[string]any{"query": "тестовый коллега"},
 	})
 
 	if !response.OK {
@@ -140,7 +140,7 @@ func TestFakeTransportSearchesPeopleByQuery(t *testing.T) {
 		t.Fatalf("expected one fake person match, got %#v", people)
 	}
 	person := people[0].(map[string]any)
-	if person["email"] != "vlad.cheshenko@example.com" || person["display_name"] != "Vlad Cheshenko" {
+	if person["email"] != "teammate@example.com" || person["display_name"] != "Тестовый Коллега" {
 		t.Fatalf("unexpected fake person: %#v", person)
 	}
 }
@@ -174,7 +174,7 @@ func TestFakeTransportFindsMeetingTimeWithoutSubjectLeakage(t *testing.T) {
 	response := client.Execute(context.Background(), transport.ActionRequest{
 		Name: "calendar.find_time",
 		Payload: map[string]any{
-			"attendees":        []any{"vlad.cheshenko@example.com"},
+			"attendees":        []any{"teammate@example.com"},
 			"start":            "2026-05-28T09:00:00+00:00",
 			"end":              "2026-05-28T12:00:00+00:00",
 			"duration_minutes": float64(30),

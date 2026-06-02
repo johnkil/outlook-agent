@@ -295,11 +295,11 @@ func TestMCPClientCanListAndCallInitialTools(t *testing.T) {
 		{name: "outlook.mail_mark_read", arguments: map[string]any{"ids": []string{"msg-1"}, "is_read": true}},
 		{name: "outlook.mail_rules_list", arguments: map[string]any{"folder_id": "inbox"}},
 		{name: "outlook.mailbox_settings_get", arguments: map[string]any{"setting": "timeZone"}},
-		{name: "outlook.people_search", arguments: map[string]any{"query": "vlad"}},
-		{name: "outlook.people_resolve", arguments: map[string]any{"query": "vlad"}},
+		{name: "outlook.people_search", arguments: map[string]any{"query": "teammate"}},
+		{name: "outlook.people_resolve", arguments: map[string]any{"query": "teammate"}},
 		{name: "outlook.calendar_list", arguments: map[string]any{"start": "2026-05-27T00:00:00+02:00", "end": "2026-05-28T00:00:00+02:00"}},
 		{name: "outlook.calendar_availability", arguments: map[string]any{"start": "2026-05-27T09:00:00+02:00", "end": "2026-05-27T18:00:00+02:00"}},
-		{name: "outlook.calendar_find_time", arguments: map[string]any{"attendees": []string{"vlad.cheshenko@example.com"}, "start": "2026-05-28T09:00:00Z", "end": "2026-05-28T12:00:00Z", "duration_minutes": 30, "tentative": "busy"}},
+		{name: "outlook.calendar_find_time", arguments: map[string]any{"attendees": []string{"teammate@example.com"}, "start": "2026-05-28T09:00:00Z", "end": "2026-05-28T12:00:00Z", "duration_minutes": 30, "tentative": "busy"}},
 		{name: "outlook.raw_action", arguments: map[string]any{"action": "mail.fetch_metadata", "payload": map[string]any{"id": "msg-1"}}},
 	} {
 		t.Run(call.name, func(t *testing.T) {
@@ -385,7 +385,7 @@ func TestMCPPeopleAndFindTimeToolsForwardInputs(t *testing.T) {
 
 	searchResult, err := clientSession.CallTool(ctx, &mcp.CallToolParams{
 		Name:      "outlook.people_search",
-		Arguments: map[string]any{"query": "vlad", "mailbox": "shared@example.com"},
+		Arguments: map[string]any{"query": "teammate", "mailbox": "shared@example.com"},
 	})
 	if err != nil {
 		t.Fatalf("call people search: %v", err)
@@ -394,13 +394,13 @@ func TestMCPPeopleAndFindTimeToolsForwardInputs(t *testing.T) {
 	if len(search["people"].([]any)) != 1 {
 		t.Fatalf("expected one people result, got %#v", search)
 	}
-	if capturing.lastRequest.Name != "people.search" || capturing.lastRequest.Payload["query"] != "vlad" || capturing.lastRequest.Payload["mailbox"] != "shared@example.com" {
+	if capturing.lastRequest.Name != "people.search" || capturing.lastRequest.Payload["query"] != "teammate" || capturing.lastRequest.Payload["mailbox"] != "shared@example.com" {
 		t.Fatalf("expected people.search payload forwarded, got %#v", capturing.lastRequest)
 	}
 
 	resolveResult, err := clientSession.CallTool(ctx, &mcp.CallToolParams{
 		Name:      "outlook.people_resolve",
-		Arguments: map[string]any{"query": "vlad"},
+		Arguments: map[string]any{"query": "teammate"},
 	})
 	if err != nil {
 		t.Fatalf("call people resolve: %v", err)
@@ -409,14 +409,14 @@ func TestMCPPeopleAndFindTimeToolsForwardInputs(t *testing.T) {
 	if resolve["person"] == nil {
 		t.Fatalf("expected resolved person, got %#v", resolve)
 	}
-	if capturing.lastRequest.Name != "people.resolve" || capturing.lastRequest.Payload["query"] != "vlad" {
+	if capturing.lastRequest.Name != "people.resolve" || capturing.lastRequest.Payload["query"] != "teammate" {
 		t.Fatalf("expected people.resolve payload forwarded, got %#v", capturing.lastRequest)
 	}
 
 	findTimeResult, err := clientSession.CallTool(ctx, &mcp.CallToolParams{
 		Name: "outlook.calendar_find_time",
 		Arguments: map[string]any{
-			"attendees":        []string{"vlad.cheshenko@example.com"},
+			"attendees":        []string{"teammate@example.com"},
 			"start":            "2026-05-28T09:00:00Z",
 			"end":              "2026-05-28T12:00:00Z",
 			"duration_minutes": 30,
@@ -437,14 +437,14 @@ func TestMCPPeopleAndFindTimeToolsForwardInputs(t *testing.T) {
 	if capturing.lastRequest.Payload["time_zone"] != "UTC" || capturing.lastRequest.Payload["tentative"] != "free" || capturing.lastRequest.Payload["duration_minutes"] != float64(30) {
 		t.Fatalf("expected find-time planning options forwarded, got %#v", capturing.lastRequest.Payload)
 	}
-	if attendees := capturing.lastRequest.Payload["attendees"].([]string); len(attendees) != 1 || attendees[0] != "vlad.cheshenko@example.com" {
+	if attendees := capturing.lastRequest.Payload["attendees"].([]string); len(attendees) != 1 || attendees[0] != "teammate@example.com" {
 		t.Fatalf("expected attendees forwarded, got %#v", capturing.lastRequest.Payload)
 	}
 
 	_, err = clientSession.CallTool(ctx, &mcp.CallToolParams{
 		Name: "outlook.calendar_find_time",
 		Arguments: map[string]any{
-			"attendees": []string{"vlad.cheshenko@example.com"},
+			"attendees": []string{"teammate@example.com"},
 			"start":     "2026-05-28T09:00:00Z",
 			"end":       "2026-05-28T12:00:00Z",
 		},
@@ -759,11 +759,11 @@ func TestMCPHighLevelToolsReturnErrorResultOnTransportFailure(t *testing.T) {
 		{name: "outlook.mail_create_forward_draft", arguments: map[string]any{"message_id": "msg-1", "body": "Forward", "to": []string{"alex@example.com"}}},
 		{name: "outlook.mail_rules_list", arguments: map[string]any{"folder_id": "inbox"}},
 		{name: "outlook.mailbox_settings_get", arguments: map[string]any{"setting": "timeZone"}},
-		{name: "outlook.people_search", arguments: map[string]any{"query": "vlad"}},
-		{name: "outlook.people_resolve", arguments: map[string]any{"query": "vlad"}},
+		{name: "outlook.people_search", arguments: map[string]any{"query": "teammate"}},
+		{name: "outlook.people_resolve", arguments: map[string]any{"query": "teammate"}},
 		{name: "outlook.calendar_list", arguments: map[string]any{"start": "2026-05-27T00:00:00+02:00", "end": "2026-05-28T00:00:00+02:00"}},
 		{name: "outlook.calendar_availability", arguments: map[string]any{"start": "2026-05-27T09:00:00+02:00", "end": "2026-05-27T18:00:00+02:00"}},
-		{name: "outlook.calendar_find_time", arguments: map[string]any{"attendees": []string{"vlad.cheshenko@example.com"}, "start": "2026-05-28T09:00:00Z", "end": "2026-05-28T12:00:00Z", "duration_minutes": 30}},
+		{name: "outlook.calendar_find_time", arguments: map[string]any{"attendees": []string{"teammate@example.com"}, "start": "2026-05-28T09:00:00Z", "end": "2026-05-28T12:00:00Z", "duration_minutes": 30}},
 	} {
 		t.Run(call.name, func(t *testing.T) {
 			result, err := clientSession.CallTool(ctx, &mcp.CallToolParams{Name: call.name, Arguments: call.arguments})
@@ -935,9 +935,9 @@ func (capturing *capturingTransport) Execute(_ context.Context, request transpor
 			"rule":        map[string]any{"id": "rule-1", "display_name": "Keep", "is_enabled": false},
 			"settings":    map[string]any{"timeZone": "UTC"},
 			"people": []any{
-				map[string]any{"display_name": "Vlad Cheshenko", "email": "vlad.cheshenko@example.com"},
+				map[string]any{"display_name": "Тестовый Коллега", "email": "teammate@example.com"},
 			},
-			"person": map[string]any{"display_name": "Vlad Cheshenko", "email": "vlad.cheshenko@example.com"},
+			"person": map[string]any{"display_name": "Тестовый Коллега", "email": "teammate@example.com"},
 			"windows": []any{
 				map[string]any{
 					"start":          "2026-05-27T10:00:00+02:00",

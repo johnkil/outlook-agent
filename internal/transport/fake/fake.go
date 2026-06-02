@@ -235,7 +235,7 @@ func (client *Transport) Execute(_ context.Context, request transport.ActionRequ
 	case "people.search":
 		return transport.ActionResponse{OK: true, Data: map[string]any{"people": fakePeopleSearch(stringValue(request.Payload, "query", ""))}}
 	case "people.resolve":
-		people := fakePeopleSearch(stringValue(request.Payload, "query", "vlad"))
+		people := fakePeopleSearch(stringValue(request.Payload, "query", "teammate"))
 		if len(people) == 1 {
 			return transport.ActionResponse{OK: true, Data: map[string]any{"person": people[0]}}
 		}
@@ -289,7 +289,7 @@ func (client *Transport) Execute(_ context.Context, request transport.ActionRequ
 func fakePeopleSearch(query string) []any {
 	query = strings.ToLower(strings.TrimSpace(query))
 	people := []map[string]any{
-		{"display_name": "Vlad Cheshenko", "email": "vlad.cheshenko@example.com", "source": "fake"},
+		{"display_name": "Тестовый Коллега", "email": "teammate@example.com", "source": "fake"},
 		{"display_name": "Alex Morgan", "email": "alex.morgan@example.com", "source": "fake"},
 		{"display_name": "Alex Rivera", "email": "alex.rivera@example.com", "source": "fake"},
 	}

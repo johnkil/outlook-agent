@@ -670,7 +670,7 @@ func runPeopleCommand(args []string, options Options, runtime Runtime, stdout io
 
 func runCalendarCommand(args []string, options Options, runtime Runtime, stdout io.Writer, stderr io.Writer) int {
 	if len(args) < 1 {
-		fmt.Fprintln(stderr, "calendar command requires find-time")
+		fmt.Fprintln(stderr, "calendar command requires list, availability, find-time, or mutual-free")
 		return 1
 	}
 	switch args[0] {
@@ -707,9 +707,9 @@ func runCalendarAvailability(stdout io.Writer, options Options, runtime Runtime,
 		return errCode
 	}
 	if query := stringAny(payload["with"]); query != "" {
-		email, err := resolvePersonEmail(client, query, stringAny(payload["mailbox"]))
+		email, resolveData, err := resolvePersonEmail(client, query, stringAny(payload["mailbox"]))
 		if err != nil {
-			_ = writeJSON(stdout, map[string]any{"ok": false, "command": "calendar availability", "error": err.Error()})
+			_ = writeJSON(stdout, resolveErrorOutput("calendar availability", err, resolveData))
 			return 3
 		}
 		payload["email"] = email
@@ -725,9 +725,9 @@ func runCalendarFindTime(stdout io.Writer, options Options, runtime Runtime, pay
 	}
 	attendees := stringSliceAny(payload["attendees"])
 	for _, query := range stringSliceAny(payload["with"]) {
-		email, err := resolvePersonEmail(client, query, stringAny(payload["mailbox"]))
+		email, resolveData, err := resolvePersonEmail(client, query, stringAny(payload["mailbox"]))
 		if err != nil {
-			_ = writeJSON(stdout, map[string]any{"ok": false, "command": "calendar find-time", "error": err.Error()})
+			_ = writeJSON(stdout, resolveErrorOutput("calendar find-time", err, resolveData))
 			return 3
 		}
 		attendees = append(attendees, email)
@@ -735,6 +735,18 @@ func runCalendarFindTime(stdout io.Writer, options Options, runtime Runtime, pay
 	payload["attendees"] = attendees
 	delete(payload, "with")
 	return runTypedReadActionWithClient(stdout, client, "calendar find-time", "calendar.find_time", payload, "suggestions")
+}
+
+func resolveErrorOutput(command string, err error, data map[string]any) map[string]any {
+	output := map[string]any{"ok": false, "command": command, "error": err.Error()}
+	if data == nil {
+		return output
+	}
+	if candidates, ok := data["candidates"]; ok {
+		output["candidates"] = candidates
+	}
+	output["data"] = data
+	return output
 }
 
 func runTypedReadAction(stdout io.Writer, options Options, runtime Runtime, command string, actionName string, payload map[string]any, resultKey string) int {
@@ -783,21 +795,21 @@ func runTypedReadActionWithClient(stdout io.Writer, client transport.Transport, 
 	return 3
 }
 
-func resolvePersonEmail(client transport.Transport, query string, mailbox string) (string, error) {
+func resolvePersonEmail(client transport.Transport, query string, mailbox string) (string, map[string]any, error) {
 	payload := map[string]any{"query": query}
 	if strings.TrimSpace(mailbox) != "" {
 		payload["mailbox"] = mailbox
 	}
 	response := client.Execute(context.Background(), transport.ActionRequest{Name: "people.resolve", Payload: payload})
 	if !response.OK {
-		return "", errors.New(response.Error)
+		return "", response.Data, errors.New(response.Error)
 	}
 	person, _ := response.Data["person"].(map[string]any)
 	email := stringAny(person["email"])
 	if email == "" {
-		return "", fmt.Errorf("people.resolve did not return an email")
+		return "", response.Data, fmt.Errorf("people.resolve did not return an email")
 	}
-	return email, nil
+	return email, nil, nil
 }
 
 func parsePeopleArgs(args []string) (string, string, error) {
