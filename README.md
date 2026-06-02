@@ -177,12 +177,16 @@ Same safety ladder, different coverage:
 - **Microsoft Graph** — the primary, most complete path. Device-code sign-in,
   self-refreshing tokens, safe cursors, rich review packets, and the broadest
   high-level tool surface. Start with a read-only Graph enrollment; add
-  `MailboxSettings.Read` when you enable settings/rules metadata. Use a
+  `MailboxSettings.Read` when you enable settings/rules metadata. People
+  search/resolve may require `People.Read` for `/me/people` or
+  `People.Read.All` / admin consent for broader directory and shared-user
+  lookups, depending on tenant policy. Calendar availability/find-time require
+  calendar read availability access and remain planning-only. Use a
   write-capable Graph profile only when you want guarded writes, and grant only
-  the scopes needed by those workflows: `Mail.ReadWrite` for
-  `mail.create_draft` and message organization, `Mail.Send` for
-  `mail.send_draft`, `MailboxSettings.ReadWrite` for `mail.rules.set_enabled`,
-  and `Calendars.ReadWrite` for `calendar.respond`. ✅
+  the scopes needed by those workflows: `Mail.ReadWrite` for `mail.create_draft`
+  and message organization, `Mail.Send` for `mail.send_draft`,
+  `MailboxSettings.ReadWrite` for `mail.rules.set_enabled`, and
+  `Calendars.ReadWrite` for `calendar.respond`. ✅
 - **EWS** — narrower compatibility backend; metadata-first reads plus guarded
   raw SOAP for Exchange/on-prem setups where Graph is not available. 🌱
 - **OWA** — experimental fallback for locked-down setups where the others are

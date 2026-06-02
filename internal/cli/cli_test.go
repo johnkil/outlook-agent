@@ -1496,12 +1496,29 @@ func TestUnknownCommandReturnsValidationError(t *testing.T) {
 	}
 }
 
+func TestCalendarCommandWithoutSubcommandListsSupportedSubcommands(t *testing.T) {
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+
+	code := Run([]string{"calendar"}, &stdout, &stderr)
+
+	if code != 1 {
+		t.Fatalf("expected exit code 1, got %d", code)
+	}
+	if stdout.Len() != 0 {
+		t.Fatalf("expected no stdout for calendar validation error, got %s", stdout.String())
+	}
+	if !strings.Contains(stderr.String(), "list, availability, find-time, or mutual-free") {
+		t.Fatalf("expected supported calendar subcommands, got %s", stderr.String())
+	}
+}
+
 func TestPeopleSearchCommandUsesConfiguredTransport(t *testing.T) {
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer
 	client := &cliCapturingTransport{}
 
-	code := RunWithRuntime([]string{"people", "search", "vlad", "--config", "/tmp/outlook-agent.json"}, &stdout, &stderr, Runtime{
+	code := RunWithRuntime([]string{"people", "search", "teammate", "--config", "/tmp/outlook-agent.json"}, &stdout, &stderr, Runtime{
 		BuildTransport: func(_ context.Context, options Options) (transport.Transport, string, error) {
 			if options.ConfigPath != "/tmp/outlook-agent.json" {
 				t.Fatalf("expected config path forwarded, got %#v", options)
@@ -1513,7 +1530,7 @@ func TestPeopleSearchCommandUsesConfiguredTransport(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("expected exit code 0, got %d, stderr=%s", code, stderr.String())
 	}
-	if client.lastRequest.Name != "people.search" || client.lastRequest.Payload["query"] != "vlad" {
+	if client.lastRequest.Name != "people.search" || client.lastRequest.Payload["query"] != "teammate" {
 		t.Fatalf("expected people.search payload, got %#v", client.lastRequest)
 	}
 	var payload map[string]any
@@ -1530,7 +1547,7 @@ func TestPeopleResolveCommandDoesNotUseRawAction(t *testing.T) {
 	var stderr bytes.Buffer
 	client := &cliCapturingTransport{}
 
-	code := RunWithRuntime([]string{"people", "resolve", "vlad"}, &stdout, &stderr, Runtime{
+	code := RunWithRuntime([]string{"people", "resolve", "teammate"}, &stdout, &stderr, Runtime{
 		BuildTransport: func(context.Context, Options) (transport.Transport, string, error) {
 			return client, "work", nil
 		},
@@ -1539,7 +1556,7 @@ func TestPeopleResolveCommandDoesNotUseRawAction(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("expected exit code 0, got %d, stderr=%s", code, stderr.String())
 	}
-	if client.lastRequest.Name != "people.resolve" || client.lastRequest.Payload["query"] != "vlad" {
+	if client.lastRequest.Name != "people.resolve" || client.lastRequest.Payload["query"] != "teammate" {
 		t.Fatalf("expected people.resolve payload, got %#v", client.lastRequest)
 	}
 	if strings.Contains(stdout.String(), "raw_action") || strings.Contains(stdout.String(), "FindPeople") {
@@ -1552,7 +1569,7 @@ func TestPeopleResolveCommandAcceptsJSONFlag(t *testing.T) {
 	var stderr bytes.Buffer
 	client := &cliCapturingTransport{}
 
-	code := RunWithRuntime([]string{"people", "resolve", "Vlad Cheshenko", "--json"}, &stdout, &stderr, Runtime{
+	code := RunWithRuntime([]string{"people", "resolve", "Тестовый Коллега", "--json"}, &stdout, &stderr, Runtime{
 		BuildTransport: func(context.Context, Options) (transport.Transport, string, error) {
 			return client, "work", nil
 		},
@@ -1561,7 +1578,7 @@ func TestPeopleResolveCommandAcceptsJSONFlag(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("expected exit code 0, got %d, stderr=%s", code, stderr.String())
 	}
-	if client.lastRequest.Name != "people.resolve" || client.lastRequest.Payload["query"] != "Vlad Cheshenko" {
+	if client.lastRequest.Name != "people.resolve" || client.lastRequest.Payload["query"] != "Тестовый Коллега" {
 		t.Fatalf("expected --json not to be included in query, got %#v", client.lastRequest)
 	}
 }
@@ -1573,7 +1590,7 @@ func TestCalendarFindTimeCommandForwardsPlanningOptions(t *testing.T) {
 
 	code := RunWithRuntime([]string{
 		"calendar", "find-time",
-		"--attendee", "vlad.cheshenko@example.com",
+		"--attendee", "teammate@example.com",
 		"--start", "2026-05-28T09:00:00Z",
 		"--end", "2026-05-28T12:00:00Z",
 		"--duration", "30",
@@ -1595,7 +1612,7 @@ func TestCalendarFindTimeCommandForwardsPlanningOptions(t *testing.T) {
 		t.Fatalf("expected find-time options forwarded, got %#v", client.lastRequest.Payload)
 	}
 	attendees := client.lastRequest.Payload["attendees"].([]string)
-	if len(attendees) != 1 || attendees[0] != "vlad.cheshenko@example.com" {
+	if len(attendees) != 1 || attendees[0] != "teammate@example.com" {
 		t.Fatalf("expected attendee forwarded, got %#v", client.lastRequest.Payload)
 	}
 	var payload map[string]any
@@ -1614,7 +1631,7 @@ func TestCalendarFindTimeDateAcceptsProviderTimeZone(t *testing.T) {
 
 	code := RunWithRuntime([]string{
 		"calendar", "find-time",
-		"--attendee", "vlad.cheshenko@example.com",
+		"--attendee", "teammate@example.com",
 		"--date", "2026-05-28",
 		"--timezone", "India Standard Time",
 		"--duration", "30",
@@ -1645,7 +1662,7 @@ func TestCalendarFindTimeDateAcceptsAdditionalProviderTimeZones(t *testing.T) {
 
 	code := RunWithRuntime([]string{
 		"calendar", "find-time",
-		"--attendee", "vlad.cheshenko@example.com",
+		"--attendee", "teammate@example.com",
 		"--date", "2026-05-28",
 		"--timezone", "Tokyo Standard Time",
 		"--duration", "30",
@@ -1706,7 +1723,7 @@ func TestCalendarAvailabilityCommandForwardsEmailAndWindow(t *testing.T) {
 
 	code := RunWithRuntime([]string{
 		"calendar", "availability",
-		"--email", "vlad.cheshenko@example.com",
+		"--email", "teammate@example.com",
 		"--start", "2026-05-28T09:00:00Z",
 		"--end", "2026-05-28T12:00:00Z",
 	}, &stdout, &stderr, Runtime{
@@ -1718,7 +1735,7 @@ func TestCalendarAvailabilityCommandForwardsEmailAndWindow(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("expected exit code 0, got %d, stderr=%s", code, stderr.String())
 	}
-	if client.lastRequest.Name != "calendar.availability" || client.lastRequest.Payload["email"] != "vlad.cheshenko@example.com" {
+	if client.lastRequest.Name != "calendar.availability" || client.lastRequest.Payload["email"] != "teammate@example.com" {
 		t.Fatalf("expected calendar.availability email forwarded, got %#v", client.lastRequest)
 	}
 	var payload map[string]any
@@ -1767,7 +1784,7 @@ func TestCalendarAvailabilityWithPersonResolvesFirst(t *testing.T) {
 
 	code := RunWithRuntime([]string{
 		"calendar", "availability",
-		"--with", "vlad",
+		"--with", "teammate",
 		"--date", "tomorrow",
 		"--timezone", "UTC",
 	}, &stdout, &stderr, Runtime{
@@ -1782,12 +1799,12 @@ func TestCalendarAvailabilityWithPersonResolvesFirst(t *testing.T) {
 	if len(client.requests) != 2 || client.requests[0].Name != "people.resolve" || client.requests[1].Name != "calendar.availability" {
 		t.Fatalf("expected people resolve before availability, got %#v", client.requests)
 	}
-	if client.requests[1].Payload["email"] != "vlad.cheshenko@example.com" {
+	if client.requests[1].Payload["email"] != "teammate@example.com" {
 		t.Fatalf("expected resolved attendee email, got %#v", client.requests[1])
 	}
 }
 
-func TestCalendarFindTimeVladScenarioWithDurationStringAndJSON(t *testing.T) {
+func TestCalendarFindTimeGenericPersonScenarioWithDurationStringAndJSON(t *testing.T) {
 	oldNow := now
 	now = func() time.Time { return time.Date(2026, 6, 1, 12, 0, 0, 0, time.UTC) }
 	defer func() { now = oldNow }()
@@ -1797,7 +1814,7 @@ func TestCalendarFindTimeVladScenarioWithDurationStringAndJSON(t *testing.T) {
 
 	code := RunWithRuntime([]string{
 		"calendar", "find-time",
-		"--with", "vlad",
+		"--with", "teammate",
 		"--date", "tomorrow",
 		"--duration", "30m",
 		"--timezone", "UTC",
@@ -1818,7 +1835,7 @@ func TestCalendarFindTimeVladScenarioWithDurationStringAndJSON(t *testing.T) {
 		t.Fatalf("expected 30 minute duration, got %#v", client.requests[1].Payload)
 	}
 	attendees := client.requests[1].Payload["attendees"].([]string)
-	if len(attendees) != 1 || attendees[0] != "vlad.cheshenko@example.com" {
+	if len(attendees) != 1 || attendees[0] != "teammate@example.com" {
 		t.Fatalf("expected resolved attendee email, got %#v", client.requests[1].Payload)
 	}
 	var payload map[string]any
@@ -1838,7 +1855,7 @@ func TestCalendarFindTimeWithPersonPreservesMailboxWhenResolving(t *testing.T) {
 	code := RunWithRuntime([]string{
 		"calendar", "find-time",
 		"--mailbox", "shared@example.com",
-		"--with", "vlad",
+		"--with", "teammate",
 		"--date", "tomorrow",
 		"--duration", "30m",
 		"--timezone", "UTC",
@@ -1870,7 +1887,7 @@ func TestCalendarMutualFreeAlias(t *testing.T) {
 
 	code := RunWithRuntime([]string{
 		"calendar", "mutual-free",
-		"--attendee", "vlad.cheshenko@example.com",
+		"--attendee", "teammate@example.com",
 		"--start", "2026-05-28T09:00:00Z",
 		"--end", "2026-05-28T12:00:00Z",
 		"--min", "30m",
@@ -1885,6 +1902,36 @@ func TestCalendarMutualFreeAlias(t *testing.T) {
 	}
 	if client.lastRequest.Name != "calendar.find_time" {
 		t.Fatalf("expected mutual-free alias to call calendar.find_time, got %#v", client.lastRequest)
+	}
+}
+
+func TestCalendarFindTimeWithPersonPreservesAmbiguousCandidates(t *testing.T) {
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	client := &cliAmbiguousPeopleTransport{}
+
+	code := RunWithRuntime([]string{
+		"calendar", "find-time",
+		"--with", "alex",
+		"--start", "2026-05-28T09:00:00Z",
+		"--end", "2026-05-28T12:00:00Z",
+		"--duration", "30m",
+	}, &stdout, &stderr, Runtime{
+		BuildTransport: func(context.Context, Options) (transport.Transport, string, error) {
+			return client, "work", nil
+		},
+	})
+
+	if code != 3 {
+		t.Fatalf("expected ambiguous resolve exit code 3, got %d, stderr=%s, stdout=%s", code, stderr.String(), stdout.String())
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(stdout.Bytes(), &payload); err != nil {
+		t.Fatalf("find-time output is not JSON: %v; output=%s", err, stdout.String())
+	}
+	candidates, ok := payload["candidates"].([]any)
+	if !ok || len(candidates) != 2 {
+		t.Fatalf("expected ambiguous candidates in integrated find-time output, got %#v", payload)
 	}
 }
 
@@ -1912,9 +1959,9 @@ func (client *cliCapturingTransport) Execute(_ context.Context, request transpor
 		OK: true,
 		Data: map[string]any{
 			"people": []any{
-				map[string]any{"display_name": "Vlad Cheshenko", "email": "vlad.cheshenko@example.com"},
+				map[string]any{"display_name": "Тестовый Коллега", "email": "teammate@example.com"},
 			},
-			"person": map[string]any{"display_name": "Vlad Cheshenko", "email": "vlad.cheshenko@example.com"},
+			"person": map[string]any{"display_name": "Тестовый Коллега", "email": "teammate@example.com"},
 			"suggestions": []any{
 				map[string]any{"start": "2026-05-28T10:00:00Z", "end": "2026-05-28T10:30:00Z"},
 			},
@@ -1926,6 +1973,43 @@ func (client *cliCapturingTransport) Execute(_ context.Context, request transpor
 			},
 		},
 	}
+}
+
+type cliAmbiguousPeopleTransport struct {
+	requests []transport.ActionRequest
+}
+
+func (client *cliAmbiguousPeopleTransport) Name() string {
+	return "ambiguous"
+}
+
+func (client *cliAmbiguousPeopleTransport) Authenticate(context.Context, string) transport.AuthResult {
+	return transport.AuthResult{OK: true}
+}
+
+func (client *cliAmbiguousPeopleTransport) Capabilities(context.Context) transport.CapabilitySet {
+	return transport.CapabilitySet{}
+}
+
+func (client *cliAmbiguousPeopleTransport) Execute(_ context.Context, request transport.ActionRequest) transport.ActionResponse {
+	client.requests = append(client.requests, request)
+	if request.Name == "people.resolve" {
+		return transport.ActionResponse{
+			OK:    false,
+			Error: "people.resolve is ambiguous",
+			Data: map[string]any{
+				"candidates": []any{
+					map[string]any{"display_name": "Alex Morgan", "email": "alex.morgan@example.com"},
+					map[string]any{"display_name": "Alex Rivera", "email": "alex.rivera@example.com"},
+				},
+			},
+		}
+	}
+	return transport.ActionResponse{OK: true, Data: map[string]any{"suggestions": []any{}}}
+}
+
+func (client *cliAmbiguousPeopleTransport) DryRun(context.Context, transport.ActionRequest) transport.DryRunSummary {
+	return transport.DryRunSummary{}
 }
 
 func (client *cliCapturingTransport) DryRun(context.Context, transport.ActionRequest) transport.DryRunSummary {

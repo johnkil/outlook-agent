@@ -2258,7 +2258,6 @@ func normalizeGraphScheduleItem(scheduleID string, item scheduleItem, fallbackTi
 		"end_time_zone":   graphDateTimeZone(item.End.TimeZone, fallbackTimeZone),
 		"status":          item.Status,
 		"free_busy_type":  item.Status,
-		"subject":         item.Subject,
 	}
 }
 
