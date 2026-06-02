@@ -732,6 +732,7 @@ func (client *Transport) buildCreateDraftRequest(payload map[string]any) any {
 }
 
 type createMeetingPayload struct {
+	mailbox   string
 	subject   string
 	start     string
 	end       string
@@ -743,6 +744,7 @@ type createMeetingPayload struct {
 
 func normalizeCreateMeetingPayload(payload map[string]any) (createMeetingPayload, error) {
 	meeting := createMeetingPayload{
+		mailbox:   strings.TrimSpace(stringValue(payload, "mailbox")),
 		subject:   strings.TrimSpace(stringValue(payload, "subject")),
 		start:     strings.TrimSpace(stringValue(payload, "start")),
 		end:       strings.TrimSpace(stringValue(payload, "end")),
@@ -777,6 +779,20 @@ func createMeetingAttendees(value any) []string {
 	return attendees
 }
 
+func owaCalendarFolderID(mailbox string) any {
+	fields := []orderedField{
+		field("__type", "DistinguishedFolderId:#Exchange"),
+		field("Id", "calendar"),
+	}
+	if mailbox = strings.TrimSpace(mailbox); mailbox != "" {
+		fields = append(fields, field("Mailbox", object(
+			field("__type", "EmailAddress:#Exchange"),
+			field("EmailAddress", mailbox),
+		)))
+	}
+	return object(fields...)
+}
+
 func (client *Transport) buildCreateMeetingRequest(meeting createMeetingPayload) any {
 	attendees := make([]any, 0)
 	for _, address := range meeting.attendees {
@@ -797,10 +813,7 @@ func (client *Transport) buildCreateMeetingRequest(meeting createMeetingPayload)
 			field("SendMeetingInvitations", "SendToAllAndSaveCopy"),
 			field("SavedItemFolderId", object(
 				field("__type", "TargetFolderId:#Exchange"),
-				field("BaseFolderId", object(
-					field("__type", "DistinguishedFolderId:#Exchange"),
-					field("Id", "calendar"),
-				)),
+				field("BaseFolderId", owaCalendarFolderID(meeting.mailbox)),
 			)),
 			field("Items", []any{
 				object(

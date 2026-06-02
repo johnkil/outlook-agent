@@ -1928,6 +1928,50 @@ func TestHighLevelCalendarCreateMeetingCallsCreateItem(t *testing.T) {
 	}
 }
 
+func TestHighLevelCalendarCreateMeetingTargetsMailboxFolder(t *testing.T) {
+	var calls []recordedServiceCall
+	server := newOWAServiceServer(t, &calls, map[string]any{
+		"Body": map[string]any{
+			"Items": []any{
+				map[string]any{
+					"ItemId":  map[string]any{"Id": "event-1", "ChangeKey": "ck-1"},
+					"Subject": "Planning",
+				},
+			},
+		},
+	})
+	defer server.Close()
+	client := newTestTransport(server)
+
+	response := client.Execute(context.Background(), transport.ActionRequest{
+		Name: "calendar.create_meeting",
+		Payload: map[string]any{
+			"mailbox":   " shared@example.com ",
+			"subject":   "Planning",
+			"start":     "2026-06-02T15:00:00+03:00",
+			"end":       "2026-06-02T15:30:00+03:00",
+			"attendees": []any{"teammate@example.com"},
+		},
+	})
+
+	if !response.OK {
+		t.Fatalf("expected calendar.create_meeting ok: %#v", response)
+	}
+	body := calls[0].Body["Body"].(map[string]any)
+	folder := body["SavedItemFolderId"].(map[string]any)
+	base := folder["BaseFolderId"].(map[string]any)
+	if base["Id"] != "calendar" {
+		t.Fatalf("expected calendar folder id, got %#v", base)
+	}
+	mailbox, ok := base["Mailbox"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected shared mailbox folder target, got %#v", base)
+	}
+	if mailbox["EmailAddress"] != "shared@example.com" {
+		t.Fatalf("expected shared mailbox folder target, got %#v", base)
+	}
+}
+
 func TestHighLevelCalendarCreateMeetingRejectsInvalidPayloadBeforeServerCall(t *testing.T) {
 	cases := []struct {
 		name    string
