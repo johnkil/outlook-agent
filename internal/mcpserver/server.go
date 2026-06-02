@@ -1350,6 +1350,11 @@ func calendarCreateMeetingHandler(runtime *Runtime) func(context.Context, *mcp.C
 			payload["reminder_minutes"] = *input.ReminderMinutes
 		}
 		payload = withMailbox(payload, input.Mailbox)
+		var rejectReason string
+		payload, rejectReason = canonicalActionPayload("calendar.create_meeting", payload)
+		if rejectReason != "" {
+			return nil, ActionResultOutput{OK: false, Error: rejectReason}, nil
+		}
 		actionName := "calendar.create_meeting"
 		summary, class, review := dryRunReviewFor(ctx, runtime.client, actionName, payload, false)
 		if summary.Error != "" {
@@ -1535,11 +1540,12 @@ func manifestIDsFromValue(value any) []string {
 
 func dryRunHandler(runtime *Runtime) func(context.Context, *mcp.CallToolRequest, DryRunInput) (*mcp.CallToolResult, DryRunOutput, error) {
 	return func(ctx context.Context, _ *mcp.CallToolRequest, input DryRunInput) (*mcp.CallToolResult, DryRunOutput, error) {
-		if reason := actionPreflightRejection(input.Action); reason != "" {
-			class := safetyClassForPayload(runtime.client, input.Action, input.Payload)
-			review := reviewPacketFor(runtime.client, input.Action, input.Payload, transport.DryRunSummary{Action: input.Action}, class)
-			message := redact.String(reason)
-			runtime.recordAudit(audit.TypeReject, input.Action, input.Payload, runtime.profileOrDefault(input.Profile), class, review, "blocked", 0, message)
+		payload, rejectReason := canonicalActionPayload(input.Action, input.Payload)
+		if rejectReason != "" {
+			class := safetyClassForPayload(runtime.client, input.Action, payload)
+			review := reviewPacketFor(runtime.client, input.Action, payload, transport.DryRunSummary{Action: input.Action}, class)
+			message := redact.String(rejectReason)
+			runtime.recordAudit(audit.TypeReject, input.Action, payload, runtime.profileOrDefault(input.Profile), class, review, "blocked", 0, message)
 			return nil, DryRunOutput{
 				Action: input.Action,
 				OK:     false,
@@ -1547,11 +1553,23 @@ func dryRunHandler(runtime *Runtime) func(context.Context, *mcp.CallToolRequest,
 				Error:  message,
 			}, nil
 		}
-		summary, class, review := dryRunReviewFor(ctx, runtime.client, input.Action, input.Payload, input.UnsafeMode)
+		if reason := actionPreflightRejection(input.Action); reason != "" {
+			class := safetyClassForPayload(runtime.client, input.Action, payload)
+			review := reviewPacketFor(runtime.client, input.Action, payload, transport.DryRunSummary{Action: input.Action}, class)
+			message := redact.String(reason)
+			runtime.recordAudit(audit.TypeReject, input.Action, payload, runtime.profileOrDefault(input.Profile), class, review, "blocked", 0, message)
+			return nil, DryRunOutput{
+				Action: input.Action,
+				OK:     false,
+				Review: &review,
+				Error:  message,
+			}, nil
+		}
+		summary, class, review := dryRunReviewFor(ctx, runtime.client, input.Action, payload, input.UnsafeMode)
 		requiresApproval := runtime.requiresApproval(class)
 		if summary.Error != "" {
 			message := redact.String(summary.Error)
-			runtime.recordAudit(audit.TypeReject, input.Action, input.Payload, runtime.profileOrDefault(input.Profile), class, review, "blocked", summary.Count, message)
+			runtime.recordAudit(audit.TypeReject, input.Action, payload, runtime.profileOrDefault(input.Profile), class, review, "blocked", summary.Count, message)
 			return nil, DryRunOutput{
 				Action:               summary.Action,
 				OK:                   false,
@@ -1565,9 +1583,9 @@ func dryRunHandler(runtime *Runtime) func(context.Context, *mcp.CallToolRequest,
 				Error:                message,
 			}, nil
 		}
-		decision := confirmedActionDecision(runtime.client, input.Action, input.Payload, input.UnsafeMode)
+		decision := confirmedActionDecision(runtime.client, input.Action, payload, input.UnsafeMode)
 		if !decision.Allowed {
-			runtime.recordAudit(audit.TypeReject, input.Action, input.Payload, runtime.profileOrDefault(input.Profile), class, review, "blocked", summary.Count, decision.Reason)
+			runtime.recordAudit(audit.TypeReject, input.Action, payload, runtime.profileOrDefault(input.Profile), class, review, "blocked", summary.Count, decision.Reason)
 			return nil, DryRunOutput{
 				Action:               summary.Action,
 				OK:                   false,
@@ -1582,19 +1600,19 @@ func dryRunHandler(runtime *Runtime) func(context.Context, *mcp.CallToolRequest,
 				Error:                decision.Reason,
 			}, nil
 		}
-		token, err := runtime.confirm.Generate(confirmationBindingFor(runtime.client, runtime.profileOrDefault(input.Profile), input.Action, input.Payload, input.UnsafeMode, review, class), approvalChallengeTTL)
+		token, err := runtime.confirm.Generate(confirmationBindingFor(runtime.client, runtime.profileOrDefault(input.Profile), input.Action, payload, input.UnsafeMode, review, class), approvalChallengeTTL)
 		if err != nil {
 			return nil, DryRunOutput{}, err
 		}
 		var challenge *approval.Challenge
 		if requiresApproval {
-			issued, err := runtime.approval.Issue(approvalBindingFor(runtime.client, runtime.profileOrDefault(input.Profile), input.Action, input.Payload, input.UnsafeMode, review, class), approvalChallengeTTL)
+			issued, err := runtime.approval.Issue(approvalBindingFor(runtime.client, runtime.profileOrDefault(input.Profile), input.Action, payload, input.UnsafeMode, review, class), approvalChallengeTTL)
 			if err != nil {
 				return nil, DryRunOutput{}, err
 			}
 			challenge = &issued
 		}
-		runtime.recordAudit(audit.TypeDryRun, input.Action, input.Payload, runtime.profileOrDefault(input.Profile), class, review, "allowed", summary.Count, "")
+		runtime.recordAudit(audit.TypeDryRun, input.Action, payload, runtime.profileOrDefault(input.Profile), class, review, "allowed", summary.Count, "")
 		return nil, DryRunOutput{
 			Action:               summary.Action,
 			OK:                   true,
@@ -1614,42 +1632,50 @@ func dryRunHandler(runtime *Runtime) func(context.Context, *mcp.CallToolRequest,
 
 func actionConfirmHandler(runtime *Runtime) func(context.Context, *mcp.CallToolRequest, ActionConfirmInput) (*mcp.CallToolResult, ActionResultOutput, error) {
 	return func(ctx context.Context, _ *mcp.CallToolRequest, input ActionConfirmInput) (*mcp.CallToolResult, ActionResultOutput, error) {
-		if reason := actionPreflightRejection(input.Action); reason != "" {
-			class := safetyClassForPayload(runtime.client, input.Action, input.Payload)
-			review := reviewPacketFor(runtime.client, input.Action, input.Payload, transport.DryRunSummary{Action: input.Action}, class)
-			message := redact.String(reason)
-			runtime.recordAudit(audit.TypeReject, input.Action, input.Payload, runtime.profileOrDefault(input.Profile), class, review, "blocked", 0, message)
+		payload, rejectReason := canonicalActionPayload(input.Action, input.Payload)
+		if rejectReason != "" {
+			class := safetyClassForPayload(runtime.client, input.Action, payload)
+			review := reviewPacketFor(runtime.client, input.Action, payload, transport.DryRunSummary{Action: input.Action}, class)
+			message := redact.String(rejectReason)
+			runtime.recordAudit(audit.TypeReject, input.Action, payload, runtime.profileOrDefault(input.Profile), class, review, "blocked", 0, message)
 			return nil, ActionResultOutput{OK: false, Error: message}, nil
 		}
-		summary, class, review := dryRunReviewFor(ctx, runtime.client, input.Action, input.Payload, input.UnsafeMode)
+		if reason := actionPreflightRejection(input.Action); reason != "" {
+			class := safetyClassForPayload(runtime.client, input.Action, payload)
+			review := reviewPacketFor(runtime.client, input.Action, payload, transport.DryRunSummary{Action: input.Action}, class)
+			message := redact.String(reason)
+			runtime.recordAudit(audit.TypeReject, input.Action, payload, runtime.profileOrDefault(input.Profile), class, review, "blocked", 0, message)
+			return nil, ActionResultOutput{OK: false, Error: message}, nil
+		}
+		summary, class, review := dryRunReviewFor(ctx, runtime.client, input.Action, payload, input.UnsafeMode)
 		if summary.Error != "" {
 			message := redact.String(summary.Error)
-			runtime.recordAudit(audit.TypeReject, input.Action, input.Payload, runtime.profileOrDefault(input.Profile), class, review, "blocked", summary.Count, message)
+			runtime.recordAudit(audit.TypeReject, input.Action, payload, runtime.profileOrDefault(input.Profile), class, review, "blocked", summary.Count, message)
 			return nil, ActionResultOutput{OK: false, Error: message}, nil
 		}
-		pendingApproval, err := runtime.validateExternalApproval(input.ApprovalChallengeID, input.ApprovalToken, input.Action, input.Payload, input.UnsafeMode, runtime.profileOrDefault(input.Profile), review, class)
+		pendingApproval, err := runtime.validateExternalApproval(input.ApprovalChallengeID, input.ApprovalToken, input.Action, payload, input.UnsafeMode, runtime.profileOrDefault(input.Profile), review, class)
 		if err != nil {
-			runtime.recordAudit(audit.TypeReject, input.Action, input.Payload, runtime.profileOrDefault(input.Profile), class, review, "blocked", summary.Count, err.Error())
+			runtime.recordAudit(audit.TypeReject, input.Action, payload, runtime.profileOrDefault(input.Profile), class, review, "blocked", summary.Count, err.Error())
 			return nil, ActionResultOutput{OK: false, Error: err.Error()}, nil
 		}
-		if !runtime.confirm.Consume(input.ConfirmToken, confirmationBindingFor(runtime.client, runtime.profileOrDefault(input.Profile), input.Action, input.Payload, input.UnsafeMode, review, class)) {
-			runtime.recordAudit(audit.TypeReject, input.Action, input.Payload, runtime.profileOrDefault(input.Profile), class, review, "blocked", summary.Count, "confirmation token is invalid")
+		if !runtime.confirm.Consume(input.ConfirmToken, confirmationBindingFor(runtime.client, runtime.profileOrDefault(input.Profile), input.Action, payload, input.UnsafeMode, review, class)) {
+			runtime.recordAudit(audit.TypeReject, input.Action, payload, runtime.profileOrDefault(input.Profile), class, review, "blocked", summary.Count, "confirmation token is invalid")
 			return nil, ActionResultOutput{OK: false, Error: "confirmation token is invalid"}, nil
 		}
 		if err := runtime.consumeExternalApproval(pendingApproval); err != nil {
-			runtime.recordAudit(audit.TypeReject, input.Action, input.Payload, runtime.profileOrDefault(input.Profile), class, review, "blocked", summary.Count, err.Error())
+			runtime.recordAudit(audit.TypeReject, input.Action, payload, runtime.profileOrDefault(input.Profile), class, review, "blocked", summary.Count, err.Error())
 			return nil, ActionResultOutput{OK: false, Error: err.Error()}, nil
 		}
-		decision := confirmedActionDecision(runtime.client, input.Action, input.Payload, input.UnsafeMode)
+		decision := confirmedActionDecision(runtime.client, input.Action, payload, input.UnsafeMode)
 		if !decision.Allowed {
-			runtime.recordAudit(audit.TypeReject, input.Action, input.Payload, runtime.profileOrDefault(input.Profile), class, review, "blocked", summary.Count, decision.Reason)
+			runtime.recordAudit(audit.TypeReject, input.Action, payload, runtime.profileOrDefault(input.Profile), class, review, "blocked", summary.Count, decision.Reason)
 			return nil, ActionResultOutput{OK: false, Error: decision.Reason}, nil
 		}
-		runtime.recordAudit(audit.TypeConfirm, input.Action, input.Payload, runtime.profileOrDefault(input.Profile), class, review, "accepted", summary.Count, "")
-		response := runtime.client.Execute(ctx, transport.ActionRequest{Name: input.Action, Payload: input.Payload, UnsafeMode: input.UnsafeMode})
-		runtime.recordAudit(audit.TypeExecute, input.Action, input.Payload, runtime.profileOrDefault(input.Profile), class, review, auditDecisionForResponse(response), summary.Count, response.Error)
+		runtime.recordAudit(audit.TypeConfirm, input.Action, payload, runtime.profileOrDefault(input.Profile), class, review, "accepted", summary.Count, "")
+		response := runtime.client.Execute(ctx, transport.ActionRequest{Name: input.Action, Payload: payload, UnsafeMode: input.UnsafeMode})
+		runtime.recordAudit(audit.TypeExecute, input.Action, payload, runtime.profileOrDefault(input.Profile), class, review, auditDecisionForResponse(response), summary.Count, response.Error)
 		output := actionResultFromResponse(response)
-		runtime.attachMutationManifest(input.Action, input.Payload, &output)
+		runtime.attachMutationManifest(input.Action, payload, &output)
 		return nil, output, nil
 	}
 }
@@ -1678,6 +1704,32 @@ func rawActionHandler(runtime *Runtime) func(context.Context, *mcp.CallToolReque
 		runtime.recordAudit(audit.TypeExecute, input.Action, input.Payload, runtime.profileOrDefault(input.Profile), class, review, auditDecisionForResponse(response), 0, response.Error)
 		return nil, actionResultFromResponse(response), nil
 	}
+}
+
+func canonicalActionPayload(actionName string, payload map[string]any) (map[string]any, string) {
+	if actionName != "calendar.create_meeting" {
+		return payload, ""
+	}
+	if payload == nil {
+		return nil, ""
+	}
+	if _, exists := payload["is_online_meeting"]; exists {
+		return payload, "is_online_meeting is not supported for calendar.create_meeting"
+	}
+	if _, exists := payload["reminder_minutes"]; exists {
+		return payload, "reminder_minutes is not supported for calendar.create_meeting"
+	}
+	canonical := make(map[string]any, len(payload))
+	for key, value := range payload {
+		canonical[key] = value
+	}
+	if timezone, exists := canonical["timezone"]; exists {
+		if strings.TrimSpace(stringMetadata(canonical, "time_zone")) == "" {
+			canonical["time_zone"] = timezone
+		}
+		delete(canonical, "timezone")
+	}
+	return canonical, ""
 }
 
 func actionPreflightRejection(actionName string) string {

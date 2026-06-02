@@ -629,16 +629,14 @@ func TestMCPToolCalendarCreateMeetingExecutesConfirmedCanonicalPayload(t *testin
 	defer clientSession.Close()
 
 	payload := map[string]any{
-		"subject":           "Planning",
-		"start":             "2026-06-02T15:00:00+03:00",
-		"end":               "2026-06-02T15:30:00+03:00",
-		"attendees":         []any{"teammate@example.com", "other@example.com"},
-		"time_zone":         "Russian Standard Time",
-		"body":              "Discuss next steps",
-		"location":          "Room 1",
-		"is_online_meeting": true,
-		"reminder_minutes":  float64(15),
-		"mailbox":           "shared@example.com",
+		"subject":   "Planning",
+		"start":     "2026-06-02T15:00:00+03:00",
+		"end":       "2026-06-02T15:30:00+03:00",
+		"attendees": []any{"teammate@example.com", "other@example.com"},
+		"timezone":  "Russian Standard Time",
+		"body":      "Discuss next steps",
+		"location":  "Room 1",
+		"mailbox":   "shared@example.com",
 	}
 	dryRunResult, err := clientSession.CallTool(ctx, &mcp.CallToolParams{
 		Name: "outlook.action_dry_run",
@@ -658,17 +656,15 @@ func TestMCPToolCalendarCreateMeetingExecutesConfirmedCanonicalPayload(t *testin
 	result, err := clientSession.CallTool(ctx, &mcp.CallToolParams{
 		Name: "outlook.calendar_create_meeting",
 		Arguments: map[string]any{
-			"subject":           "Planning",
-			"start":             "2026-06-02T15:00:00+03:00",
-			"end":               "2026-06-02T15:30:00+03:00",
-			"attendees":         []any{" teammate@example.com ", "", "other@example.com"},
-			"timezone":          "Russian Standard Time",
-			"body":              "Discuss next steps",
-			"location":          "Room 1",
-			"is_online_meeting": true,
-			"reminder_minutes":  float64(15),
-			"mailbox":           "shared@example.com",
-			"confirm_token":     dryRun.ConfirmationToken,
+			"subject":       "Planning",
+			"start":         "2026-06-02T15:00:00+03:00",
+			"end":           "2026-06-02T15:30:00+03:00",
+			"attendees":     []any{" teammate@example.com ", "", "other@example.com"},
+			"timezone":      "Russian Standard Time",
+			"body":          "Discuss next steps",
+			"location":      "Room 1",
+			"mailbox":       "shared@example.com",
+			"confirm_token": dryRun.ConfirmationToken,
 		},
 	})
 	if err != nil {
@@ -694,6 +690,79 @@ func TestMCPToolCalendarCreateMeetingExecutesConfirmedCanonicalPayload(t *testin
 	}
 	if request.Payload["subject"] != "Planning" || request.Payload["body"] != "Discuss next steps" || request.Payload["mailbox"] != "shared@example.com" {
 		t.Fatalf("expected exact create-meeting payload, got %#v", request.Payload)
+	}
+	if request.Payload["time_zone"] != "Russian Standard Time" {
+		t.Fatalf("expected canonical time_zone in create-meeting payload, got %#v", request.Payload)
+	}
+	if _, exists := request.Payload["timezone"]; exists {
+		t.Fatalf("expected public timezone alias to be canonicalized away, got %#v", request.Payload)
+	}
+}
+
+func TestMCPToolCalendarCreateMeetingRejectsUnsupportedOptionsBeforeDryRun(t *testing.T) {
+	tests := []struct {
+		name      string
+		argument  string
+		value     any
+		wantError string
+	}{
+		{
+			name:      "online meeting",
+			argument:  "is_online_meeting",
+			value:     true,
+			wantError: "is_online_meeting is not supported",
+		},
+		{
+			name:      "reminder minutes",
+			argument:  "reminder_minutes",
+			value:     float64(15),
+			wantError: "reminder_minutes is not supported",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ctx := context.Background()
+			capturing := &meetingCapturingTransport{}
+			serverTransport, clientTransport := mcp.NewInMemoryTransports()
+
+			serverSession, err := mcpserver.NewWithTransport(capturing).Connect(ctx, serverTransport, nil)
+			if err != nil {
+				t.Fatalf("connect server: %v", err)
+			}
+			defer serverSession.Close()
+			defer serverSession.Wait()
+
+			client := mcp.NewClient(&mcp.Implementation{Name: "test-client", Version: "0.0.1"}, nil)
+			clientSession, err := client.Connect(ctx, clientTransport, nil)
+			if err != nil {
+				t.Fatalf("connect client: %v", err)
+			}
+			defer clientSession.Close()
+
+			arguments := map[string]any{
+				"subject":       "Planning",
+				"start":         "2026-06-02T15:00:00+03:00",
+				"end":           "2026-06-02T15:30:00+03:00",
+				"attendees":     []any{"teammate@example.com"},
+				"confirm_token": "unused",
+			}
+			arguments[tt.argument] = tt.value
+			result, err := clientSession.CallTool(ctx, &mcp.CallToolParams{
+				Name:      "outlook.calendar_create_meeting",
+				Arguments: arguments,
+			})
+			if err != nil {
+				t.Fatalf("call calendar create meeting: %v", err)
+			}
+			output := decodeStructured[mcpserver.ActionResultOutput](t, result)
+			if output.OK || !strings.Contains(output.Error, tt.wantError) {
+				t.Fatalf("expected unsupported option error %q, got %#v", tt.wantError, output)
+			}
+			if len(capturing.dryRunRequests) != 0 || len(capturing.executeRequests) != 0 {
+				t.Fatalf("expected unsupported option to block before transport, dry-runs=%#v executes=%#v", capturing.dryRunRequests, capturing.executeRequests)
+			}
+		})
 	}
 }
 
