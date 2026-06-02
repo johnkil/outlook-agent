@@ -97,6 +97,21 @@ func (client *Transport) executeHighLevel(ctx context.Context, request transport
 			return transport.ActionResponse{OK: false, Error: err.Error()}, true
 		}
 		return response, true
+	case "calendar.create_meeting":
+		meeting, err := normalizeCreateMeetingPayload(request.Payload)
+		if err != nil {
+			return transport.ActionResponse{OK: false, Error: err.Error()}, true
+		}
+		response := client.executeService(ctx, "CreateItem", client.buildCreateMeetingRequest(meeting), false)
+		if !response.OK {
+			return response, true
+		}
+		events := normalizeCalendarItems(extractItems(response.Data))
+		event := firstMap(events)
+		if strings.TrimSpace(stringValue(event, "id")) == "" {
+			return transport.ActionResponse{OK: false, Error: "calendar.create_meeting missing created event id"}, true
+		}
+		return transport.ActionResponse{OK: true, Data: map[string]any{"event": event}}, true
 	case "mail.fetch_metadata":
 		messageID := strings.TrimSpace(stringValue(request.Payload, "id"))
 		if messageID == "" {
@@ -710,6 +725,96 @@ func (client *Transport) buildCreateDraftRequest(payload map[string]any) any {
 						field("Value", stringValue(payload, "body")),
 					)),
 					field("ToRecipients", recipients),
+				),
+			}),
+		)),
+	)
+}
+
+type createMeetingPayload struct {
+	subject   string
+	start     string
+	end       string
+	body      string
+	location  string
+	timeZone  string
+	attendees []string
+}
+
+func normalizeCreateMeetingPayload(payload map[string]any) (createMeetingPayload, error) {
+	meeting := createMeetingPayload{
+		subject:   strings.TrimSpace(stringValue(payload, "subject")),
+		start:     strings.TrimSpace(stringValue(payload, "start")),
+		end:       strings.TrimSpace(stringValue(payload, "end")),
+		body:      stringValue(payload, "body"),
+		location:  strings.TrimSpace(stringValue(payload, "location")),
+		timeZone:  strings.TrimSpace(stringValue(payload, "time_zone")),
+		attendees: createMeetingAttendees(payload["attendees"]),
+	}
+	if meeting.subject == "" {
+		return createMeetingPayload{}, fmt.Errorf("calendar.create_meeting requires subject")
+	}
+	if meeting.start == "" || meeting.end == "" {
+		return createMeetingPayload{}, fmt.Errorf("calendar.create_meeting requires start and end")
+	}
+	if len(meeting.attendees) == 0 {
+		return createMeetingPayload{}, fmt.Errorf("calendar.create_meeting requires attendees")
+	}
+	return meeting, nil
+}
+
+func createMeetingAttendees(value any) []string {
+	attendees := make([]string, 0)
+	for _, attendee := range anySlice(value) {
+		address, ok := attendee.(string)
+		if !ok {
+			continue
+		}
+		if address = strings.TrimSpace(address); address != "" {
+			attendees = append(attendees, address)
+		}
+	}
+	return attendees
+}
+
+func (client *Transport) buildCreateMeetingRequest(meeting createMeetingPayload) any {
+	attendees := make([]any, 0)
+	for _, address := range meeting.attendees {
+		attendees = append(attendees, object(
+			field("__type", "Attendee:#Exchange"),
+			field("Mailbox", object(
+				field("__type", "EmailAddress:#Exchange"),
+				field("EmailAddress", address),
+			)),
+		))
+	}
+	return object(
+		field("__type", "CreateItemJsonRequest:#Exchange"),
+		field("Header", client.requestHeaderPayloadInTimeZone("Exchange2013", meeting.timeZone)),
+		field("Body", object(
+			field("__type", "CreateItemRequest:#Exchange"),
+			field("MessageDisposition", "SendAndSaveCopy"),
+			field("SendMeetingInvitations", "SendToAllAndSaveCopy"),
+			field("SavedItemFolderId", object(
+				field("__type", "TargetFolderId:#Exchange"),
+				field("BaseFolderId", object(
+					field("__type", "DistinguishedFolderId:#Exchange"),
+					field("Id", "calendar"),
+				)),
+			)),
+			field("Items", []any{
+				object(
+					field("__type", "CalendarItem:#Exchange"),
+					field("Subject", meeting.subject),
+					field("Body", object(
+						field("__type", "BodyContentType:#Exchange"),
+						field("BodyType", "Text"),
+						field("Value", meeting.body),
+					)),
+					field("Start", meeting.start),
+					field("End", meeting.end),
+					field("Location", meeting.location),
+					field("RequiredAttendees", attendees),
 				),
 			}),
 		)),

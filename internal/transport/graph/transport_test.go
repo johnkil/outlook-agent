@@ -111,6 +111,7 @@ func TestTransportGraphCapabilitiesIncludeBodyDraftMove(t *testing.T) {
 		{name: "calendar.list", class: policy.ReadMetadata, level: action.LevelHighLevelMCPTool},
 		{name: "calendar.availability", class: policy.ReadMetadata, level: action.LevelHighLevelMCPTool},
 		{name: "calendar.respond", class: policy.SendLike, level: action.LevelHighLevelMCPTool},
+		{name: "calendar.create_meeting", class: policy.SendLike, level: action.LevelHighLevelMCPTool},
 	} {
 		definition, ok := findGraphCapability(capabilities.Actions, tt.name)
 		if !ok {
@@ -1304,6 +1305,258 @@ func TestTransportDryRunCalendarRespondBuildsReview(t *testing.T) {
 	}
 	if summary.Review.PayloadFingerprint == "" {
 		t.Fatalf("expected payload fingerprint: %#v", summary.Review)
+	}
+}
+
+func TestTransportDryRunCalendarCreateMeetingBuildsReview(t *testing.T) {
+	client := graph.NewTransport(graph.Config{
+		BaseURL:   "https://graph.example.test/v1.0",
+		SecretRef: secret.Ref("memory:graph"),
+	}, secret.NewMemoryStore(map[string]string{"memory:graph": "token-secret"}), nil)
+
+	summary := client.DryRun(context.Background(), transport.ActionRequest{
+		Name: "calendar.create_meeting",
+		Payload: map[string]any{
+			"subject":   " Planning ",
+			"start":     " 2026-06-02T15:00:00+03:00 ",
+			"end":       " 2026-06-02T15:30:00+03:00 ",
+			"attendees": []any{" ", " teammate@example.com "},
+			"location":  " Room 1 ",
+			"body":      "Discuss next steps; access_token=secret",
+			"time_zone": " Russian Standard Time ",
+		},
+	})
+
+	if summary.Action != "calendar.create_meeting" || summary.Count != 1 || summary.Reversible || !summary.RequiresConfirmation {
+		t.Fatalf("unexpected create meeting dry-run summary: %#v", summary)
+	}
+	if summary.SafetyClass != string(policy.SendLike) {
+		t.Fatalf("expected send-like safety class, got %#v", summary)
+	}
+	if summary.Review == nil || summary.Review.Calendar == nil || summary.Review.Mutation == nil {
+		t.Fatalf("expected calendar mutation review: %#v", summary.Review)
+	}
+	if summary.Review.Calendar.Subject != "Planning" || summary.Review.Calendar.Location != "Room 1" {
+		t.Fatalf("unexpected calendar review: %#v", summary.Review.Calendar)
+	}
+	if summary.Review.Calendar.Start != "2026-06-02T15:00:00+03:00" || summary.Review.Calendar.End != "2026-06-02T15:30:00+03:00" {
+		t.Fatalf("expected start/end in review: %#v", summary.Review.Calendar)
+	}
+	if strings.Join(summary.Review.Calendar.Attendees, ",") != "teammate@example.com" || !summary.Review.Calendar.SendsResponse {
+		t.Fatalf("expected attendee and send flag in review: %#v", summary.Review.Calendar)
+	}
+	if summary.Review.Completeness != "complete" || summary.Review.PayloadFingerprint == "" {
+		t.Fatalf("expected complete review with fingerprint: %#v", summary.Review)
+	}
+	if strings.Contains(fmt.Sprint(summary.Review), "secret") {
+		t.Fatalf("review must redact body secrets: %#v", summary.Review)
+	}
+}
+
+func TestTransportDryRunCalendarCreateMeetingRejectsInvalidPayloadReview(t *testing.T) {
+	client := graph.NewTransport(graph.Config{
+		BaseURL:   "https://graph.example.test/v1.0",
+		SecretRef: secret.Ref("memory:graph"),
+	}, secret.NewMemoryStore(map[string]string{"memory:graph": "token-secret"}), nil)
+
+	summary := client.DryRun(context.Background(), transport.ActionRequest{
+		Name: "calendar.create_meeting",
+		Payload: map[string]any{
+			"subject":   " ",
+			"start":     "2026-06-02T15:00:00+03:00",
+			"end":       "2026-06-02T15:30:00+03:00",
+			"attendees": []any{"teammate@example.com"},
+		},
+	})
+
+	if summary.Action != "calendar.create_meeting" || !summary.RequiresConfirmation {
+		t.Fatalf("unexpected create meeting dry-run summary: %#v", summary)
+	}
+	if summary.SafetyClass != string(policy.SendLike) {
+		t.Fatalf("expected send-like safety class, got %#v", summary)
+	}
+	if summary.Error != "calendar.create_meeting requires subject" {
+		t.Fatalf("expected validation error, got %#v", summary)
+	}
+	if summary.Review == nil || summary.Review.PayloadFingerprint == "" {
+		t.Fatalf("expected minimal review with payload fingerprint: %#v", summary.Review)
+	}
+	if summary.Review.Completeness == transport.ReviewCompletenessComplete || summary.Review.Calendar != nil {
+		t.Fatalf("invalid payload must not produce complete calendar review: %#v", summary.Review)
+	}
+}
+
+func TestTransportExecutesCalendarCreateMeeting(t *testing.T) {
+	var sawCreate bool
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		if request.Method != http.MethodPost || request.URL.Path != "/v1.0/me/events" {
+			t.Fatalf("unexpected request: %s %s", request.Method, request.URL.String())
+		}
+		if request.Header.Get("Authorization") != "Bearer token-secret" {
+			t.Fatalf("expected bearer token header, got %q", request.Header.Get("Authorization"))
+		}
+		var body map[string]any
+		if err := json.NewDecoder(request.Body).Decode(&body); err != nil {
+			t.Fatalf("decode request body: %v", err)
+		}
+		if body["subject"] != "Planning" {
+			t.Fatalf("unexpected subject: %#v", body)
+		}
+		if body["body"].(map[string]any)["content"] != "Discuss next steps" {
+			t.Fatalf("unexpected body: %#v", body)
+		}
+		if body["start"].(map[string]any)["dateTime"] != "2026-06-02T15:00:00+03:00" || body["start"].(map[string]any)["timeZone"] != "Russian Standard Time" {
+			t.Fatalf("unexpected start: %#v", body["start"])
+		}
+		if body["end"].(map[string]any)["dateTime"] != "2026-06-02T15:30:00+03:00" || body["end"].(map[string]any)["timeZone"] != "Russian Standard Time" {
+			t.Fatalf("unexpected end: %#v", body["end"])
+		}
+		if body["location"].(map[string]any)["displayName"] != "Room 1" {
+			t.Fatalf("unexpected location: %#v", body["location"])
+		}
+		attendees := body["attendees"].([]any)
+		if len(attendees) != 1 {
+			t.Fatalf("expected one attendee, got %#v", attendees)
+		}
+		first := attendees[0].(map[string]any)
+		if first["type"] != "required" || first["emailAddress"].(map[string]any)["address"] != "teammate@example.com" {
+			t.Fatalf("unexpected attendee payload: %#v", attendees)
+		}
+		sawCreate = true
+		response.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(response).Encode(graphEventResponse("event-1", "Planning", "2026-06-02T15:00:00", "2026-06-02T15:30:00", "Room 1"))
+	}))
+	defer server.Close()
+
+	client := graph.NewTransport(graph.Config{
+		BaseURL:   server.URL + "/v1.0",
+		SecretRef: secret.Ref("memory:graph"),
+	}, secret.NewMemoryStore(map[string]string{"memory:graph": "token-secret"}), server.Client())
+
+	result := client.Execute(context.Background(), transport.ActionRequest{
+		Name: "calendar.create_meeting",
+		Payload: map[string]any{
+			"subject":   "Planning",
+			"start":     "2026-06-02T15:00:00+03:00",
+			"end":       "2026-06-02T15:30:00+03:00",
+			"attendees": []any{"teammate@example.com"},
+			"location":  "Room 1",
+			"body":      "Discuss next steps",
+			"time_zone": "Russian Standard Time",
+		},
+	})
+
+	if !result.OK || !sawCreate {
+		t.Fatalf("expected calendar.create_meeting ok, got %#v", result)
+	}
+	event := result.Data["event"].(map[string]any)
+	if event["id"] != "event-1" || event["title"] != "Planning" || event["location"] != "Room 1" {
+		t.Fatalf("unexpected created event metadata: %#v", event)
+	}
+	if event["start"] != "2026-06-02T15:00:00" || event["end"] != "2026-06-02T15:30:00" {
+		t.Fatalf("unexpected event time fields: %#v", event)
+	}
+}
+
+func TestTransportCalendarCreateMeetingRejectsInvalidPayloadBeforePost(t *testing.T) {
+	tests := []struct {
+		name    string
+		payload map[string]any
+		error   string
+	}{
+		{
+			name: "blank subject",
+			payload: map[string]any{
+				"subject":   " ",
+				"start":     "2026-06-02T15:00:00+03:00",
+				"end":       "2026-06-02T15:30:00+03:00",
+				"attendees": []any{"teammate@example.com"},
+			},
+			error: "calendar.create_meeting requires subject",
+		},
+		{
+			name: "blank start",
+			payload: map[string]any{
+				"subject":   "Planning",
+				"start":     " ",
+				"end":       "2026-06-02T15:30:00+03:00",
+				"attendees": []any{"teammate@example.com"},
+			},
+			error: "calendar.create_meeting requires start and end",
+		},
+		{
+			name: "blank end",
+			payload: map[string]any{
+				"subject":   "Planning",
+				"start":     "2026-06-02T15:00:00+03:00",
+				"end":       " ",
+				"attendees": []any{"teammate@example.com"},
+			},
+			error: "calendar.create_meeting requires start and end",
+		},
+		{
+			name: "missing attendees after trimming",
+			payload: map[string]any{
+				"subject":   "Planning",
+				"start":     "2026-06-02T15:00:00+03:00",
+				"end":       "2026-06-02T15:30:00+03:00",
+				"attendees": []any{" ", "", 42},
+			},
+			error: "calendar.create_meeting requires attendees",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var calls atomic.Int64
+			server := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+				calls.Add(1)
+			}))
+			defer server.Close()
+
+			client := graph.NewTransport(graph.Config{
+				BaseURL:   server.URL + "/v1.0",
+				SecretRef: secret.Ref("memory:graph"),
+			}, secret.NewMemoryStore(map[string]string{"memory:graph": "token-secret"}), server.Client())
+
+			result := client.Execute(context.Background(), transport.ActionRequest{Name: "calendar.create_meeting", Payload: tt.payload})
+			if result.OK || result.Error != tt.error {
+				t.Fatalf("expected %q validation error, got %#v", tt.error, result)
+			}
+			if calls.Load() != 0 {
+				t.Fatalf("invalid payload must not POST /events, got %d calls", calls.Load())
+			}
+		})
+	}
+}
+
+func TestTransportCalendarCreateMeetingRequiresCreatedEventID(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		if request.Method != http.MethodPost || request.URL.Path != "/v1.0/me/events" {
+			t.Fatalf("unexpected request: %s %s", request.Method, request.URL.String())
+		}
+		response.Header().Set("Content-Type", "application/json")
+		_, _ = response.Write([]byte(`{}`))
+	}))
+	defer server.Close()
+
+	client := graph.NewTransport(graph.Config{
+		BaseURL:   server.URL + "/v1.0",
+		SecretRef: secret.Ref("memory:graph"),
+	}, secret.NewMemoryStore(map[string]string{"memory:graph": "token-secret"}), server.Client())
+
+	result := client.Execute(context.Background(), transport.ActionRequest{
+		Name: "calendar.create_meeting",
+		Payload: map[string]any{
+			"subject":   "Planning",
+			"start":     "2026-06-02T15:00:00+03:00",
+			"end":       "2026-06-02T15:30:00+03:00",
+			"attendees": []any{"teammate@example.com"},
+		},
+	})
+
+	if result.OK || result.Error != "calendar.create_meeting missing created event id" {
+		t.Fatalf("expected missing created event id failure, got %#v", result)
 	}
 }
 

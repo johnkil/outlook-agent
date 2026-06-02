@@ -12,6 +12,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/johnkil/outlook-agent/internal/policy"
 	"github.com/johnkil/outlook-agent/internal/secret"
 	"github.com/johnkil/outlook-agent/internal/transport"
 	"github.com/johnkil/outlook-agent/internal/transport/owa"
@@ -1793,6 +1794,246 @@ func TestHighLevelMailCreateDraftCallsCreateItemSaveOnly(t *testing.T) {
 	draft := response.Data["draft"].(map[string]any)
 	if draft["id"] != "draft-1" || draft["subject"] != "Draft subject" {
 		t.Fatalf("unexpected draft response: %#v", draft)
+	}
+}
+
+func TestHighLevelCalendarCreateMeetingDryRunReview(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
+	defer server.Close()
+	client := newTestTransport(server)
+
+	summary := client.DryRun(context.Background(), transport.ActionRequest{
+		Name: "calendar.create_meeting",
+		Payload: map[string]any{
+			"subject":   " Planning ",
+			"start":     " 2026-06-02T15:00:00+03:00 ",
+			"end":       " 2026-06-02T15:30:00+03:00 ",
+			"attendees": []any{" ", " teammate@example.com "},
+			"location":  " Room 1 ",
+			"body":      "Discuss next steps; access_token=secret",
+			"time_zone": " Russian Standard Time ",
+		},
+	})
+
+	if summary.Action != "calendar.create_meeting" || summary.Count != 1 || summary.Reversible || !summary.RequiresConfirmation {
+		t.Fatalf("unexpected dry-run summary: %#v", summary)
+	}
+	if summary.SafetyClass != string(policy.SendLike) {
+		t.Fatalf("expected send-like safety class, got %#v", summary)
+	}
+	if summary.Review == nil || summary.Review.Calendar == nil || summary.Review.Mutation == nil {
+		t.Fatalf("expected calendar mutation review: %#v", summary.Review)
+	}
+	if summary.Review.Calendar.Subject != "Planning" || summary.Review.Calendar.Location != "Room 1" {
+		t.Fatalf("unexpected calendar review: %#v", summary.Review.Calendar)
+	}
+	if summary.Review.Calendar.Start != "2026-06-02T15:00:00+03:00" || summary.Review.Calendar.End != "2026-06-02T15:30:00+03:00" {
+		t.Fatalf("expected start/end in review: %#v", summary.Review.Calendar)
+	}
+	if strings.Join(summary.Review.Calendar.Attendees, ",") != "teammate@example.com" {
+		t.Fatalf("expected attendee in review: %#v", summary.Review.Calendar)
+	}
+	if strings.Contains(fmt.Sprint(summary.Review), "secret") {
+		t.Fatalf("review must redact body secrets: %#v", summary.Review)
+	}
+}
+
+func TestHighLevelCalendarCreateMeetingDryRunRejectsInvalidPayloadReview(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
+	defer server.Close()
+	client := newTestTransport(server)
+
+	summary := client.DryRun(context.Background(), transport.ActionRequest{
+		Name: "calendar.create_meeting",
+		Payload: map[string]any{
+			"subject":   " ",
+			"start":     "2026-06-02T15:00:00+03:00",
+			"end":       "2026-06-02T15:30:00+03:00",
+			"attendees": []any{"teammate@example.com"},
+		},
+	})
+
+	if summary.Action != "calendar.create_meeting" || !summary.RequiresConfirmation {
+		t.Fatalf("unexpected dry-run summary: %#v", summary)
+	}
+	if summary.SafetyClass != string(policy.SendLike) {
+		t.Fatalf("expected send-like safety class, got %#v", summary)
+	}
+	if summary.Error != "calendar.create_meeting requires subject" {
+		t.Fatalf("expected validation error, got %#v", summary)
+	}
+	if summary.Review == nil || summary.Review.PayloadFingerprint == "" {
+		t.Fatalf("expected minimal review with payload fingerprint: %#v", summary.Review)
+	}
+	if summary.Review.Completeness == transport.ReviewCompletenessComplete || summary.Review.Calendar != nil {
+		t.Fatalf("invalid payload must not produce complete calendar review: %#v", summary.Review)
+	}
+}
+
+func TestHighLevelCalendarCreateMeetingCallsCreateItem(t *testing.T) {
+	var calls []recordedServiceCall
+	server := newOWAServiceServer(t, &calls, map[string]any{
+		"Body": map[string]any{
+			"Items": []any{
+				map[string]any{
+					"ItemId":   map[string]any{"Id": "event-1", "ChangeKey": "ck-1"},
+					"Subject":  "Planning",
+					"Start":    "2026-06-02T15:00:00",
+					"End":      "2026-06-02T15:30:00",
+					"Location": "Room 1",
+				},
+			},
+		},
+	})
+	defer server.Close()
+	client := newTestTransport(server)
+
+	response := client.Execute(context.Background(), transport.ActionRequest{
+		Name: "calendar.create_meeting",
+		Payload: map[string]any{
+			"subject":   " Planning ",
+			"start":     " 2026-06-02T15:00:00+03:00 ",
+			"end":       " 2026-06-02T15:30:00+03:00 ",
+			"attendees": []any{" ", " teammate@example.com "},
+			"location":  " Room 1 ",
+			"body":      "Discuss next steps",
+			"time_zone": " Russian Standard Time ",
+		},
+	})
+
+	if !response.OK {
+		t.Fatalf("expected calendar.create_meeting ok: %#v", response)
+	}
+	if len(calls) != 1 || calls[0].Action != "CreateItem" {
+		t.Fatalf("expected CreateItem call, got %#v", calls)
+	}
+	body := calls[0].Body["Body"].(map[string]any)
+	if body["MessageDisposition"] != "SendAndSaveCopy" || body["SendMeetingInvitations"] != "SendToAllAndSaveCopy" {
+		t.Fatalf("expected send-and-save meeting create, got %#v", body)
+	}
+	item := body["Items"].([]any)[0].(map[string]any)
+	if item["__type"] != "CalendarItem:#Exchange" || item["Subject"] != "Planning" {
+		t.Fatalf("expected calendar item payload, got %#v", item)
+	}
+	if item["Start"] != "2026-06-02T15:00:00+03:00" || item["End"] != "2026-06-02T15:30:00+03:00" || item["Location"] != "Room 1" {
+		t.Fatalf("expected trimmed calendar item payload, got %#v", item)
+	}
+	required := item["RequiredAttendees"].([]any)
+	if len(required) != 1 {
+		t.Fatalf("expected one required attendee, got %#v", required)
+	}
+	event := response.Data["event"].(map[string]any)
+	if event["id"] != "event-1" || event["title"] != "Planning" {
+		t.Fatalf("unexpected event metadata: %#v", event)
+	}
+}
+
+func TestHighLevelCalendarCreateMeetingRejectsInvalidPayloadBeforeServerCall(t *testing.T) {
+	cases := []struct {
+		name    string
+		payload map[string]any
+		error   string
+	}{
+		{
+			name: "missing subject",
+			payload: map[string]any{
+				"subject":   " ",
+				"start":     "2026-06-02T15:00:00+03:00",
+				"end":       "2026-06-02T15:30:00+03:00",
+				"attendees": []any{"teammate@example.com"},
+			},
+			error: "calendar.create_meeting requires subject",
+		},
+		{
+			name: "missing start",
+			payload: map[string]any{
+				"subject":   "Planning",
+				"start":     " ",
+				"end":       "2026-06-02T15:30:00+03:00",
+				"attendees": []any{"teammate@example.com"},
+			},
+			error: "calendar.create_meeting requires start and end",
+		},
+		{
+			name: "missing end",
+			payload: map[string]any{
+				"subject":   "Planning",
+				"start":     "2026-06-02T15:00:00+03:00",
+				"end":       " ",
+				"attendees": []any{"teammate@example.com"},
+			},
+			error: "calendar.create_meeting requires start and end",
+		},
+		{
+			name: "missing attendees after trimming",
+			payload: map[string]any{
+				"subject":   "Planning",
+				"start":     "2026-06-02T15:00:00+03:00",
+				"end":       "2026-06-02T15:30:00+03:00",
+				"attendees": []any{" ", "", 42},
+			},
+			error: "calendar.create_meeting requires attendees",
+		},
+	}
+
+	for _, tt := range cases {
+		t.Run(tt.name, func(t *testing.T) {
+			var requests int
+			server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+				requests++
+				switch request.URL.Path {
+				case "/owa/auth.owa":
+					http.SetCookie(response, &http.Cookie{Name: "X-OWA-CANARY", Value: "canary-secret"})
+					response.WriteHeader(http.StatusOK)
+				case "/owa/service.svc":
+					response.Header().Set("Content-Type", "application/json")
+					_ = json.NewEncoder(response).Encode(map[string]any{
+						"Body": map[string]any{
+							"Items": []any{
+								map[string]any{"ItemId": map[string]any{"Id": "event-1"}},
+							},
+						},
+					})
+				default:
+					t.Fatalf("unexpected path: %s", request.URL.Path)
+				}
+			}))
+			defer server.Close()
+			client := newTestTransport(server)
+
+			response := client.Execute(context.Background(), transport.ActionRequest{Name: "calendar.create_meeting", Payload: tt.payload})
+
+			if response.OK || response.Error != tt.error {
+				t.Fatalf("expected %q error, got %#v", tt.error, response)
+			}
+			if requests != 0 {
+				t.Fatalf("expected invalid payload to avoid OWA server calls, got %d", requests)
+			}
+		})
+	}
+}
+
+func TestHighLevelCalendarCreateMeetingRequiresCreatedEventID(t *testing.T) {
+	var calls []recordedServiceCall
+	server := newOWAServiceServer(t, &calls, map[string]any{"Body": map[string]any{"Items": []any{}}})
+	defer server.Close()
+	client := newTestTransport(server)
+
+	response := client.Execute(context.Background(), transport.ActionRequest{
+		Name: "calendar.create_meeting",
+		Payload: map[string]any{
+			"subject":   "Planning",
+			"start":     "2026-06-02T15:00:00+03:00",
+			"end":       "2026-06-02T15:30:00+03:00",
+			"attendees": []any{"teammate@example.com"},
+		},
+	})
+
+	if response.OK || response.Error != "calendar.create_meeting missing created event id" {
+		t.Fatalf("expected missing created event id failure, got %#v", response)
+	}
+	if len(calls) != 1 || calls[0].Action != "CreateItem" {
+		t.Fatalf("expected one CreateItem call, got %#v", calls)
 	}
 }
 

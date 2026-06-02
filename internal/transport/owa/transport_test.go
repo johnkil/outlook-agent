@@ -267,6 +267,7 @@ func TestTransportCapabilitiesIncludeClassifiedOWAServiceActions(t *testing.T) {
 	assertClass(t, byName, "GetAttachment", policy.ReadAttachmentExplicit)
 	assertClass(t, byName, "CreateItem", policy.SendLike)
 	assertClass(t, byName, "SendItem", policy.SendLike)
+	assertClass(t, byName, "calendar.create_meeting", policy.SendLike)
 	assertClass(t, byName, "DeleteItem", policy.Destructive)
 	assertClass(t, byName, "DeleteFolder", policy.Destructive)
 	assertClass(t, byName, "EmptyFolder", policy.Destructive)
