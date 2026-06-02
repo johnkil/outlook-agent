@@ -1724,10 +1724,19 @@ func canonicalActionPayload(actionName string, payload map[string]any) (map[stri
 		canonical[key] = value
 	}
 	if timezone, exists := canonical["timezone"]; exists {
-		if strings.TrimSpace(stringMetadata(canonical, "time_zone")) == "" {
+		timezone = strings.TrimSpace(stringMetadata(canonical, "timezone"))
+		if timezone != "" && strings.TrimSpace(stringMetadata(canonical, "time_zone")) == "" {
 			canonical["time_zone"] = timezone
 		}
 		delete(canonical, "timezone")
+	}
+	for _, key := range []string{"time_zone", "body", "location"} {
+		trimmed := strings.TrimSpace(stringMetadata(canonical, key))
+		if trimmed == "" {
+			delete(canonical, key)
+			continue
+		}
+		canonical[key] = trimmed
 	}
 	if attendees, exists := canonical["attendees"]; exists {
 		canonical["attendees"] = nonEmptyStringValues(attendees)
