@@ -29,8 +29,11 @@ func TestReleaseReadinessArtifactsExist(t *testing.T) {
 			"Create an annotated version tag",
 			"GoReleaser snapshot parity",
 			"scripts/goreleaser-snapshot-smoke.sh",
+			"scripts/release-preflight.sh",
+			"tag-derived version",
+			"`codexPluginVersion`",
 			"bump `codexPluginVersion`",
-			"plugins/outlook-agent",
+			"plugins/outlook-agent/.codex-plugin/plugin.json",
 		},
 		filepath.Join("..", "..", "scripts", "ci-local.sh"): {
 			"-path \"./.cache\"",
@@ -70,6 +73,17 @@ func TestReleaseReadinessArtifactsExist(t *testing.T) {
 			"SHA256SUMS.txt",
 			"scripts/release-verify.sh \"$dist_dir\"",
 			"goreleaser snapshot smoke passed",
+		},
+		filepath.Join("..", "..", "scripts", "release-preflight.sh"): {
+			"release-version.sh",
+			"validate_release_version",
+			"codexPluginVersion",
+			".codex-plugin/plugin.json",
+			"setup plugin export",
+			"diff -qr",
+			"git tag --points-at HEAD",
+			"origin/main",
+			"release preflight passed",
 		},
 		filepath.Join("..", "..", "scripts", "release-verify.sh"): {
 			"SHA256SUMS.txt",
@@ -133,6 +147,9 @@ func TestReleaseReadinessArtifactsExist(t *testing.T) {
 			"scripts/action-coverage-smoke.sh",
 		},
 		filepath.Join("..", "..", ".github", "workflows", "release.yml"): {
+			"fetch-depth: 0",
+			"Run release preflight",
+			"scripts/release-preflight.sh",
 			"scripts/release-build.sh",
 			"scripts/release-verify.sh dist",
 			"gh release",
@@ -450,6 +467,17 @@ func TestReleaseSBOMRejectsInvalidVersionStringsBeforeGoList(t *testing.T) {
 				t.Fatalf("expected invalid release version error for %q, got:\n%s", version, string(output))
 			}
 		})
+	}
+}
+
+func TestReleasePreflightRejectsInvalidVersion(t *testing.T) {
+	cmd := exec.Command("/bin/bash", filepath.Join("..", "..", "scripts", "release-preflight.sh"), "not-a-version")
+	output, err := cmd.CombinedOutput()
+	if err == nil {
+		t.Fatalf("expected release preflight to reject invalid version, got success:\n%s", string(output))
+	}
+	if !strings.Contains(string(output), "invalid release version") {
+		t.Fatalf("expected invalid release version error, got:\n%s", string(output))
 	}
 }
 
