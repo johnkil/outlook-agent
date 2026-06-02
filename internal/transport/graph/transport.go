@@ -77,6 +77,7 @@ func (client *Transport) Capabilities(context.Context) transport.CapabilitySet {
 		{Name: "calendar.availability", Transport: "graph", Class: policy.ReadMetadata, Level: action.LevelHighLevelMCPTool},
 		{Name: "calendar.find_time", Transport: "graph", Class: policy.ReadMetadata, Level: action.LevelHighLevelMCPTool},
 		{Name: "calendar.respond", Transport: "graph", Class: policy.SendLike, Level: action.LevelHighLevelMCPTool},
+		{Name: "calendar.create_meeting", Transport: "graph", Class: policy.SendLike, Level: action.LevelHighLevelMCPTool},
 	}}
 }
 
@@ -338,6 +339,12 @@ func (client *Transport) Execute(ctx context.Context, request transport.ActionRe
 			return transport.ActionResponse{OK: false, Error: err.Error()}
 		}
 		return transport.ActionResponse{OK: true, Data: map[string]any{"suggestions": suggestions}}
+	case "calendar.create_meeting":
+		event, err := client.createCalendarMeeting(ctx, mailbox, request.Payload)
+		if err != nil {
+			return transport.ActionResponse{OK: false, Error: err.Error()}
+		}
+		return transport.ActionResponse{OK: true, Data: map[string]any{"event": event}}
 	case "calendar.respond":
 		result, err := client.respondCalendarEvent(ctx, mailbox, request.Payload)
 		if err != nil {
@@ -371,6 +378,14 @@ func (client *Transport) DryRun(ctx context.Context, request transport.ActionReq
 	}
 	if request.Name == "calendar.respond" {
 		review, err := client.graphCalendarRespondReview(ctx, mailboxTarget(request.Payload), request.Name, request.Payload)
+		summary := transport.DryRunSummary{Action: request.Name, Count: 1, Reversible: false, RequiresConfirmation: true, SafetyClass: string(policy.SendLike), Review: &review, Warnings: review.Limitations}
+		if err != nil {
+			summary.Error = err.Error()
+		}
+		return summary
+	}
+	if request.Name == "calendar.create_meeting" {
+		review, err := graphCalendarCreateMeetingReview(request.Name, request.Payload)
 		summary := transport.DryRunSummary{Action: request.Name, Count: 1, Reversible: false, RequiresConfirmation: true, SafetyClass: string(policy.SendLike), Review: &review, Warnings: review.Limitations}
 		if err != nil {
 			summary.Error = err.Error()
@@ -538,6 +553,42 @@ func graphReversibleMutationReview(actionName string, payload map[string]any, id
 		review.Limitations = append(review.Limitations, fmt.Sprintf("%d additional targets omitted from review output", omittedTargetCount))
 	}
 	return review
+}
+
+func graphCalendarCreateMeetingReview(actionName string, payload map[string]any) (transport.ReviewPacket, error) {
+	meeting, err := normalizeGraphCreateMeetingPayload(payload)
+	if err != nil {
+		return transport.ReviewPacket{
+			Version:            transport.ReviewPacketVersion,
+			Transport:          "graph",
+			Action:             actionName,
+			SafetyClass:        string(policy.SendLike),
+			Completeness:       transport.ReviewCompletenessMinimal,
+			PayloadFingerprint: transport.PayloadFingerprint(payload),
+			Limitations:        []string{err.Error()},
+		}, err
+	}
+	review := transport.ReviewPacket{
+		Version:      transport.ReviewPacketVersion,
+		Transport:    "graph",
+		Action:       actionName,
+		SafetyClass:  string(policy.SendLike),
+		Completeness: transport.ReviewCompletenessComplete,
+		Mutation:     &transport.MutationReview{Operation: "create"},
+		Calendar: &transport.CalendarReview{
+			Subject:       meeting.subject,
+			Start:         meeting.start,
+			End:           meeting.end,
+			Location:      meeting.location,
+			Attendees:     meeting.attendees,
+			SendsResponse: true,
+		},
+		PayloadFingerprint: transport.PayloadFingerprint(payload),
+	}
+	if bodyPreview := transport.RedactedPreview(meeting.body, 500); bodyPreview != "" {
+		review.Mutation.NewState = map[string]any{"body_preview": bodyPreview}
+	}
+	return review, nil
 }
 
 func (client *Transport) graphCalendarRespondReview(ctx context.Context, mailbox string, actionName string, payload map[string]any) (transport.ReviewPacket, error) {
@@ -735,6 +786,7 @@ type attachmentList struct {
 }
 
 type recipient struct {
+	Type         string       `json:"type,omitempty"`
 	EmailAddress emailAddress `json:"emailAddress"`
 }
 
@@ -1401,6 +1453,101 @@ func (client *Transport) findMeetingTime(ctx context.Context, mailbox string, pa
 		})
 	}
 	return suggestions, nil
+}
+
+func (client *Transport) createCalendarMeeting(ctx context.Context, mailbox string, payload map[string]any) (map[string]any, error) {
+	meeting, err := normalizeGraphCreateMeetingPayload(payload)
+	if err != nil {
+		return nil, err
+	}
+	startDateTime, err := graphScheduleDateTime(meeting.start, meeting.timeZone)
+	if err != nil {
+		return nil, fmt.Errorf("calendar.create_meeting requires parseable start")
+	}
+	endDateTime, err := graphScheduleDateTime(meeting.end, meeting.timeZone)
+	if err != nil {
+		return nil, fmt.Errorf("calendar.create_meeting requires parseable end")
+	}
+	body := map[string]any{
+		"subject":   meeting.subject,
+		"body":      map[string]any{"contentType": "text", "content": meeting.body},
+		"start":     map[string]any{"dateTime": startDateTime, "timeZone": meeting.timeZone},
+		"end":       map[string]any{"dateTime": endDateTime, "timeZone": meeting.timeZone},
+		"location":  map[string]any{"displayName": meeting.location},
+		"attendees": graphMeetingAttendees(meeting.attendees),
+	}
+	requestURL, err := client.calendarEventsURL(mailbox)
+	if err != nil {
+		return nil, err
+	}
+	var event calendarEvent
+	if err := client.doJSON(ctx, http.MethodPost, requestURL, body, &event); err != nil {
+		return nil, err
+	}
+	if strings.TrimSpace(event.ID) == "" {
+		return nil, fmt.Errorf("calendar.create_meeting missing created event id")
+	}
+	return normalizeGraphEvent(event), nil
+}
+
+type graphCreateMeetingPayload struct {
+	subject   string
+	start     string
+	end       string
+	body      string
+	location  string
+	timeZone  string
+	attendees []string
+}
+
+func normalizeGraphCreateMeetingPayload(payload map[string]any) (graphCreateMeetingPayload, error) {
+	meeting := graphCreateMeetingPayload{
+		subject:   strings.TrimSpace(stringValue(payload, "subject", "")),
+		start:     strings.TrimSpace(stringValue(payload, "start", "")),
+		end:       strings.TrimSpace(stringValue(payload, "end", "")),
+		body:      stringValue(payload, "body", ""),
+		location:  strings.TrimSpace(stringValue(payload, "location", "")),
+		timeZone:  strings.TrimSpace(stringValue(payload, "time_zone", "UTC")),
+		attendees: graphMeetingAttendeeAddresses(stringSlice(payload["attendees"])),
+	}
+	if meeting.subject == "" {
+		return graphCreateMeetingPayload{}, fmt.Errorf("calendar.create_meeting requires subject")
+	}
+	if meeting.start == "" || meeting.end == "" {
+		return graphCreateMeetingPayload{}, fmt.Errorf("calendar.create_meeting requires start and end")
+	}
+	if len(meeting.attendees) == 0 {
+		return graphCreateMeetingPayload{}, fmt.Errorf("calendar.create_meeting requires attendees")
+	}
+	if meeting.timeZone == "" {
+		meeting.timeZone = "UTC"
+	}
+	return meeting, nil
+}
+
+func graphMeetingAttendeeAddresses(addresses []string) []string {
+	attendees := make([]string, 0, len(addresses))
+	for _, address := range addresses {
+		if address = strings.TrimSpace(address); address != "" {
+			attendees = append(attendees, address)
+		}
+	}
+	return attendees
+}
+
+func graphMeetingAttendees(addresses []string) []recipient {
+	attendees := make([]recipient, 0, len(addresses))
+	for _, address := range addresses {
+		address = strings.TrimSpace(address)
+		if address == "" {
+			continue
+		}
+		attendees = append(attendees, recipient{
+			Type:         "required",
+			EmailAddress: emailAddress{Address: address},
+		})
+	}
+	return attendees
 }
 
 func (client *Transport) getSchedule(ctx context.Context, payload map[string]any) ([]any, error) {
@@ -2075,6 +2222,14 @@ func (client *Transport) calendarViewURL(mailbox string, start string, end strin
 	values.Set("endDateTime", end)
 	values.Set("$select", eventMetadataSelect)
 	return base + graphOwnerPath(mailbox) + "/calendarView?" + values.Encode(), nil
+}
+
+func (client *Transport) calendarEventsURL(mailbox string) (string, error) {
+	base, err := client.config.normalizedBaseURL()
+	if err != nil {
+		return "", err
+	}
+	return base + graphOwnerPath(mailbox) + "/events", nil
 }
 
 func (client *Transport) peopleURL(mailbox string, query string) (string, error) {

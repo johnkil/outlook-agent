@@ -1508,7 +1508,7 @@ func TestCalendarCommandWithoutSubcommandListsSupportedSubcommands(t *testing.T)
 	if stdout.Len() != 0 {
 		t.Fatalf("expected no stdout for calendar validation error, got %s", stdout.String())
 	}
-	if !strings.Contains(stderr.String(), "list, availability, find-time, or mutual-free") {
+	if !strings.Contains(stderr.String(), "list, availability, find-time, mutual-free, or create-meeting") {
 		t.Fatalf("expected supported calendar subcommands, got %s", stderr.String())
 	}
 }
@@ -1621,6 +1621,189 @@ func TestCalendarFindTimeCommandForwardsPlanningOptions(t *testing.T) {
 	}
 	if payload["command"] != "calendar find-time" || len(payload["suggestions"].([]any)) != 1 {
 		t.Fatalf("unexpected find-time output: %#v", payload)
+	}
+}
+
+func TestCalendarCreateMeetingDryRunCommandBuildsPayload(t *testing.T) {
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	client := &cliCapturingTransport{}
+
+	code := RunWithRuntime([]string{
+		"calendar", "create-meeting",
+		"--subject", "Planning",
+		"--attendee", " teammate@example.com ",
+		"--attendee", "",
+		"--start", "2026-06-02T15:00:00+03:00",
+		"--end", "2026-06-02T15:30:00+03:00",
+		"--timezone", "Russian Standard Time",
+		"--location", "Room 1",
+		"--body", "Discuss next steps",
+		"--dry-run",
+	}, &stdout, &stderr, Runtime{
+		BuildTransport: func(context.Context, Options) (transport.Transport, string, error) {
+			return client, "work", nil
+		},
+	})
+
+	if code != 0 {
+		t.Fatalf("expected exit code 0, got %d, stderr=%s", code, stderr.String())
+	}
+	if client.lastDryRun.Name != "calendar.create_meeting" {
+		t.Fatalf("expected calendar.create_meeting dry-run, got %#v", client.lastDryRun)
+	}
+	if client.lastDryRun.Payload["subject"] != "Planning" || client.lastDryRun.Payload["time_zone"] != "Russian Standard Time" {
+		t.Fatalf("unexpected create-meeting payload: %#v", client.lastDryRun.Payload)
+	}
+	attendees := client.lastDryRun.Payload["attendees"].([]string)
+	if len(attendees) != 1 || attendees[0] != "teammate@example.com" {
+		t.Fatalf("expected direct attendees to be trimmed and filtered, got %#v", attendees)
+	}
+}
+
+func TestCalendarCreateMeetingRejectsBlankDirectAttendees(t *testing.T) {
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	buildCalled := false
+
+	code := RunWithRuntime([]string{
+		"calendar", "create-meeting",
+		"--subject", "Planning",
+		"--attendee", " ",
+		"--start", "2026-06-02T15:00:00+03:00",
+		"--end", "2026-06-02T15:30:00+03:00",
+		"--dry-run",
+	}, &stdout, &stderr, Runtime{
+		BuildTransport: func(context.Context, Options) (transport.Transport, string, error) {
+			buildCalled = true
+			return &cliCapturingTransport{}, "work", nil
+		},
+	})
+
+	if code == 0 {
+		t.Fatalf("expected nonzero exit code for blank attendees")
+	}
+	if buildCalled {
+		t.Fatal("expected blank attendees to be rejected before transport setup")
+	}
+	if !strings.Contains(stderr.String(), "requires at least one nonblank --attendee or --with") {
+		t.Fatalf("expected nonblank attendee error, got stderr=%q stdout=%q", stderr.String(), stdout.String())
+	}
+}
+
+func TestCalendarCreateMeetingNoTokenGuidancePointsToMCPConfirmation(t *testing.T) {
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	client := &cliCapturingTransport{}
+
+	code := RunWithRuntime([]string{
+		"calendar", "create-meeting",
+		"--subject", "Planning",
+		"--attendee", "teammate@example.com",
+		"--start", "2026-06-02T15:00:00+03:00",
+		"--end", "2026-06-02T15:30:00+03:00",
+	}, &stdout, &stderr, Runtime{
+		BuildTransport: func(context.Context, Options) (transport.Transport, string, error) {
+			return client, "work", nil
+		},
+	})
+
+	if code == 0 {
+		t.Fatalf("expected create-meeting without confirmation to be refused")
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(stdout.Bytes(), &payload); err != nil {
+		t.Fatalf("create-meeting output is not JSON: %v; output=%s", err, stdout.String())
+	}
+	errorText := payload["error"].(string)
+	if !strings.Contains(errorText, "review-only dry-run") || !strings.Contains(errorText, "MCP outlook.calendar_create_meeting") || !strings.Contains(errorText, "outlook.action_confirm") {
+		t.Fatalf("expected MCP confirmation guidance, got %q", errorText)
+	}
+	if strings.Contains(errorText, "run --dry-run first") {
+		t.Fatalf("guidance must not imply CLI dry-run issues confirmation tokens: %q", errorText)
+	}
+	if len(client.requests) != 0 {
+		t.Fatalf("expected no execution without confirmation, got %#v", client.requests)
+	}
+}
+
+func TestCalendarCreateMeetingConfirmTokenWithoutDryRunRefusesWithoutExecute(t *testing.T) {
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	client := &cliCapturingTransport{}
+
+	code := RunWithRuntime([]string{
+		"calendar", "create-meeting",
+		"--subject", "Planning",
+		"--attendee", "teammate@example.com",
+		"--start", "2026-06-02T15:00:00+03:00",
+		"--end", "2026-06-02T15:30:00+03:00",
+		"--confirm-token", "token",
+	}, &stdout, &stderr, Runtime{
+		BuildTransport: func(context.Context, Options) (transport.Transport, string, error) {
+			return client, "work", nil
+		},
+	})
+
+	if code == 0 {
+		t.Fatalf("expected direct confirm-token execution to be refused")
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(stdout.Bytes(), &payload); err != nil {
+		t.Fatalf("create-meeting output is not JSON: %v; output=%s", err, stdout.String())
+	}
+	if payload["ok"] != false || !strings.Contains(payload["error"].(string), "MCP") {
+		t.Fatalf("expected MCP-only confirmation error, got %#v", payload)
+	}
+	if len(client.requests) != 0 {
+		t.Fatalf("expected no Execute calls for direct confirm-token refusal, got %#v", client.requests)
+	}
+	if client.lastDryRun.Name != "" {
+		t.Fatalf("expected no dry-run for direct confirm-token refusal, got %#v", client.lastDryRun)
+	}
+}
+
+func TestCalendarCreateMeetingWithMailboxResolvesPersonBeforeDryRun(t *testing.T) {
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	client := &cliCapturingTransport{}
+
+	code := RunWithRuntime([]string{
+		"calendar", "create-meeting",
+		"--subject", "Planning",
+		"--with", "Тестовый Коллега",
+		"--mailbox", "shared@example.com",
+		"--start", "2026-06-02T15:00:00+03:00",
+		"--end", "2026-06-02T15:30:00+03:00",
+		"--dry-run",
+	}, &stdout, &stderr, Runtime{
+		BuildTransport: func(context.Context, Options) (transport.Transport, string, error) {
+			return client, "work", nil
+		},
+	})
+
+	if code != 0 {
+		t.Fatalf("expected exit code 0, got %d, stderr=%s, stdout=%s", code, stderr.String(), stdout.String())
+	}
+	if len(client.requests) != 1 {
+		t.Fatalf("expected one people.resolve call, got %#v", client.requests)
+	}
+	resolve := client.requests[0]
+	if resolve.Name != "people.resolve" || resolve.Payload["query"] != "Тестовый Коллега" || resolve.Payload["mailbox"] != "shared@example.com" {
+		t.Fatalf("expected mailbox-aware people.resolve, got %#v", resolve)
+	}
+	if client.lastDryRun.Name != "calendar.create_meeting" {
+		t.Fatalf("expected calendar.create_meeting dry-run, got %#v", client.lastDryRun)
+	}
+	attendees := client.lastDryRun.Payload["attendees"].([]string)
+	if len(attendees) != 1 || attendees[0] != "teammate@example.com" {
+		t.Fatalf("expected resolved attendee in dry-run payload, got %#v", client.lastDryRun.Payload)
+	}
+	if client.lastDryRun.Payload["mailbox"] != "shared@example.com" {
+		t.Fatalf("expected mailbox in dry-run payload, got %#v", client.lastDryRun.Payload)
+	}
+	if _, ok := client.lastDryRun.Payload["with"]; ok {
+		t.Fatalf("expected --with query to be removed before dry-run payload, got %#v", client.lastDryRun.Payload)
 	}
 }
 
@@ -1937,6 +2120,7 @@ func TestCalendarFindTimeWithPersonPreservesAmbiguousCandidates(t *testing.T) {
 
 type cliCapturingTransport struct {
 	lastRequest transport.ActionRequest
+	lastDryRun  transport.ActionRequest
 	requests    []transport.ActionRequest
 }
 
@@ -2012,8 +2196,9 @@ func (client *cliAmbiguousPeopleTransport) DryRun(context.Context, transport.Act
 	return transport.DryRunSummary{}
 }
 
-func (client *cliCapturingTransport) DryRun(context.Context, transport.ActionRequest) transport.DryRunSummary {
-	return transport.DryRunSummary{}
+func (client *cliCapturingTransport) DryRun(_ context.Context, request transport.ActionRequest) transport.DryRunSummary {
+	client.lastDryRun = request
+	return transport.DryRunSummary{Action: request.Name, Count: 1, RequiresConfirmation: true}
 }
 
 type discoveringTransport struct {

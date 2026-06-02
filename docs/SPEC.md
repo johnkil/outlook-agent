@@ -130,6 +130,7 @@ outlook.people_resolve
 outlook.calendar_list
 outlook.calendar_availability
 outlook.calendar_find_time
+outlook.calendar_create_meeting
 outlook.calendar_respond
 outlook.action_dry_run
 outlook.action_confirm
@@ -182,6 +183,14 @@ Key tool inputs:
   (`busy` by default, or `free`), and optional `mailbox`. It is planning-only:
   it returns mutual free-time suggestions from calendar/availability
   intersections and never creates, updates, or sends meeting items.
+- `outlook.calendar_create_meeting`: `subject`, `attendees`, `start`, `end`,
+  `confirm_token`, optional `timezone`, optional `body`, optional `location`,
+  optional `approval_challenge_id`, optional `approval_token`, and optional
+  `mailbox`. The action maps to `calendar.create_meeting`, is classified as
+  `send_like`, and requires a matching `outlook.action_dry_run` review before
+  execution. Clients must present the exact subject, attendees, start, end,
+  timezone, and optional body/location before creating a meeting. It never
+  requires clients to construct raw OWA `CreateItem` payloads.
 - `outlook.calendar_respond`: `event_id`, `response` (`accept`, `decline`, or
   `tentative`), `send_response`, `confirm_token`, optional `comment`, optional
   `approval_challenge_id`, optional `approval_token`, and optional `mailbox`.

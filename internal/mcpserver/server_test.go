@@ -51,6 +51,7 @@ func TestCatalogContainsInitialTools(t *testing.T) {
 		"outlook.calendar_list",
 		"outlook.calendar_availability",
 		"outlook.calendar_find_time",
+		"outlook.calendar_create_meeting",
 		"outlook.calendar_respond",
 		"outlook.action_dry_run",
 		"outlook.action_confirm",
@@ -156,6 +157,11 @@ func TestToolDescriptionsGuideAgentWorkflow(t *testing.T) {
 			"free",
 			"planning-only",
 		},
+		"outlook.calendar_create_meeting": {
+			"create",
+			"dry-run",
+			"approval",
+		},
 		"outlook.action_dry_run": {
 			"required",
 			"mutating",
@@ -181,6 +187,107 @@ func TestToolDescriptionsGuideAgentWorkflow(t *testing.T) {
 			if !strings.Contains(lower, marker) {
 				t.Fatalf("expected %s description to contain %q, got %q", name, marker, description)
 			}
+		}
+	}
+}
+
+func TestServerListsExpectedTools(t *testing.T) {
+	ctx := context.Background()
+	serverTransport, clientTransport := mcp.NewInMemoryTransports()
+
+	serverSession, err := mcpserver.New().Connect(ctx, serverTransport, nil)
+	if err != nil {
+		t.Fatalf("connect server: %v", err)
+	}
+	defer serverSession.Close()
+	defer serverSession.Wait()
+
+	client := mcp.NewClient(&mcp.Implementation{Name: "test-client", Version: "0.0.1"}, nil)
+	clientSession, err := client.Connect(ctx, clientTransport, nil)
+	if err != nil {
+		t.Fatalf("connect client: %v", err)
+	}
+	defer clientSession.Close()
+
+	listed, err := clientSession.ListTools(ctx, nil)
+	if err != nil {
+		t.Fatalf("list tools: %v", err)
+	}
+	names := make([]string, 0, len(listed.Tools))
+	for _, tool := range listed.Tools {
+		names = append(names, tool.Name)
+	}
+	for _, expected := range []string{
+		"outlook.calendar_find_time",
+		"outlook.calendar_create_meeting",
+		"outlook.calendar_respond",
+	} {
+		if !slices.Contains(names, expected) {
+			t.Fatalf("expected tool %q in listed tools %#v", expected, names)
+		}
+	}
+}
+
+func TestToolSchemas(t *testing.T) {
+	ctx := context.Background()
+	serverTransport, clientTransport := mcp.NewInMemoryTransports()
+
+	serverSession, err := mcpserver.New().Connect(ctx, serverTransport, nil)
+	if err != nil {
+		t.Fatalf("connect server: %v", err)
+	}
+	defer serverSession.Close()
+	defer serverSession.Wait()
+
+	client := mcp.NewClient(&mcp.Implementation{Name: "test-client", Version: "0.0.1"}, nil)
+	clientSession, err := client.Connect(ctx, clientTransport, nil)
+	if err != nil {
+		t.Fatalf("connect client: %v", err)
+	}
+	defer clientSession.Close()
+
+	listed, err := clientSession.ListTools(ctx, nil)
+	if err != nil {
+		t.Fatalf("list tools: %v", err)
+	}
+	var createMeeting *mcp.Tool
+	for _, tool := range listed.Tools {
+		if tool.Name == "outlook.calendar_create_meeting" {
+			createMeeting = tool
+			break
+		}
+	}
+	if createMeeting == nil {
+		t.Fatalf("expected outlook.calendar_create_meeting tool in %#v", listed.Tools)
+	}
+
+	var schema struct {
+		Properties map[string]any `json:"properties"`
+	}
+	raw, err := json.Marshal(createMeeting.InputSchema)
+	if err != nil {
+		t.Fatalf("marshal create-meeting schema: %v", err)
+	}
+	if err := json.Unmarshal(raw, &schema); err != nil {
+		t.Fatalf("decode create-meeting schema: %v; raw=%s", err, string(raw))
+	}
+	for _, field := range []string{
+		"subject",
+		"start",
+		"end",
+		"attendees",
+		"timezone",
+		"body",
+		"location",
+		"is_online_meeting",
+		"reminder_minutes",
+		"confirm_token",
+		"approval_challenge_id",
+		"approval_token",
+		"mailbox",
+	} {
+		if _, ok := schema.Properties[field]; !ok {
+			t.Fatalf("expected create-meeting schema property %q in %#v", field, schema.Properties)
 		}
 	}
 }
@@ -361,6 +468,432 @@ func TestMCPMailFetchBodiesReportsCoverageAndForwardsMailbox(t *testing.T) {
 		if request.Name != "mail.fetch_body" || request.Payload["mailbox"] != "shared@example.com" {
 			t.Fatalf("expected mailbox-aware fetch_body request, got %#v", request)
 		}
+	}
+}
+
+func TestMCPToolCalendarCreateMeetingRequiresConfirmToken(t *testing.T) {
+	ctx := context.Background()
+	capturing := &capturingTransport{}
+	serverTransport, clientTransport := mcp.NewInMemoryTransports()
+
+	serverSession, err := mcpserver.NewWithTransport(capturing).Connect(ctx, serverTransport, nil)
+	if err != nil {
+		t.Fatalf("connect server: %v", err)
+	}
+	defer serverSession.Close()
+	defer serverSession.Wait()
+
+	client := mcp.NewClient(&mcp.Implementation{Name: "test-client", Version: "0.0.1"}, nil)
+	clientSession, err := client.Connect(ctx, clientTransport, nil)
+	if err != nil {
+		t.Fatalf("connect client: %v", err)
+	}
+	defer clientSession.Close()
+
+	result, err := clientSession.CallTool(ctx, &mcp.CallToolParams{
+		Name: "outlook.calendar_create_meeting",
+		Arguments: map[string]any{
+			"subject":       "Planning",
+			"start":         "2026-06-02T15:00:00+03:00",
+			"end":           "2026-06-02T15:30:00+03:00",
+			"attendees":     []any{"teammate@example.com"},
+			"confirm_token": "",
+		},
+	})
+
+	if err != nil {
+		t.Fatalf("call calendar create meeting: %v", err)
+	}
+	output := decodeStructured[mcpserver.ActionResultOutput](t, result)
+	if output.OK || !strings.Contains(output.Error, "confirm_token") {
+		t.Fatalf("expected confirm token error, got %#v", output)
+	}
+	if len(capturing.requests) != 0 {
+		t.Fatalf("expected no execution without confirm token, got %#v", capturing.requests)
+	}
+}
+
+func TestMCPToolCalendarCreateMeetingDryRunErrorBlocksBeforeConfirmation(t *testing.T) {
+	ctx := context.Background()
+	blocking := &dryRunErrorMeetingTransport{}
+	serverTransport, clientTransport := mcp.NewInMemoryTransports()
+
+	serverSession, err := mcpserver.NewWithTransport(blocking).Connect(ctx, serverTransport, nil)
+	if err != nil {
+		t.Fatalf("connect server: %v", err)
+	}
+	defer serverSession.Close()
+	defer serverSession.Wait()
+
+	client := mcp.NewClient(&mcp.Implementation{Name: "test-client", Version: "0.0.1"}, nil)
+	clientSession, err := client.Connect(ctx, clientTransport, nil)
+	if err != nil {
+		t.Fatalf("connect client: %v", err)
+	}
+	defer clientSession.Close()
+
+	result, err := clientSession.CallTool(ctx, &mcp.CallToolParams{
+		Name: "outlook.calendar_create_meeting",
+		Arguments: map[string]any{
+			"subject":       "Planning",
+			"start":         "2026-06-02T15:00:00+03:00",
+			"end":           "2026-06-02T15:30:00+03:00",
+			"attendees":     []any{"teammate@example.com"},
+			"confirm_token": "invalid-token-that-would-fail-if-consumed",
+		},
+	})
+
+	if err != nil {
+		t.Fatalf("call calendar create meeting: %v", err)
+	}
+	output := decodeStructured[mcpserver.ActionResultOutput](t, result)
+	if output.OK {
+		t.Fatalf("expected dry-run error to block, got %#v", output)
+	}
+	if !strings.Contains(output.Error, "calendar.create_meeting dry-run failed") {
+		t.Fatalf("expected dry-run error, got %#v", output)
+	}
+	if strings.Contains(output.Error, "secret-token") || !strings.Contains(output.Error, "[REDACTED]") {
+		t.Fatalf("expected dry-run error to be redacted, got %q", output.Error)
+	}
+	if strings.Contains(output.Error, "confirmation token") {
+		t.Fatalf("expected rejection before confirmation token validation, got %q", output.Error)
+	}
+	if len(blocking.executeRequests) != 0 {
+		t.Fatalf("expected dry-run error to block execution, got %#v", blocking.executeRequests)
+	}
+	if len(blocking.dryRunRequests) != 1 {
+		t.Fatalf("expected one dry-run request, got %#v", blocking.dryRunRequests)
+	}
+}
+
+func TestMCPToolCalendarCreateMeetingRejectsBlankAttendeesBeforeDryRun(t *testing.T) {
+	ctx := context.Background()
+	capturing := &meetingCapturingTransport{}
+	serverTransport, clientTransport := mcp.NewInMemoryTransports()
+
+	serverSession, err := mcpserver.NewWithTransport(capturing).Connect(ctx, serverTransport, nil)
+	if err != nil {
+		t.Fatalf("connect server: %v", err)
+	}
+	defer serverSession.Close()
+	defer serverSession.Wait()
+
+	client := mcp.NewClient(&mcp.Implementation{Name: "test-client", Version: "0.0.1"}, nil)
+	clientSession, err := client.Connect(ctx, clientTransport, nil)
+	if err != nil {
+		t.Fatalf("connect client: %v", err)
+	}
+	defer clientSession.Close()
+
+	result, err := clientSession.CallTool(ctx, &mcp.CallToolParams{
+		Name: "outlook.calendar_create_meeting",
+		Arguments: map[string]any{
+			"subject":       "Planning",
+			"start":         "2026-06-02T15:00:00+03:00",
+			"end":           "2026-06-02T15:30:00+03:00",
+			"attendees":     []any{" ", "\t"},
+			"confirm_token": "unused",
+		},
+	})
+
+	if err != nil {
+		t.Fatalf("call calendar create meeting: %v", err)
+	}
+	output := decodeStructured[mcpserver.ActionResultOutput](t, result)
+	if output.OK || output.Error != "attendees required" {
+		t.Fatalf("expected blank attendees to be rejected, got %#v", output)
+	}
+	if len(capturing.dryRunRequests) != 0 || len(capturing.executeRequests) != 0 {
+		t.Fatalf("expected blank attendees to block before transport, dry-runs=%#v executes=%#v", capturing.dryRunRequests, capturing.executeRequests)
+	}
+}
+
+func TestMCPToolCalendarCreateMeetingExecutesConfirmedCanonicalPayload(t *testing.T) {
+	ctx := context.Background()
+	capturing := &meetingCapturingTransport{}
+	serverTransport, clientTransport := mcp.NewInMemoryTransports()
+
+	serverSession, err := mcpserver.NewWithTransport(capturing).Connect(ctx, serverTransport, nil)
+	if err != nil {
+		t.Fatalf("connect server: %v", err)
+	}
+	defer serverSession.Close()
+	defer serverSession.Wait()
+
+	client := mcp.NewClient(&mcp.Implementation{Name: "test-client", Version: "0.0.1"}, nil)
+	clientSession, err := client.Connect(ctx, clientTransport, nil)
+	if err != nil {
+		t.Fatalf("connect client: %v", err)
+	}
+	defer clientSession.Close()
+
+	payload := map[string]any{
+		"subject":   "Planning",
+		"start":     "2026-06-02T15:00:00+03:00",
+		"end":       "2026-06-02T15:30:00+03:00",
+		"attendees": []any{" teammate@example.com ", "", "other@example.com"},
+		"timezone":  "Russian Standard Time",
+		"body":      "Discuss next steps",
+		"location":  "Room 1",
+		"mailbox":   "shared@example.com",
+	}
+	dryRunResult, err := clientSession.CallTool(ctx, &mcp.CallToolParams{
+		Name: "outlook.action_dry_run",
+		Arguments: map[string]any{
+			"action":  "calendar.create_meeting",
+			"payload": payload,
+		},
+	})
+	if err != nil {
+		t.Fatalf("call create-meeting dry-run: %v", err)
+	}
+	dryRun := decodeStructured[mcpserver.DryRunOutput](t, dryRunResult)
+	if !dryRun.OK || dryRun.ConfirmationToken == "" || !dryRun.RequiresConfirmation {
+		t.Fatalf("expected dry-run confirmation token: %#v", dryRun)
+	}
+
+	result, err := clientSession.CallTool(ctx, &mcp.CallToolParams{
+		Name: "outlook.calendar_create_meeting",
+		Arguments: map[string]any{
+			"subject":       "Planning",
+			"start":         "2026-06-02T15:00:00+03:00",
+			"end":           "2026-06-02T15:30:00+03:00",
+			"attendees":     []any{" teammate@example.com ", "", "other@example.com"},
+			"timezone":      "Russian Standard Time",
+			"body":          "Discuss next steps",
+			"location":      "Room 1",
+			"mailbox":       "shared@example.com",
+			"confirm_token": dryRun.ConfirmationToken,
+		},
+	})
+	if err != nil {
+		t.Fatalf("call calendar create meeting: %v", err)
+	}
+	output := decodeStructured[mcpserver.ActionResultOutput](t, result)
+	if !output.OK {
+		t.Fatalf("expected confirmed create-meeting to execute: %#v", output)
+	}
+	if len(capturing.executeRequests) != 1 {
+		t.Fatalf("expected one execution, got %#v", capturing.executeRequests)
+	}
+	request := capturing.executeRequests[0]
+	if request.Name != "calendar.create_meeting" {
+		t.Fatalf("expected calendar.create_meeting execution, got %#v", request)
+	}
+	attendees, ok := request.Payload["attendees"].([]string)
+	if !ok {
+		t.Fatalf("expected canonical []string attendees, got %#v", request.Payload["attendees"])
+	}
+	if !slices.Equal(attendees, []string{"teammate@example.com", "other@example.com"}) {
+		t.Fatalf("expected trimmed attendees, got %#v", attendees)
+	}
+	if request.Payload["subject"] != "Planning" || request.Payload["body"] != "Discuss next steps" || request.Payload["mailbox"] != "shared@example.com" {
+		t.Fatalf("expected exact create-meeting payload, got %#v", request.Payload)
+	}
+	if request.Payload["time_zone"] != "Russian Standard Time" {
+		t.Fatalf("expected canonical time_zone in create-meeting payload, got %#v", request.Payload)
+	}
+	if _, exists := request.Payload["timezone"]; exists {
+		t.Fatalf("expected public timezone alias to be canonicalized away, got %#v", request.Payload)
+	}
+}
+
+func TestMCPToolCalendarCreateMeetingIgnoresBlankOptionalFieldsForConfirmation(t *testing.T) {
+	ctx := context.Background()
+	capturing := &meetingCapturingTransport{}
+	serverTransport, clientTransport := mcp.NewInMemoryTransports()
+
+	serverSession, err := mcpserver.NewWithTransport(capturing).Connect(ctx, serverTransport, nil)
+	if err != nil {
+		t.Fatalf("connect server: %v", err)
+	}
+	defer serverSession.Close()
+	defer serverSession.Wait()
+
+	client := mcp.NewClient(&mcp.Implementation{Name: "test-client", Version: "0.0.1"}, nil)
+	clientSession, err := client.Connect(ctx, clientTransport, nil)
+	if err != nil {
+		t.Fatalf("connect client: %v", err)
+	}
+	defer clientSession.Close()
+
+	dryRunResult, err := clientSession.CallTool(ctx, &mcp.CallToolParams{
+		Name: "outlook.action_dry_run",
+		Arguments: map[string]any{
+			"action": "calendar.create_meeting",
+			"payload": map[string]any{
+				"subject":   "Planning",
+				"start":     "2026-06-02T15:00:00+03:00",
+				"end":       "2026-06-02T15:30:00+03:00",
+				"attendees": []any{"teammate@example.com"},
+				"timezone":  " ",
+				"body":      " ",
+				"location":  " ",
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("call create-meeting dry-run: %v", err)
+	}
+	dryRun := decodeStructured[mcpserver.DryRunOutput](t, dryRunResult)
+	if !dryRun.OK || dryRun.ConfirmationToken == "" || !dryRun.RequiresConfirmation {
+		t.Fatalf("expected dry-run confirmation token: %#v", dryRun)
+	}
+
+	result, err := clientSession.CallTool(ctx, &mcp.CallToolParams{
+		Name: "outlook.calendar_create_meeting",
+		Arguments: map[string]any{
+			"subject":       "Planning",
+			"start":         "2026-06-02T15:00:00+03:00",
+			"end":           "2026-06-02T15:30:00+03:00",
+			"attendees":     []any{"teammate@example.com"},
+			"confirm_token": dryRun.ConfirmationToken,
+		},
+	})
+	if err != nil {
+		t.Fatalf("call calendar create meeting: %v", err)
+	}
+	output := decodeStructured[mcpserver.ActionResultOutput](t, result)
+	if !output.OK {
+		t.Fatalf("expected confirmed create-meeting to execute: %#v", output)
+	}
+	request := capturing.executeRequests[0]
+	for _, key := range []string{"timezone", "time_zone", "body", "location"} {
+		if _, exists := request.Payload[key]; exists {
+			t.Fatalf("expected blank optional field %q to be omitted, got %#v", key, request.Payload)
+		}
+	}
+}
+
+func TestMCPToolCalendarCreateMeetingTrimsStringFieldsForConfirmation(t *testing.T) {
+	ctx := context.Background()
+	capturing := &meetingCapturingTransport{}
+	serverTransport, clientTransport := mcp.NewInMemoryTransports()
+
+	serverSession, err := mcpserver.NewWithTransport(capturing).Connect(ctx, serverTransport, nil)
+	if err != nil {
+		t.Fatalf("connect server: %v", err)
+	}
+	defer serverSession.Close()
+	defer serverSession.Wait()
+
+	client := mcp.NewClient(&mcp.Implementation{Name: "test-client", Version: "0.0.1"}, nil)
+	clientSession, err := client.Connect(ctx, clientTransport, nil)
+	if err != nil {
+		t.Fatalf("connect client: %v", err)
+	}
+	defer clientSession.Close()
+
+	dryRunResult, err := clientSession.CallTool(ctx, &mcp.CallToolParams{
+		Name: "outlook.action_dry_run",
+		Arguments: map[string]any{
+			"action": "calendar.create_meeting",
+			"payload": map[string]any{
+				"subject":   " Planning ",
+				"start":     " 2026-06-02T15:00:00+03:00 ",
+				"end":       " 2026-06-02T15:30:00+03:00 ",
+				"attendees": []any{"teammate@example.com"},
+				"mailbox":   " shared@example.com ",
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("call create-meeting dry-run: %v", err)
+	}
+	dryRun := decodeStructured[mcpserver.DryRunOutput](t, dryRunResult)
+	if !dryRun.OK || dryRun.ConfirmationToken == "" || !dryRun.RequiresConfirmation {
+		t.Fatalf("expected dry-run confirmation token: %#v", dryRun)
+	}
+
+	result, err := clientSession.CallTool(ctx, &mcp.CallToolParams{
+		Name: "outlook.calendar_create_meeting",
+		Arguments: map[string]any{
+			"subject":       " Planning ",
+			"start":         " 2026-06-02T15:00:00+03:00 ",
+			"end":           " 2026-06-02T15:30:00+03:00 ",
+			"attendees":     []any{"teammate@example.com"},
+			"mailbox":       " shared@example.com ",
+			"confirm_token": dryRun.ConfirmationToken,
+		},
+	})
+	if err != nil {
+		t.Fatalf("call calendar create meeting: %v", err)
+	}
+	output := decodeStructured[mcpserver.ActionResultOutput](t, result)
+	if !output.OK {
+		t.Fatalf("expected confirmed create-meeting to execute: %#v", output)
+	}
+	request := capturing.executeRequests[0]
+	if request.Payload["subject"] != "Planning" || request.Payload["start"] != "2026-06-02T15:00:00+03:00" || request.Payload["end"] != "2026-06-02T15:30:00+03:00" || request.Payload["mailbox"] != "shared@example.com" {
+		t.Fatalf("expected trimmed create-meeting payload, got %#v", request.Payload)
+	}
+}
+
+func TestMCPToolCalendarCreateMeetingRejectsUnsupportedOptionsBeforeDryRun(t *testing.T) {
+	tests := []struct {
+		name      string
+		argument  string
+		value     any
+		wantError string
+	}{
+		{
+			name:      "online meeting",
+			argument:  "is_online_meeting",
+			value:     true,
+			wantError: "is_online_meeting is not supported",
+		},
+		{
+			name:      "reminder minutes",
+			argument:  "reminder_minutes",
+			value:     float64(15),
+			wantError: "reminder_minutes is not supported",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ctx := context.Background()
+			capturing := &meetingCapturingTransport{}
+			serverTransport, clientTransport := mcp.NewInMemoryTransports()
+
+			serverSession, err := mcpserver.NewWithTransport(capturing).Connect(ctx, serverTransport, nil)
+			if err != nil {
+				t.Fatalf("connect server: %v", err)
+			}
+			defer serverSession.Close()
+			defer serverSession.Wait()
+
+			client := mcp.NewClient(&mcp.Implementation{Name: "test-client", Version: "0.0.1"}, nil)
+			clientSession, err := client.Connect(ctx, clientTransport, nil)
+			if err != nil {
+				t.Fatalf("connect client: %v", err)
+			}
+			defer clientSession.Close()
+
+			arguments := map[string]any{
+				"subject":       "Planning",
+				"start":         "2026-06-02T15:00:00+03:00",
+				"end":           "2026-06-02T15:30:00+03:00",
+				"attendees":     []any{"teammate@example.com"},
+				"confirm_token": "unused",
+			}
+			arguments[tt.argument] = tt.value
+			result, err := clientSession.CallTool(ctx, &mcp.CallToolParams{
+				Name:      "outlook.calendar_create_meeting",
+				Arguments: arguments,
+			})
+			if err != nil {
+				t.Fatalf("call calendar create meeting: %v", err)
+			}
+			output := decodeStructured[mcpserver.ActionResultOutput](t, result)
+			if output.OK || !strings.Contains(output.Error, tt.wantError) {
+				t.Fatalf("expected unsupported option error %q, got %#v", tt.wantError, output)
+			}
+			if len(capturing.dryRunRequests) != 0 || len(capturing.executeRequests) != 0 {
+				t.Fatalf("expected unsupported option to block before transport, dry-runs=%#v executes=%#v", capturing.dryRunRequests, capturing.executeRequests)
+			}
+		})
 	}
 }
 
@@ -893,6 +1426,7 @@ func decodeStructured[T any](t *testing.T, result *mcp.CallToolResult) T {
 
 type capturingTransport struct {
 	lastRequest transport.ActionRequest
+	requests    []transport.ActionRequest
 }
 
 type batchBodyTransport struct {
@@ -906,6 +1440,69 @@ type rulesListOutput struct {
 
 type mailboxSettingsGetOutput struct {
 	Settings any `json:"settings"`
+}
+
+type dryRunErrorMeetingTransport struct {
+	dryRunRequests  []transport.ActionRequest
+	executeRequests []transport.ActionRequest
+}
+
+type meetingCapturingTransport struct {
+	dryRunRequests  []transport.ActionRequest
+	executeRequests []transport.ActionRequest
+}
+
+func (blocking *dryRunErrorMeetingTransport) Name() string {
+	return "test"
+}
+
+func (blocking *dryRunErrorMeetingTransport) Authenticate(context.Context, string) transport.AuthResult {
+	return transport.AuthResult{OK: true}
+}
+
+func (blocking *dryRunErrorMeetingTransport) Capabilities(context.Context) transport.CapabilitySet {
+	return transport.CapabilitySet{Actions: []action.Definition{
+		{Name: "calendar.create_meeting", Transport: "test", Class: policy.SendLike, Level: action.LevelHighLevelMCPTool},
+	}}
+}
+
+func (blocking *dryRunErrorMeetingTransport) Execute(_ context.Context, request transport.ActionRequest) transport.ActionResponse {
+	blocking.executeRequests = append(blocking.executeRequests, request)
+	return transport.ActionResponse{OK: true, Data: map[string]any{"event": map[string]any{"id": "evt-1"}}}
+}
+
+func (blocking *dryRunErrorMeetingTransport) DryRun(_ context.Context, request transport.ActionRequest) transport.DryRunSummary {
+	blocking.dryRunRequests = append(blocking.dryRunRequests, request)
+	return transport.DryRunSummary{
+		Action:               request.Name,
+		Count:                1,
+		RequiresConfirmation: true,
+		Error:                "calendar.create_meeting dry-run failed: https://example.test/callback?access_token=secret-token",
+	}
+}
+
+func (capturing *meetingCapturingTransport) Name() string {
+	return "test"
+}
+
+func (capturing *meetingCapturingTransport) Authenticate(context.Context, string) transport.AuthResult {
+	return transport.AuthResult{OK: true}
+}
+
+func (capturing *meetingCapturingTransport) Capabilities(context.Context) transport.CapabilitySet {
+	return transport.CapabilitySet{Actions: []action.Definition{
+		{Name: "calendar.create_meeting", Transport: "test", Class: policy.SendLike, Level: action.LevelHighLevelMCPTool},
+	}}
+}
+
+func (capturing *meetingCapturingTransport) Execute(_ context.Context, request transport.ActionRequest) transport.ActionResponse {
+	capturing.executeRequests = append(capturing.executeRequests, request)
+	return transport.ActionResponse{OK: true, Data: map[string]any{"event": map[string]any{"id": "evt-1"}}}
+}
+
+func (capturing *meetingCapturingTransport) DryRun(_ context.Context, request transport.ActionRequest) transport.DryRunSummary {
+	capturing.dryRunRequests = append(capturing.dryRunRequests, request)
+	return transport.DryRunSummary{Action: request.Name, Count: 1, RequiresConfirmation: true}
 }
 
 func (capturing *capturingTransport) Name() string {
@@ -925,6 +1522,7 @@ func (capturing *capturingTransport) Capabilities(context.Context) transport.Cap
 
 func (capturing *capturingTransport) Execute(_ context.Context, request transport.ActionRequest) transport.ActionResponse {
 	capturing.lastRequest = request
+	capturing.requests = append(capturing.requests, request)
 	return transport.ActionResponse{
 		OK: true,
 		Data: map[string]any{

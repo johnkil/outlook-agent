@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/johnkil/outlook-agent/internal/policy"
 	"github.com/johnkil/outlook-agent/internal/transport"
 	"github.com/johnkil/outlook-agent/internal/transport/fake"
 )
@@ -338,6 +339,234 @@ func TestFakeTransportDryRunCalendarRespondReview(t *testing.T) {
 	}
 	if summary.Review.PayloadFingerprint == "" {
 		t.Fatalf("expected payload fingerprint in review: %#v", summary.Review)
+	}
+}
+
+func TestFakeTransportCalendarCreateMeetingCapabilityExecuteAndDryRun(t *testing.T) {
+	client := fake.New()
+	payload := map[string]any{
+		"subject":   " Planning ",
+		"start":     " 2026-06-02T15:00:00+03:00 ",
+		"end":       " 2026-06-02T15:30:00+03:00 ",
+		"attendees": []any{" ", " teammate@example.com "},
+		"location":  " Room 1 ",
+		"body":      "Discuss next steps; access_token=secret",
+	}
+
+	var found bool
+	for _, definition := range client.Capabilities(context.Background()).Actions {
+		if definition.Name != "calendar.create_meeting" {
+			continue
+		}
+		found = true
+		if definition.Transport != "fake" || definition.Class != policy.SendLike {
+			t.Fatalf("unexpected create meeting capability: %#v", definition)
+		}
+	}
+	if !found {
+		t.Fatal("expected calendar.create_meeting capability")
+	}
+
+	response := client.Execute(context.Background(), transport.ActionRequest{Name: "calendar.create_meeting", Payload: payload})
+	if !response.OK {
+		t.Fatalf("expected create meeting execute to succeed: %#v", response)
+	}
+	event := response.Data["event"].(map[string]any)
+	if event["id"] != "evt-created-1" || event["title"] != "Planning" || event["location"] != "Room 1" {
+		t.Fatalf("unexpected created event: %#v", event)
+	}
+	attendees := event["attendees"].([]string)
+	if len(attendees) != 1 || attendees[0] != "teammate@example.com" {
+		t.Fatalf("unexpected attendees: %#v", attendees)
+	}
+
+	summary := client.DryRun(context.Background(), transport.ActionRequest{Name: "calendar.create_meeting", Payload: payload})
+	if summary.Action != "calendar.create_meeting" || summary.Count != 1 || summary.Reversible || !summary.RequiresConfirmation {
+		t.Fatalf("unexpected dry-run summary: %#v", summary)
+	}
+	if summary.SafetyClass != string(policy.SendLike) {
+		t.Fatalf("expected send-like safety class, got %q", summary.SafetyClass)
+	}
+	if summary.Review == nil || summary.Review.Calendar == nil || summary.Review.Mutation == nil {
+		t.Fatalf("expected calendar mutation review: %#v", summary)
+	}
+	if summary.Review.Calendar.Subject != "Planning" ||
+		summary.Review.Calendar.Start != "2026-06-02T15:00:00+03:00" ||
+		summary.Review.Calendar.End != "2026-06-02T15:30:00+03:00" ||
+		summary.Review.Calendar.Location != "Room 1" ||
+		!summary.Review.Calendar.SendsResponse {
+		t.Fatalf("unexpected calendar review: %#v", summary.Review.Calendar)
+	}
+	if strings.Join(summary.Review.Calendar.Attendees, ",") != "teammate@example.com" {
+		t.Fatalf("unexpected calendar review attendees: %#v", summary.Review.Calendar)
+	}
+	if summary.Review.Mutation.Operation != "create" {
+		t.Fatalf("unexpected mutation review: %#v", summary.Review.Mutation)
+	}
+	newState, ok := summary.Review.Mutation.NewState.(map[string]any)
+	if !ok {
+		t.Fatalf("expected mutation new state with body preview: %#v", summary.Review.Mutation.NewState)
+	}
+	preview, _ := newState["body_preview"].(string)
+	if preview == "" {
+		t.Fatalf("expected body preview in mutation new state: %#v", newState)
+	}
+	if strings.Contains(preview, "secret") {
+		t.Fatalf("body preview must redact secrets: %q", preview)
+	}
+	if strings.Contains(fmt.Sprint(summary.Review), "secret") {
+		t.Fatalf("review must redact body secrets: %#v", summary.Review)
+	}
+}
+
+func TestFakeTransportCalendarCreateMeetingDryRunValidatesPayload(t *testing.T) {
+	client := fake.New()
+	cases := []struct {
+		name    string
+		payload map[string]any
+		error   string
+	}{
+		{
+			name: "blank subject",
+			payload: map[string]any{
+				"subject":   " ",
+				"start":     "2026-06-02T15:00:00+03:00",
+				"end":       "2026-06-02T15:30:00+03:00",
+				"attendees": []any{"teammate@example.com"},
+			},
+			error: "calendar.create_meeting requires subject",
+		},
+		{
+			name: "missing start",
+			payload: map[string]any{
+				"subject":   "Planning",
+				"end":       "2026-06-02T15:30:00+03:00",
+				"attendees": []any{"teammate@example.com"},
+			},
+			error: "calendar.create_meeting requires start and end",
+		},
+		{
+			name: "missing end",
+			payload: map[string]any{
+				"subject":   "Planning",
+				"start":     "2026-06-02T15:00:00+03:00",
+				"attendees": []any{"teammate@example.com"},
+			},
+			error: "calendar.create_meeting requires start and end",
+		},
+		{
+			name: "missing attendees",
+			payload: map[string]any{
+				"subject": "Planning",
+				"start":   "2026-06-02T15:00:00+03:00",
+				"end":     "2026-06-02T15:30:00+03:00",
+			},
+			error: "calendar.create_meeting requires attendees",
+		},
+		{
+			name: "blank attendees",
+			payload: map[string]any{
+				"subject":   "Planning",
+				"start":     "2026-06-02T15:00:00+03:00",
+				"end":       "2026-06-02T15:30:00+03:00",
+				"attendees": []any{" ", ""},
+			},
+			error: "calendar.create_meeting requires attendees",
+		},
+	}
+
+	for _, tt := range cases {
+		t.Run(tt.name, func(t *testing.T) {
+			summary := client.DryRun(context.Background(), transport.ActionRequest{Name: "calendar.create_meeting", Payload: tt.payload})
+
+			if summary.Action != "calendar.create_meeting" || summary.Count != 1 || summary.Reversible || !summary.RequiresConfirmation {
+				t.Fatalf("unexpected dry-run summary: %#v", summary)
+			}
+			if summary.SafetyClass != string(policy.SendLike) {
+				t.Fatalf("expected send-like safety class, got %q", summary.SafetyClass)
+			}
+			if summary.Error != tt.error {
+				t.Fatalf("expected dry-run error %q, got %#v", tt.error, summary)
+			}
+			if len(summary.Warnings) != 1 || summary.Warnings[0] != tt.error {
+				t.Fatalf("expected validation warning %q, got %#v", tt.error, summary.Warnings)
+			}
+			if summary.Review == nil {
+				t.Fatal("expected minimal review packet")
+			}
+			if summary.Review.Completeness == transport.ReviewCompletenessComplete {
+				t.Fatalf("invalid dry-run must not produce a complete review: %#v", summary.Review)
+			}
+			if summary.Review.Calendar != nil {
+				t.Fatalf("invalid dry-run must not produce misleading calendar details: %#v", summary.Review.Calendar)
+			}
+			if summary.Review.Mutation != nil {
+				t.Fatalf("invalid dry-run must not produce misleading mutation details: %#v", summary.Review.Mutation)
+			}
+			if !reflect.DeepEqual(summary.Review.Limitations, []string{tt.error}) {
+				t.Fatalf("expected review limitation %q, got %#v", tt.error, summary.Review.Limitations)
+			}
+		})
+	}
+}
+
+func TestFakeTransportCalendarCreateMeetingValidatesPayload(t *testing.T) {
+	client := fake.New()
+	cases := []struct {
+		name    string
+		payload map[string]any
+		error   string
+	}{
+		{
+			name: "missing subject",
+			payload: map[string]any{
+				"subject":   " ",
+				"start":     "2026-06-02T15:00:00+03:00",
+				"end":       "2026-06-02T15:30:00+03:00",
+				"attendees": []any{"teammate@example.com"},
+			},
+			error: "calendar.create_meeting requires subject",
+		},
+		{
+			name: "missing start",
+			payload: map[string]any{
+				"subject":   "Planning",
+				"start":     " ",
+				"end":       "2026-06-02T15:30:00+03:00",
+				"attendees": []any{"teammate@example.com"},
+			},
+			error: "calendar.create_meeting requires start and end",
+		},
+		{
+			name: "missing end",
+			payload: map[string]any{
+				"subject":   "Planning",
+				"start":     "2026-06-02T15:00:00+03:00",
+				"end":       " ",
+				"attendees": []any{"teammate@example.com"},
+			},
+			error: "calendar.create_meeting requires start and end",
+		},
+		{
+			name: "missing attendees after trimming",
+			payload: map[string]any{
+				"subject":   "Planning",
+				"start":     "2026-06-02T15:00:00+03:00",
+				"end":       "2026-06-02T15:30:00+03:00",
+				"attendees": []any{" ", "", 42},
+			},
+			error: "calendar.create_meeting requires attendees",
+		},
+	}
+
+	for _, tt := range cases {
+		t.Run(tt.name, func(t *testing.T) {
+			response := client.Execute(context.Background(), transport.ActionRequest{Name: "calendar.create_meeting", Payload: tt.payload})
+
+			if response.OK || response.Error != tt.error {
+				t.Fatalf("expected %q error, got %#v", tt.error, response)
+			}
+		})
 	}
 }
 

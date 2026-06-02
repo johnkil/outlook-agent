@@ -51,6 +51,7 @@ level 5: workflow skill guidance
 | Calendar | `outlook.calendar_list` | 4 |
 | Calendar | `outlook.calendar_availability` | 4 |
 | Calendar | `outlook.calendar_find_time` | 4 |
+| Calendar | `outlook.calendar_create_meeting` | 4 |
 | Calendar | `outlook.calendar_respond` | 4 |
 | Raw | `outlook.action_dry_run` | 4 |
 | Raw | `outlook.action_confirm` | 4 |
@@ -152,6 +153,8 @@ Implemented high-level OWA mappings:
 | `mailbox.settings.get` | Graph `mailboxSettings` / transport capability | implemented as read-only typed MCP tool where the selected transport supports it |
 | `calendar.list` | `GetCalendarView` | implemented and live smoke-tested for a one-day range |
 | `calendar.availability` | `GetUserAvailabilityInternal` | implemented and live smoke-tested; MCP tool accepts optional mailbox email |
+| `calendar.find_time` | `GetCalendarView` / `GetUserAvailabilityInternal` | implemented as typed mutual planning only; it returns suggestions and never creates or sends meetings |
+| `calendar.create_meeting` | `CreateItem` | implemented as a typed send-like meeting creation action requiring dry-run review, exact confirmation, and host approval where required; live write execution remains deferred to controlled fixtures |
 | raw read-only people search | `FindPeople` | raw guarded execution live smoke-tested with opt-in env; request maps are normalized so `__type` is emitted first |
 | raw read-only metadata suite | `GetServerTimeZones`, `GetRoomLists`, `GetFolder`, `ResolveNames` | raw guarded execution live smoke-tested with opt-in env; metadata-only payloads and sanitized assertions |
 | raw reversible confirm fixture | `DeleteItem` with `DeleteType=MoveToDeletedItems` | live MCP smoke-tested through `outlook.action_dry_run` and `outlook.action_confirm` against a controlled draft fixture; no unsafe mode required |

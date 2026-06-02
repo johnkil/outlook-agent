@@ -97,6 +97,21 @@ func (client *Transport) executeHighLevel(ctx context.Context, request transport
 			return transport.ActionResponse{OK: false, Error: err.Error()}, true
 		}
 		return response, true
+	case "calendar.create_meeting":
+		meeting, err := normalizeCreateMeetingPayload(request.Payload)
+		if err != nil {
+			return transport.ActionResponse{OK: false, Error: err.Error()}, true
+		}
+		response := client.executeService(ctx, "CreateItem", client.buildCreateMeetingRequest(meeting), false)
+		if !response.OK {
+			return response, true
+		}
+		events := normalizeCalendarItems(extractItems(response.Data))
+		event := firstMap(events)
+		if strings.TrimSpace(stringValue(event, "id")) == "" {
+			return transport.ActionResponse{OK: false, Error: "calendar.create_meeting missing created event id"}, true
+		}
+		return transport.ActionResponse{OK: true, Data: map[string]any{"event": event}}, true
 	case "mail.fetch_metadata":
 		messageID := strings.TrimSpace(stringValue(request.Payload, "id"))
 		if messageID == "" {
@@ -716,6 +731,109 @@ func (client *Transport) buildCreateDraftRequest(payload map[string]any) any {
 	)
 }
 
+type createMeetingPayload struct {
+	mailbox   string
+	subject   string
+	start     string
+	end       string
+	body      string
+	location  string
+	timeZone  string
+	attendees []string
+}
+
+func normalizeCreateMeetingPayload(payload map[string]any) (createMeetingPayload, error) {
+	meeting := createMeetingPayload{
+		mailbox:   strings.TrimSpace(stringValue(payload, "mailbox")),
+		subject:   strings.TrimSpace(stringValue(payload, "subject")),
+		start:     strings.TrimSpace(stringValue(payload, "start")),
+		end:       strings.TrimSpace(stringValue(payload, "end")),
+		body:      stringValue(payload, "body"),
+		location:  strings.TrimSpace(stringValue(payload, "location")),
+		timeZone:  strings.TrimSpace(stringValue(payload, "time_zone")),
+		attendees: createMeetingAttendees(payload["attendees"]),
+	}
+	if meeting.subject == "" {
+		return createMeetingPayload{}, fmt.Errorf("calendar.create_meeting requires subject")
+	}
+	if meeting.start == "" || meeting.end == "" {
+		return createMeetingPayload{}, fmt.Errorf("calendar.create_meeting requires start and end")
+	}
+	if len(meeting.attendees) == 0 {
+		return createMeetingPayload{}, fmt.Errorf("calendar.create_meeting requires attendees")
+	}
+	return meeting, nil
+}
+
+func createMeetingAttendees(value any) []string {
+	attendees := make([]string, 0)
+	for _, attendee := range anySlice(value) {
+		address, ok := attendee.(string)
+		if !ok {
+			continue
+		}
+		if address = strings.TrimSpace(address); address != "" {
+			attendees = append(attendees, address)
+		}
+	}
+	return attendees
+}
+
+func owaCalendarFolderID(mailbox string) any {
+	fields := []orderedField{
+		field("__type", "DistinguishedFolderId:#Exchange"),
+		field("Id", "calendar"),
+	}
+	if mailbox = strings.TrimSpace(mailbox); mailbox != "" {
+		fields = append(fields, field("Mailbox", object(
+			field("__type", "EmailAddress:#Exchange"),
+			field("EmailAddress", mailbox),
+		)))
+	}
+	return object(fields...)
+}
+
+func (client *Transport) buildCreateMeetingRequest(meeting createMeetingPayload) any {
+	attendees := make([]any, 0)
+	for _, address := range meeting.attendees {
+		attendees = append(attendees, object(
+			field("__type", "Attendee:#Exchange"),
+			field("Mailbox", object(
+				field("__type", "EmailAddress:#Exchange"),
+				field("EmailAddress", address),
+			)),
+		))
+	}
+	return object(
+		field("__type", "CreateItemJsonRequest:#Exchange"),
+		field("Header", client.requestHeaderPayloadInTimeZone("Exchange2013", meeting.timeZone)),
+		field("Body", object(
+			field("__type", "CreateItemRequest:#Exchange"),
+			field("MessageDisposition", "SendAndSaveCopy"),
+			field("SendMeetingInvitations", "SendToAllAndSaveCopy"),
+			field("SavedItemFolderId", object(
+				field("__type", "TargetFolderId:#Exchange"),
+				field("BaseFolderId", owaCalendarFolderID(meeting.mailbox)),
+			)),
+			field("Items", []any{
+				object(
+					field("__type", "CalendarItem:#Exchange"),
+					field("Subject", meeting.subject),
+					field("Body", object(
+						field("__type", "BodyContentType:#Exchange"),
+						field("BodyType", "Text"),
+						field("Value", meeting.body),
+					)),
+					field("Start", meeting.start),
+					field("End", meeting.end),
+					field("Location", meeting.location),
+					field("RequiredAttendees", attendees),
+				),
+			}),
+		)),
+	)
+}
+
 func (client *Transport) buildMoveToDeletedItemsRequest(ids []any) any {
 	itemIDs := make([]any, 0, len(ids))
 	for _, id := range ids {
@@ -870,10 +988,7 @@ func normalizeMailItems(items []any) []any {
 
 func normalizePeople(payload map[string]any) []any {
 	body, _ := payload["Body"].(map[string]any)
-	people := anySlice(body["People"])
-	if len(people) == 0 {
-		people = anySlice(body["Personas"])
-	}
+	people := peopleResponseItems(body)
 	output := make([]any, 0, len(people))
 	for _, person := range people {
 		personMap, ok := person.(map[string]any)
@@ -881,14 +996,10 @@ func normalizePeople(payload map[string]any) []any {
 			continue
 		}
 		personaID := itemID(personMap)
-		email := stringValue(personMap, "EmailAddress")
-		if email == "" {
-			email = stringValue(personMap, "Email")
-		}
 		output = append(output, map[string]any{
 			"id":           personaID["id"],
-			"display_name": stringValue(personMap, "DisplayName"),
-			"email":        email,
+			"display_name": personDisplayName(personMap),
+			"email":        personEmail(personMap),
 			"source":       "owa",
 		})
 	}
@@ -896,6 +1007,52 @@ func normalizePeople(payload map[string]any) []any {
 		return []any{}
 	}
 	return output
+}
+
+func peopleResponseItems(body map[string]any) []any {
+	for _, key := range []string{"People", "Personas", "ResultSet"} {
+		items := anySlice(body[key])
+		if len(items) > 0 {
+			return items
+		}
+	}
+	return []any{}
+}
+
+func personDisplayName(person map[string]any) string {
+	for _, key := range []string{"DisplayName", "DisplayNameFirstLast", "DisplayNameLastFirst", "FileAs"} {
+		if value := strings.TrimSpace(stringValue(person, key)); value != "" {
+			return value
+		}
+	}
+	if emailAddress, ok := person["EmailAddress"].(map[string]any); ok {
+		return strings.TrimSpace(stringValue(emailAddress, "Name"))
+	}
+	return ""
+}
+
+func personEmail(person map[string]any) string {
+	if value := strings.TrimSpace(stringValue(person, "EmailAddress")); value != "" {
+		return value
+	}
+	if emailAddress, ok := person["EmailAddress"].(map[string]any); ok {
+		if value := strings.TrimSpace(stringValue(emailAddress, "EmailAddress")); value != "" {
+			return value
+		}
+	}
+	if value := strings.TrimSpace(stringValue(person, "Email")); value != "" {
+		return value
+	}
+	for _, entry := range anySlice(person["EmailAddresses"]) {
+		entryMap, ok := entry.(map[string]any)
+		if !ok {
+			continue
+		}
+		if value := strings.TrimSpace(stringValue(entryMap, "EmailAddress")); value != "" {
+			return value
+		}
+	}
+	return ""
 }
 
 func normalizeAttachmentMetadata(items []any) []any {

@@ -44,6 +44,7 @@ func New() *Transport {
 			{Name: "calendar.availability", Transport: "fake", Class: policy.ReadMetadata, Level: action.LevelHighLevelMCPTool},
 			{Name: "calendar.find_time", Transport: "fake", Class: policy.ReadMetadata, Level: action.LevelHighLevelMCPTool},
 			{Name: "calendar.respond", Transport: "fake", Class: policy.SendLike, Level: action.LevelHighLevelMCPTool},
+			{Name: "calendar.create_meeting", Transport: "fake", Class: policy.SendLike, Level: action.LevelHighLevelMCPTool},
 		},
 	}
 }
@@ -267,6 +268,24 @@ func (client *Transport) Execute(_ context.Context, request transport.ActionRequ
 			return transport.ActionResponse{OK: false, Error: err.Error()}
 		}
 		return transport.ActionResponse{OK: true, Data: map[string]any{"suggestions": suggestions}}
+	case "calendar.create_meeting":
+		meeting, err := fakeCreateMeetingPayload(request.Payload)
+		if err != nil {
+			return transport.ActionResponse{OK: false, Error: err.Error()}
+		}
+		return transport.ActionResponse{
+			OK: true,
+			Data: map[string]any{
+				"event": map[string]any{
+					"id":        "evt-created-1",
+					"title":     meeting.subject,
+					"start":     meeting.start,
+					"end":       meeting.end,
+					"attendees": meeting.attendees,
+					"location":  meeting.location,
+				},
+			},
+		}
 	case "calendar.respond":
 		return transport.ActionResponse{
 			OK: true,
@@ -337,6 +356,44 @@ func fakeMeetingSuggestions(payload map[string]any) ([]any, error) {
 		suggestions = append(suggestions, suggestion)
 	}
 	return suggestions, nil
+}
+
+type fakeMeetingPayload struct {
+	subject   string
+	start     string
+	end       string
+	attendees []string
+	location  string
+}
+
+func fakeCreateMeetingPayload(payload map[string]any) (fakeMeetingPayload, error) {
+	meeting := fakeMeetingPayload{
+		subject:   strings.TrimSpace(stringValue(payload, "subject", "")),
+		start:     strings.TrimSpace(stringValue(payload, "start", "")),
+		end:       strings.TrimSpace(stringValue(payload, "end", "")),
+		attendees: nonBlankStrings(stringSlice(payload["attendees"])),
+		location:  strings.TrimSpace(stringValue(payload, "location", "")),
+	}
+	if meeting.subject == "" {
+		return fakeMeetingPayload{}, fmt.Errorf("calendar.create_meeting requires subject")
+	}
+	if meeting.start == "" || meeting.end == "" {
+		return fakeMeetingPayload{}, fmt.Errorf("calendar.create_meeting requires start and end")
+	}
+	if len(meeting.attendees) == 0 {
+		return fakeMeetingPayload{}, fmt.Errorf("calendar.create_meeting requires attendees")
+	}
+	return meeting, nil
+}
+
+func nonBlankStrings(values []string) []string {
+	output := make([]string, 0, len(values))
+	for _, value := range values {
+		if value = strings.TrimSpace(value); value != "" {
+			output = append(output, value)
+		}
+	}
+	return output
 }
 
 func parseTimePayload(payload map[string]any, key string) (time.Time, error) {
@@ -439,12 +496,64 @@ func (client *Transport) DryRun(_ context.Context, request transport.ActionReque
 			Review:               &review,
 		}
 	}
+	if request.Name == "calendar.create_meeting" {
+		review, err := fakeCalendarCreateMeetingReview(request.Name, request.Payload)
+		summary := transport.DryRunSummary{
+			Action:               request.Name,
+			Count:                1,
+			Reversible:           false,
+			RequiresConfirmation: true,
+			SafetyClass:          string(policy.SendLike),
+			Review:               &review,
+			Warnings:             review.Limitations,
+		}
+		if err != nil {
+			summary.Error = err.Error()
+		}
+		return summary
+	}
 	return transport.DryRunSummary{
 		Action:               request.Name,
 		Count:                dryRunCount(request),
 		Reversible:           request.Name == "mail.move_to_deleted_items" || request.Name == "mail.rules.set_enabled",
 		RequiresConfirmation: true,
 	}
+}
+
+func fakeCalendarCreateMeetingReview(actionName string, payload map[string]any) (transport.ReviewPacket, error) {
+	meeting, err := fakeCreateMeetingPayload(payload)
+	if err != nil {
+		return transport.ReviewPacket{
+			Version:            transport.ReviewPacketVersion,
+			Transport:          "fake",
+			Action:             actionName,
+			SafetyClass:        string(policy.SendLike),
+			Completeness:       transport.ReviewCompletenessMinimal,
+			PayloadFingerprint: transport.PayloadFingerprint(payload),
+			Limitations:        []string{err.Error()},
+		}, err
+	}
+	review := transport.ReviewPacket{
+		Version:      transport.ReviewPacketVersion,
+		Transport:    "fake",
+		Action:       actionName,
+		SafetyClass:  string(policy.SendLike),
+		Completeness: transport.ReviewCompletenessComplete,
+		Mutation:     &transport.MutationReview{Operation: "create"},
+		Calendar: &transport.CalendarReview{
+			Subject:       meeting.subject,
+			Start:         meeting.start,
+			End:           meeting.end,
+			Location:      meeting.location,
+			Attendees:     meeting.attendees,
+			SendsResponse: true,
+		},
+		PayloadFingerprint: transport.PayloadFingerprint(payload),
+	}
+	if bodyPreview := transport.RedactedPreview(stringValue(payload, "body", ""), 500); bodyPreview != "" {
+		review.Mutation.NewState = map[string]any{"body_preview": bodyPreview}
+	}
+	return review, nil
 }
 
 func fakeCalendarRespondReview(actionName string, payload map[string]any) transport.ReviewPacket {

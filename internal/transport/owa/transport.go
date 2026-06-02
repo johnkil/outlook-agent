@@ -240,6 +240,22 @@ func (client *Transport) executeRawServiceOnce(ctx context.Context, actionName s
 }
 
 func (client *Transport) DryRun(_ context.Context, request transport.ActionRequest) transport.DryRunSummary {
+	if request.Name == "calendar.create_meeting" {
+		review, err := owaCalendarCreateMeetingReview(request.Name, request.Payload)
+		summary := transport.DryRunSummary{
+			Action:               request.Name,
+			Count:                1,
+			Reversible:           false,
+			RequiresConfirmation: true,
+			SafetyClass:          string(policy.SendLike),
+			Review:               &review,
+			Warnings:             review.Limitations,
+		}
+		if err != nil {
+			summary.Error = err.Error()
+		}
+		return summary
+	}
 	count := countRequestItems(request.Payload)
 	class := dryRunSafetyClass(request)
 	review := dryRunReview(request, class)
@@ -308,6 +324,43 @@ func dryRunReview(request transport.ActionRequest, class policy.SafetyClass) tra
 		review.WarningCodes = appendWarningCode(review.WarningCodes, transport.ReviewWarningRawSemanticsNotFullyUnderstood)
 	}
 	return review
+}
+
+func owaCalendarCreateMeetingReview(actionName string, payload map[string]any) (transport.ReviewPacket, error) {
+	meeting, err := normalizeCreateMeetingPayload(payload)
+	if err != nil {
+		return transport.ReviewPacket{
+			Version:            transport.ReviewPacketVersion,
+			Transport:          "owa",
+			Action:             actionName,
+			SafetyClass:        string(policy.SendLike),
+			Completeness:       transport.ReviewCompletenessMinimal,
+			PayloadFingerprint: transport.PayloadFingerprint(payload),
+			Limitations:        []string{err.Error()},
+		}, err
+	}
+	bodyPreview := transport.RedactedPreview(meeting.body, 500)
+	review := transport.ReviewPacket{
+		Version:      transport.ReviewPacketVersion,
+		Transport:    "owa",
+		Action:       actionName,
+		SafetyClass:  string(policy.SendLike),
+		Completeness: transport.ReviewCompletenessComplete,
+		Mutation:     &transport.MutationReview{Operation: "create"},
+		Calendar: &transport.CalendarReview{
+			Subject:       meeting.subject,
+			Start:         meeting.start,
+			End:           meeting.end,
+			Location:      meeting.location,
+			Attendees:     meeting.attendees,
+			SendsResponse: true,
+		},
+		PayloadFingerprint: transport.PayloadFingerprint(payload),
+	}
+	if bodyPreview != "" {
+		review.Mutation.NewState = map[string]any{"body_preview": bodyPreview}
+	}
+	return review, nil
 }
 
 func appendWarningCode(values []string, value string) []string {
