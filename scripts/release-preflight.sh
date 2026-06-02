@@ -27,7 +27,7 @@ fi
 
 if ! git rev-parse --verify --quiet origin/main >/dev/null; then
   if git remote get-url origin >/dev/null 2>&1; then
-    git fetch origin main >/dev/null 2>&1 || true
+    git fetch origin main:refs/remotes/origin/main >/dev/null 2>&1 || true
   fi
 fi
 
