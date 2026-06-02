@@ -2346,6 +2346,74 @@ func TestTransportCalendarFindTimeUsesGetScheduleIntersection(t *testing.T) {
 	}
 }
 
+func TestTransportCalendarFindTimePagesOrganizerEvents(t *testing.T) {
+	var sawSecondCalendarPage bool
+	var serverURL string
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		switch {
+		case request.Method == http.MethodGet && request.URL.Path == "/v1.0/me/calendarView" && request.URL.Query().Get("$skiptoken") == "":
+			response.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(response).Encode(map[string]any{
+				"@odata.nextLink": serverURL + "/v1.0/me/calendarView?$skiptoken=next",
+				"value":           []any{},
+			})
+		case request.Method == http.MethodGet && request.URL.Path == "/v1.0/me/calendarView" && request.URL.Query().Get("$skiptoken") == "next":
+			sawSecondCalendarPage = true
+			response.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(response).Encode(map[string]any{
+				"value": []any{
+					graphEventResponse("event-2", "Private focus", "2026-05-28T10:00:00", "2026-05-28T10:30:00", "Room 1"),
+				},
+			})
+		case request.Method == http.MethodPost && request.URL.Path == "/v1.0/me/calendar/getSchedule":
+			response.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(response).Encode(map[string]any{
+				"value": []any{
+					map[string]any{
+						"scheduleId": "vlad.cheshenko@example.com",
+						"scheduleItems": []any{
+							graphScheduleItemResponse("busy", "2026-05-28T09:00:00", "2026-05-28T10:00:00", "Hidden busy event"),
+						},
+					},
+				},
+			})
+		default:
+			t.Fatalf("unexpected request: %s %s", request.Method, request.URL.String())
+		}
+	}))
+	defer server.Close()
+	serverURL = server.URL
+
+	client := graph.NewTransport(graph.Config{
+		BaseURL:   server.URL + "/v1.0",
+		SecretRef: secret.Ref("memory:graph"),
+	}, secret.NewMemoryStore(map[string]string{"memory:graph": "token-secret"}), server.Client())
+
+	result := client.Execute(context.Background(), transport.ActionRequest{
+		Name: "calendar.find_time",
+		Payload: map[string]any{
+			"attendees":        []any{"vlad.cheshenko@example.com"},
+			"start":            "2026-05-28T09:00:00Z",
+			"end":              "2026-05-28T12:00:00Z",
+			"duration_minutes": float64(30),
+			"time_zone":        "UTC",
+			"tentative":        "busy",
+		},
+	})
+
+	if !result.OK {
+		t.Fatalf("expected calendar.find_time ok, got %#v", result)
+	}
+	if !sawSecondCalendarPage {
+		t.Fatal("expected calendar.find_time to fetch second organizer calendarView page")
+	}
+	suggestions := result.Data["suggestions"].([]any)
+	first := suggestions[0].(map[string]any)
+	if first["start"] != "2026-05-28T10:30:00Z" || first["end"] != "2026-05-28T11:00:00Z" {
+		t.Fatalf("expected paged organizer event to block 10:00 slot, got %#v", first)
+	}
+}
+
 func TestTransportCalendarFindTimeFailsOnAttendeeScheduleError(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
 		switch {

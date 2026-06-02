@@ -748,7 +748,8 @@ type itemBody struct {
 }
 
 type eventList struct {
-	Value []calendarEvent `json:"value"`
+	NextLink string          `json:"@odata.nextLink"`
+	Value    []calendarEvent `json:"value"`
 }
 
 type peopleList struct {
@@ -847,6 +848,7 @@ const messageBodySelect = "id,body"
 const draftSendReviewSelect = "id,subject,body,toRecipients,ccRecipients,bccRecipients,hasAttachments"
 const eventMetadataSelect = "id,subject,showAs,start,end,location,organizer,attendees,responseStatus"
 const maxReviewAttachmentPages = 10
+const maxCalendarViewPages = 10
 
 func (client *Transport) getMailFolder(ctx context.Context, mailbox string, folderID string) (mailFolder, error) {
 	requestURL, err := client.mailFolderURL(mailbox, folderID)
@@ -1313,18 +1315,24 @@ func (client *Transport) listCalendarEvents(ctx context.Context, mailbox string,
 	if err != nil {
 		return nil, err
 	}
-	var response eventList
-	if err := client.getJSON(ctx, requestURL, &response); err != nil {
-		return nil, err
+	events := []any{}
+	for page := 0; page < maxCalendarViewPages; page++ {
+		var response eventList
+		if err := client.getJSON(ctx, requestURL, &response); err != nil {
+			return nil, err
+		}
+		for _, item := range response.Value {
+			events = append(events, normalizeGraphEvent(item))
+		}
+		if strings.TrimSpace(response.NextLink) == "" {
+			return events, nil
+		}
+		requestURL, err = client.validCalendarViewNextLink(response.NextLink)
+		if err != nil {
+			return nil, err
+		}
 	}
-	events := make([]any, 0, len(response.Value))
-	for _, item := range response.Value {
-		events = append(events, normalizeGraphEvent(item))
-	}
-	if events == nil {
-		return []any{}, nil
-	}
-	return events, nil
+	return nil, fmt.Errorf("calendar.list has more than %d pages", maxCalendarViewPages)
 }
 
 func (client *Transport) findMeetingTime(ctx context.Context, mailbox string, payload map[string]any) ([]any, error) {
@@ -1841,6 +1849,10 @@ func (client *Transport) validAttachmentsNextLink(nextLink string) (string, erro
 	return client.validGraphNextLink(nextLink, isAllowedAttachmentsNextPath, "attachment next_link")
 }
 
+func (client *Transport) validCalendarViewNextLink(nextLink string) (string, error) {
+	return client.validGraphNextLink(nextLink, isAllowedCalendarViewNextPath, "calendarView next_link")
+}
+
 func (client *Transport) validGraphNextLink(nextLink string, allowedPath func(string) bool, label string) (string, error) {
 	raw := strings.TrimSpace(nextLink)
 	if raw == "" {
@@ -1880,6 +1892,16 @@ func isAllowedAttachmentsNextPath(relativePath string) bool {
 		return true
 	}
 	if strings.HasPrefix(relativePath, "/users/") && strings.Contains(relativePath, "/messages/") && strings.Contains(relativePath, "/attachments") {
+		return true
+	}
+	return false
+}
+
+func isAllowedCalendarViewNextPath(relativePath string) bool {
+	if strings.HasPrefix(relativePath, "/me/calendarView") {
+		return true
+	}
+	if strings.HasPrefix(relativePath, "/users/") && strings.Contains(relativePath, "/calendarView") {
 		return true
 	}
 	return false
