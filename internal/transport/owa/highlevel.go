@@ -870,10 +870,7 @@ func normalizeMailItems(items []any) []any {
 
 func normalizePeople(payload map[string]any) []any {
 	body, _ := payload["Body"].(map[string]any)
-	people := anySlice(body["People"])
-	if len(people) == 0 {
-		people = anySlice(body["Personas"])
-	}
+	people := peopleResponseItems(body)
 	output := make([]any, 0, len(people))
 	for _, person := range people {
 		personMap, ok := person.(map[string]any)
@@ -881,14 +878,10 @@ func normalizePeople(payload map[string]any) []any {
 			continue
 		}
 		personaID := itemID(personMap)
-		email := stringValue(personMap, "EmailAddress")
-		if email == "" {
-			email = stringValue(personMap, "Email")
-		}
 		output = append(output, map[string]any{
 			"id":           personaID["id"],
-			"display_name": stringValue(personMap, "DisplayName"),
-			"email":        email,
+			"display_name": personDisplayName(personMap),
+			"email":        personEmail(personMap),
 			"source":       "owa",
 		})
 	}
@@ -896,6 +889,52 @@ func normalizePeople(payload map[string]any) []any {
 		return []any{}
 	}
 	return output
+}
+
+func peopleResponseItems(body map[string]any) []any {
+	for _, key := range []string{"People", "Personas", "ResultSet"} {
+		items := anySlice(body[key])
+		if len(items) > 0 {
+			return items
+		}
+	}
+	return []any{}
+}
+
+func personDisplayName(person map[string]any) string {
+	for _, key := range []string{"DisplayName", "DisplayNameFirstLast", "DisplayNameLastFirst", "FileAs"} {
+		if value := strings.TrimSpace(stringValue(person, key)); value != "" {
+			return value
+		}
+	}
+	if emailAddress, ok := person["EmailAddress"].(map[string]any); ok {
+		return strings.TrimSpace(stringValue(emailAddress, "Name"))
+	}
+	return ""
+}
+
+func personEmail(person map[string]any) string {
+	if value := strings.TrimSpace(stringValue(person, "EmailAddress")); value != "" {
+		return value
+	}
+	if emailAddress, ok := person["EmailAddress"].(map[string]any); ok {
+		if value := strings.TrimSpace(stringValue(emailAddress, "EmailAddress")); value != "" {
+			return value
+		}
+	}
+	if value := strings.TrimSpace(stringValue(person, "Email")); value != "" {
+		return value
+	}
+	for _, entry := range anySlice(person["EmailAddresses"]) {
+		entryMap, ok := entry.(map[string]any)
+		if !ok {
+			continue
+		}
+		if value := strings.TrimSpace(stringValue(entryMap, "EmailAddress")); value != "" {
+			return value
+		}
+	}
+	return ""
 }
 
 func normalizeAttachmentMetadata(items []any) []any {

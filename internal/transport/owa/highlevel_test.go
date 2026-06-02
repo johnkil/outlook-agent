@@ -510,6 +510,68 @@ func TestHighLevelPeopleSearchCallsFindPeople(t *testing.T) {
 	}
 }
 
+func TestHighLevelPeopleSearchNormalizesLiveResultSetShape(t *testing.T) {
+	var calls []recordedServiceCall
+	server := newOWAServiceServer(t, &calls, map[string]any{
+		"Body": map[string]any{
+			"ResultSet": []any{
+				map[string]any{
+					"PersonaId":            map[string]any{"Id": "persona-live-1"},
+					"DisplayName":          "Тестовый Кириллический Коллега",
+					"DisplayNameFirstLast": "Тестовый Кириллический Коллега",
+					"GivenName":            "Тестовый",
+					"Surname":              "Коллега",
+					"EmailAddress": map[string]any{
+						"Name":         "Тестовый Кириллический Коллега",
+						"EmailAddress": "teammate@example.com",
+						"RoutingType":  "SMTP",
+						"MailboxType":  "Mailbox",
+					},
+					"EmailAddresses": []any{
+						map[string]any{
+							"Name":         "Тестовый Кириллический Коллега",
+							"EmailAddress": "teammate@example.com",
+							"RoutingType":  "SMTP",
+							"MailboxType":  "Mailbox",
+						},
+					},
+				},
+			},
+		},
+	})
+	defer server.Close()
+	client := newTestTransport(server)
+
+	response := client.Execute(context.Background(), transport.ActionRequest{
+		Name:    "people.search",
+		Payload: map[string]any{"query": "Тестовый Кириллический Коллега"},
+	})
+
+	if !response.OK {
+		t.Fatalf("expected people.search ok: %#v", response)
+	}
+	people := response.Data["people"].([]any)
+	if len(people) != 1 {
+		t.Fatalf("expected one normalized person, got %#v", people)
+	}
+	person := people[0].(map[string]any)
+	if person["id"] != "persona-live-1" {
+		t.Fatalf("expected persona id, got %#v", person)
+	}
+	if person["display_name"] != "Тестовый Кириллический Коллега" {
+		t.Fatalf("expected display name, got %#v", person)
+	}
+	if person["email"] != "teammate@example.com" {
+		t.Fatalf("expected nested email address, got %#v", person)
+	}
+	if person["source"] != "owa" {
+		t.Fatalf("expected owa source, got %#v", person)
+	}
+	if len(calls) != 1 || calls[0].Action != "FindPeople" {
+		t.Fatalf("expected one FindPeople call, got %#v", calls)
+	}
+}
+
 func TestHighLevelPeopleResolveAmbiguousDoesNotGuess(t *testing.T) {
 	var calls []recordedServiceCall
 	server := newOWAServiceServer(t, &calls, map[string]any{
