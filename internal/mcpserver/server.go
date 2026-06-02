@@ -260,6 +260,21 @@ type MailboxSettingsGetOutput struct {
 	Settings any `json:"settings"`
 }
 
+type PeopleInput struct {
+	Query   string `json:"query" jsonschema:"person name or email search query"`
+	Mailbox string `json:"mailbox,omitempty" jsonschema:"optional mailbox user id or user principal name"`
+}
+
+type PeopleSearchOutput struct {
+	People []any `json:"people"`
+}
+
+type PeopleResolveOutput struct {
+	Person     any    `json:"person,omitempty"`
+	Candidates []any  `json:"candidates,omitempty"`
+	Error      string `json:"error,omitempty"`
+}
+
 type ActionResultOutput struct {
 	OK                 bool           `json:"ok"`
 	Data               map[string]any `json:"data,omitempty"`
@@ -292,6 +307,20 @@ type CalendarListOutput struct {
 
 type CalendarAvailabilityOutput struct {
 	Windows []any `json:"windows"`
+}
+
+type CalendarFindTimeInput struct {
+	Start           string   `json:"start" jsonschema:"inclusive search window start timestamp"`
+	End             string   `json:"end" jsonschema:"exclusive search window end timestamp"`
+	Attendees       []string `json:"attendees" jsonschema:"attendee email addresses"`
+	DurationMinutes *float64 `json:"duration_minutes,omitempty" jsonschema:"meeting duration in minutes"`
+	TimeZone        string   `json:"timezone,omitempty" jsonschema:"display and interpretation timezone"`
+	Tentative       string   `json:"tentative,omitempty" jsonschema:"whether tentative blocks time: busy or free"`
+	Mailbox         string   `json:"mailbox,omitempty" jsonschema:"optional mailbox user id or user principal name"`
+}
+
+type CalendarFindTimeOutput struct {
+	Suggestions []any `json:"suggestions"`
 }
 
 type DryRunInput struct {
@@ -449,11 +478,20 @@ var toolRegistrations = []toolRegistration{
 	{name: "outlook.mailbox_settings_get", add: func(server *mcp.Server, runtime *Runtime, name string) {
 		mcp.AddTool(server, mcpTool(name), mailboxSettingsGetHandler(runtime.client))
 	}},
+	{name: "outlook.people_search", add: func(server *mcp.Server, runtime *Runtime, name string) {
+		mcp.AddTool(server, mcpTool(name), peopleSearchHandler(runtime.client))
+	}},
+	{name: "outlook.people_resolve", add: func(server *mcp.Server, runtime *Runtime, name string) {
+		mcp.AddTool(server, mcpTool(name), peopleResolveHandler(runtime.client))
+	}},
 	{name: "outlook.calendar_list", add: func(server *mcp.Server, runtime *Runtime, name string) {
 		mcp.AddTool(server, mcpTool(name), calendarListHandler(runtime.client))
 	}},
 	{name: "outlook.calendar_availability", add: func(server *mcp.Server, runtime *Runtime, name string) {
 		mcp.AddTool(server, mcpTool(name), calendarAvailabilityHandler(runtime.client))
+	}},
+	{name: "outlook.calendar_find_time", add: func(server *mcp.Server, runtime *Runtime, name string) {
+		mcp.AddTool(server, mcpTool(name), calendarFindTimeHandler(runtime.client))
 	}},
 	{name: "outlook.calendar_respond", add: func(server *mcp.Server, runtime *Runtime, name string) {
 		mcp.AddTool(server, mcpTool(name), calendarRespondHandler(runtime))
@@ -494,8 +532,11 @@ var toolDescriptionByName = map[string]string{
 	"outlook.mail_rules_list":             "List read-only mailbox rule metadata before any rule change.",
 	"outlook.mail_rule_set_enabled":       "Enable or disable one settings/rules item only with a dry-run confirmation token.",
 	"outlook.mailbox_settings_get":        "Get read-only mailbox settings metadata.",
+	"outlook.people_search":               "Search people metadata with a bounded query before addressing mail or meetings.",
+	"outlook.people_resolve":              "Resolve one person from a name or email; ambiguous matches are returned as an error and the tool does not guess.",
 	"outlook.calendar_list":               "List calendar events for a bounded time window.",
 	"outlook.calendar_availability":       "List free/busy availability for a bounded time window.",
+	"outlook.calendar_find_time":          "Find mutual free time suggestions for attendees; planning-only and does not create or send meetings.",
 	"outlook.calendar_respond":            "Respond to one exact event only after dry-run review, confirmation, and required approval.",
 	"outlook.action_dry_run":              "Required summary step for broad, mutating, send-like, destructive, or unknown actions.",
 	"outlook.action_confirm":              "Execute only the exact payload reviewed by outlook.action_dry_run.",
@@ -1162,6 +1203,42 @@ func mailboxSettingsGetHandler(client transport.Transport) func(context.Context,
 	}
 }
 
+func peopleSearchHandler(client transport.Transport) func(context.Context, *mcp.CallToolRequest, PeopleInput) (*mcp.CallToolResult, PeopleSearchOutput, error) {
+	return func(ctx context.Context, _ *mcp.CallToolRequest, input PeopleInput) (*mcp.CallToolResult, PeopleSearchOutput, error) {
+		response := client.Execute(ctx, transport.ActionRequest{
+			Name:    "people.search",
+			Payload: withMailbox(map[string]any{"query": input.Query}, input.Mailbox),
+		})
+		if err := transportResponseError(response); err != nil {
+			return nil, PeopleSearchOutput{}, err
+		}
+		redacted := redact.Value(response.Data).(map[string]any)
+		people, _ := redacted["people"].([]any)
+		return nil, PeopleSearchOutput{People: people}, nil
+	}
+}
+
+func peopleResolveHandler(client transport.Transport) func(context.Context, *mcp.CallToolRequest, PeopleInput) (*mcp.CallToolResult, PeopleResolveOutput, error) {
+	return func(ctx context.Context, _ *mcp.CallToolRequest, input PeopleInput) (*mcp.CallToolResult, PeopleResolveOutput, error) {
+		response := client.Execute(ctx, transport.ActionRequest{
+			Name:    "people.resolve",
+			Payload: withMailbox(map[string]any{"query": input.Query}, input.Mailbox),
+		})
+		if !response.OK && response.Data != nil {
+			redacted := redact.Value(response.Data).(map[string]any)
+			candidates, _ := redacted["candidates"].([]any)
+			if len(candidates) > 0 {
+				return nil, PeopleResolveOutput{Candidates: candidates, Error: redact.String(response.Error)}, nil
+			}
+		}
+		if err := transportResponseError(response); err != nil {
+			return nil, PeopleResolveOutput{}, err
+		}
+		redacted := redact.Value(response.Data).(map[string]any)
+		return nil, PeopleResolveOutput{Person: redacted["person"]}, nil
+	}
+}
+
 func calendarListHandler(client transport.Transport) func(context.Context, *mcp.CallToolRequest, CalendarWindowInput) (*mcp.CallToolResult, CalendarListOutput, error) {
 	return func(ctx context.Context, _ *mcp.CallToolRequest, input CalendarWindowInput) (*mcp.CallToolResult, CalendarListOutput, error) {
 		response := client.Execute(ctx, transport.ActionRequest{Name: "calendar.list", Payload: withMailbox(map[string]any{"start": input.Start, "end": input.End}, input.Mailbox)})
@@ -1186,6 +1263,33 @@ func calendarAvailabilityHandler(client transport.Transport) func(context.Contex
 		}
 		windows, _ := response.Data["windows"].([]any)
 		return nil, CalendarAvailabilityOutput{Windows: windows}, nil
+	}
+}
+
+func calendarFindTimeHandler(client transport.Transport) func(context.Context, *mcp.CallToolRequest, CalendarFindTimeInput) (*mcp.CallToolResult, CalendarFindTimeOutput, error) {
+	return func(ctx context.Context, _ *mcp.CallToolRequest, input CalendarFindTimeInput) (*mcp.CallToolResult, CalendarFindTimeOutput, error) {
+		payload := map[string]any{
+			"start":     input.Start,
+			"end":       input.End,
+			"attendees": input.Attendees,
+		}
+		if input.DurationMinutes != nil {
+			payload["duration_minutes"] = *input.DurationMinutes
+		}
+		if strings.TrimSpace(input.TimeZone) != "" {
+			payload["time_zone"] = input.TimeZone
+		}
+		if strings.TrimSpace(input.Tentative) != "" {
+			payload["tentative"] = input.Tentative
+		}
+		payload = withMailbox(payload, input.Mailbox)
+		response := client.Execute(ctx, transport.ActionRequest{Name: "calendar.find_time", Payload: payload})
+		if err := transportResponseError(response); err != nil {
+			return nil, CalendarFindTimeOutput{}, err
+		}
+		redacted := redact.Value(response.Data).(map[string]any)
+		suggestions, _ := redacted["suggestions"].([]any)
+		return nil, CalendarFindTimeOutput{Suggestions: suggestions}, nil
 	}
 }
 

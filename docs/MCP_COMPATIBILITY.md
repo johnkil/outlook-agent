@@ -35,8 +35,11 @@ Compatibility version `0.1` includes these tool names:
 - `outlook.mail_rules_list`
 - `outlook.mail_rule_set_enabled`
 - `outlook.mailbox_settings_get`
+- `outlook.people_search`
+- `outlook.people_resolve`
 - `outlook.calendar_list`
 - `outlook.calendar_availability`
+- `outlook.calendar_find_time`
 - `outlook.calendar_respond`
 - `outlook.action_dry_run`
 - `outlook.action_confirm`

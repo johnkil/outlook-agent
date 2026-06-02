@@ -2,7 +2,9 @@ package fake_test
 
 import (
 	"context"
+	"fmt"
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/johnkil/outlook-agent/internal/transport"
@@ -90,8 +92,11 @@ func TestFakeTransportExecutesInitialHighLevelActions(t *testing.T) {
 		{name: "mail.categorize", key: "updated_count"},
 		{name: "mail.mark_read", key: "updated_count"},
 		{name: "mail.move_to_deleted_items", key: "moved_count"},
+		{name: "people.search", key: "people"},
+		{name: "people.resolve", key: "person"},
 		{name: "calendar.list", key: "events"},
 		{name: "calendar.availability", key: "windows"},
+		{name: "calendar.find_time", key: "suggestions"},
 		{name: "calendar.respond", key: "response"},
 	}
 
@@ -104,6 +109,9 @@ func TestFakeTransportExecutesInitialHighLevelActions(t *testing.T) {
 					"ids":           []any{"msg-1"},
 					"attachment_id": "att-1",
 					"subject":       "Draft",
+					"attendees":     []any{"vlad.cheshenko@example.com"},
+					"start":         "2026-05-28T09:00:00+00:00",
+					"end":           "2026-05-28T12:00:00+00:00",
 				},
 			})
 			if !response.OK {
@@ -113,6 +121,80 @@ func TestFakeTransportExecutesInitialHighLevelActions(t *testing.T) {
 				t.Fatalf("expected response key %q in %#v", tt.key, response.Data)
 			}
 		})
+	}
+}
+
+func TestFakeTransportSearchesPeopleByQuery(t *testing.T) {
+	client := fake.New()
+
+	response := client.Execute(context.Background(), transport.ActionRequest{
+		Name:    "people.search",
+		Payload: map[string]any{"query": "vlad"},
+	})
+
+	if !response.OK {
+		t.Fatalf("expected people.search to succeed: %#v", response)
+	}
+	people := response.Data["people"].([]any)
+	if len(people) != 1 {
+		t.Fatalf("expected one fake person match, got %#v", people)
+	}
+	person := people[0].(map[string]any)
+	if person["email"] != "vlad.cheshenko@example.com" || person["display_name"] != "Vlad Cheshenko" {
+		t.Fatalf("unexpected fake person: %#v", person)
+	}
+}
+
+func TestFakeTransportResolvePeopleDoesNotGuessAmbiguousNames(t *testing.T) {
+	client := fake.New()
+
+	response := client.Execute(context.Background(), transport.ActionRequest{
+		Name:    "people.resolve",
+		Payload: map[string]any{"query": "alex"},
+	})
+
+	if response.OK {
+		t.Fatalf("expected ambiguous people.resolve to fail without guessing: %#v", response)
+	}
+	if response.Data == nil {
+		t.Fatalf("expected ambiguous candidates in response data, got %#v", response)
+	}
+	candidates, ok := response.Data["candidates"].([]any)
+	if !ok {
+		t.Fatalf("expected ambiguous candidates, got %#v", response.Data)
+	}
+	if len(candidates) < 2 {
+		t.Fatalf("expected ambiguous candidates, got %#v", candidates)
+	}
+}
+
+func TestFakeTransportFindsMeetingTimeWithoutSubjectLeakage(t *testing.T) {
+	client := fake.New()
+
+	response := client.Execute(context.Background(), transport.ActionRequest{
+		Name: "calendar.find_time",
+		Payload: map[string]any{
+			"attendees":        []any{"vlad.cheshenko@example.com"},
+			"start":            "2026-05-28T09:00:00+00:00",
+			"end":              "2026-05-28T12:00:00+00:00",
+			"duration_minutes": float64(30),
+			"tentative":        "busy",
+		},
+	})
+
+	if !response.OK {
+		t.Fatalf("expected calendar.find_time to succeed: %#v", response)
+	}
+	suggestions := response.Data["suggestions"].([]any)
+	if len(suggestions) == 0 {
+		t.Fatalf("expected at least one suggestion, got %#v", response.Data)
+	}
+	first := suggestions[0].(map[string]any)
+	if first["start"] != "2026-05-28T10:00:00Z" || first["end"] != "2026-05-28T10:30:00Z" {
+		t.Fatalf("unexpected first suggestion: %#v", first)
+	}
+	if strings.Contains(fmt.Sprintf("%#v", response.Data), "Subject") || strings.Contains(fmt.Sprintf("%#v", response.Data), "Focus") {
+		t.Fatalf("calendar.find_time must not expose calendar subjects: %#v", response.Data)
 	}
 }
 

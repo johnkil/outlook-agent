@@ -3,8 +3,11 @@ package fake
 import (
 	"context"
 	"fmt"
+	"strings"
+	"time"
 
 	"github.com/johnkil/outlook-agent/internal/action"
+	"github.com/johnkil/outlook-agent/internal/calendarplan"
 	"github.com/johnkil/outlook-agent/internal/policy"
 	"github.com/johnkil/outlook-agent/internal/transport"
 )
@@ -35,8 +38,11 @@ func New() *Transport {
 			{Name: "mail.rules.list", Transport: "fake", Class: policy.ReadMetadata, Level: action.LevelHighLevelMCPTool},
 			{Name: "mail.rules.set_enabled", Transport: "fake", Class: policy.SettingsOrRules, Level: action.LevelHighLevelMCPTool},
 			{Name: "mailbox.settings.get", Transport: "fake", Class: policy.ReadMetadata, Level: action.LevelHighLevelMCPTool},
+			{Name: "people.search", Transport: "fake", Class: policy.ReadMetadata, Level: action.LevelHighLevelMCPTool},
+			{Name: "people.resolve", Transport: "fake", Class: policy.ReadMetadata, Level: action.LevelHighLevelMCPTool},
 			{Name: "calendar.list", Transport: "fake", Class: policy.ReadMetadata, Level: action.LevelHighLevelMCPTool},
 			{Name: "calendar.availability", Transport: "fake", Class: policy.ReadMetadata, Level: action.LevelHighLevelMCPTool},
+			{Name: "calendar.find_time", Transport: "fake", Class: policy.ReadMetadata, Level: action.LevelHighLevelMCPTool},
 			{Name: "calendar.respond", Transport: "fake", Class: policy.SendLike, Level: action.LevelHighLevelMCPTool},
 		},
 	}
@@ -226,6 +232,17 @@ func (client *Transport) Execute(_ context.Context, request transport.ActionRequ
 				"settings": settings,
 			},
 		}
+	case "people.search":
+		return transport.ActionResponse{OK: true, Data: map[string]any{"people": fakePeopleSearch(stringValue(request.Payload, "query", ""))}}
+	case "people.resolve":
+		people := fakePeopleSearch(stringValue(request.Payload, "query", "vlad"))
+		if len(people) == 1 {
+			return transport.ActionResponse{OK: true, Data: map[string]any{"person": people[0]}}
+		}
+		if len(people) == 0 {
+			return transport.ActionResponse{OK: false, Error: "people.resolve found no matches", Data: map[string]any{"candidates": []any{}}}
+		}
+		return transport.ActionResponse{OK: false, Error: "people.resolve is ambiguous", Data: map[string]any{"candidates": people}}
 	case "calendar.list":
 		return transport.ActionResponse{
 			OK: true,
@@ -244,6 +261,12 @@ func (client *Transport) Execute(_ context.Context, request transport.ActionRequ
 				},
 			},
 		}
+	case "calendar.find_time":
+		suggestions, err := fakeMeetingSuggestions(request.Payload)
+		if err != nil {
+			return transport.ActionResponse{OK: false, Error: err.Error()}
+		}
+		return transport.ActionResponse{OK: true, Data: map[string]any{"suggestions": suggestions}}
 	case "calendar.respond":
 		return transport.ActionResponse{
 			OK: true,
@@ -260,6 +283,85 @@ func (client *Transport) Execute(_ context.Context, request transport.ActionRequ
 			OK:    false,
 			Error: "fake transport action is not implemented",
 		}
+	}
+}
+
+func fakePeopleSearch(query string) []any {
+	query = strings.ToLower(strings.TrimSpace(query))
+	people := []map[string]any{
+		{"display_name": "Vlad Cheshenko", "email": "vlad.cheshenko@example.com", "source": "fake"},
+		{"display_name": "Alex Morgan", "email": "alex.morgan@example.com", "source": "fake"},
+		{"display_name": "Alex Rivera", "email": "alex.rivera@example.com", "source": "fake"},
+	}
+	matches := make([]any, 0, len(people))
+	for _, person := range people {
+		name := strings.ToLower(stringValue(person, "display_name", ""))
+		email := strings.ToLower(stringValue(person, "email", ""))
+		if query == "" || strings.Contains(name, query) || strings.Contains(email, query) {
+			matches = append(matches, person)
+		}
+	}
+	return matches
+}
+
+func fakeMeetingSuggestions(payload map[string]any) ([]any, error) {
+	start, err := parseTimePayload(payload, "start")
+	if err != nil {
+		return nil, err
+	}
+	end, err := parseTimePayload(payload, "end")
+	if err != nil {
+		return nil, err
+	}
+	duration := calendarplan.DurationFromMinutes(floatValue(payload, "duration_minutes", 30))
+	busy := []calendarplan.Interval{
+		{Start: start, End: start.Add(time.Hour), Status: "busy"},
+		{Start: start.Add(90 * time.Minute), End: start.Add(2 * time.Hour), Status: "tentative"},
+	}
+	attendees := stringSlice(payload["attendees"])
+	slots := calendarplan.FindSuggestions(start, end, busy, calendarplan.Options{
+		Duration:        duration,
+		Step:            30 * time.Minute,
+		MaxSuggestions:  5,
+		TentativePolicy: stringValue(payload, "tentative", calendarplan.TentativeBusy),
+	})
+	suggestions := make([]any, 0, len(slots))
+	for _, slot := range slots {
+		suggestion := map[string]any{
+			"start":            slot.Start.UTC().Format(time.RFC3339),
+			"end":              slot.End.UTC().Format(time.RFC3339),
+			"duration_minutes": int(duration / time.Minute),
+			"attendees":        attendees,
+			"source":           "availability_intersection",
+		}
+		suggestions = append(suggestions, suggestion)
+	}
+	return suggestions, nil
+}
+
+func parseTimePayload(payload map[string]any, key string) (time.Time, error) {
+	value := strings.TrimSpace(stringValue(payload, key, ""))
+	if value == "" {
+		return time.Time{}, fmt.Errorf("calendar.find_time requires %s", key)
+	}
+	parsed, err := time.Parse(time.RFC3339, value)
+	if err != nil {
+		return time.Time{}, fmt.Errorf("calendar.find_time requires RFC3339 %s", key)
+	}
+	return parsed, nil
+}
+
+func floatValue(payload map[string]any, key string, fallback float64) float64 {
+	if payload == nil {
+		return fallback
+	}
+	switch value := payload[key].(type) {
+	case float64:
+		return value
+	case int:
+		return float64(value)
+	default:
+		return fallback
 	}
 }
 

@@ -19,17 +19,21 @@ phrases such as "tomorrow" into explicit date ranges before calling tools.
 1. Resolve timezone and calendar scope.
 2. Call `outlook.capabilities` before raw, gated, or unfamiliar calendar
    actions.
-3. Use `outlook.calendar_list` for bounded time windows.
-4. Use `outlook.calendar_availability` for free/busy questions.
-5. Surface conflicts before suggesting changes.
-6. Respond to one exact event with `outlook.calendar_respond` only after
+3. Use `outlook.people_search` and `outlook.people_resolve` for attendee names
+   or emails before planning with a person.
+4. Use `outlook.calendar_list` for bounded time windows.
+5. Use `outlook.calendar_availability` for single-person free/busy questions.
+6. Use `outlook.calendar_find_time` for mutual free-time planning. Treat it as
+   planning-only: it does not create or send meetings.
+7. Surface conflicts before suggesting changes.
+8. Respond to one exact event with `outlook.calendar_respond` only after
    `outlook.action_dry_run`, exact confirmation, and required host approval.
    When dry-run returns an `approval_challenge`, the host must provide
    `approval_challenge_id` and `approval_token`; never ask the user for the
    approval secret.
-7. Use `outlook.raw_action` only for a capability-discovered transport action
+9. Use `outlook.raw_action` only for a capability-discovered transport action
    that does not have a high-level tool.
-8. Create, reschedule, or cancel only after exact confirmation.
+10. Create, reschedule, or cancel only after exact confirmation.
 
 ## Safety
 

@@ -14,6 +14,8 @@ import (
 	"time"
 
 	"github.com/johnkil/outlook-agent/internal/action"
+	"github.com/johnkil/outlook-agent/internal/calendarplan"
+	"github.com/johnkil/outlook-agent/internal/mstimezone"
 	"github.com/johnkil/outlook-agent/internal/policy"
 	"github.com/johnkil/outlook-agent/internal/secret"
 	"github.com/johnkil/outlook-agent/internal/transport"
@@ -69,8 +71,11 @@ func (client *Transport) Capabilities(context.Context) transport.CapabilitySet {
 		{Name: "mail.rules.list", Transport: "graph", Class: policy.ReadMetadata, Level: action.LevelHighLevelMCPTool},
 		{Name: "mail.rules.set_enabled", Transport: "graph", Class: policy.SettingsOrRules, Level: action.LevelHighLevelMCPTool},
 		{Name: "mailbox.settings.get", Transport: "graph", Class: policy.ReadMetadata, Level: action.LevelHighLevelMCPTool},
+		{Name: "people.search", Transport: "graph", Class: policy.ReadMetadata, Level: action.LevelHighLevelMCPTool},
+		{Name: "people.resolve", Transport: "graph", Class: policy.ReadMetadata, Level: action.LevelHighLevelMCPTool},
 		{Name: "calendar.list", Transport: "graph", Class: policy.ReadMetadata, Level: action.LevelHighLevelMCPTool},
 		{Name: "calendar.availability", Transport: "graph", Class: policy.ReadMetadata, Level: action.LevelHighLevelMCPTool},
+		{Name: "calendar.find_time", Transport: "graph", Class: policy.ReadMetadata, Level: action.LevelHighLevelMCPTool},
 		{Name: "calendar.respond", Transport: "graph", Class: policy.SendLike, Level: action.LevelHighLevelMCPTool},
 	}}
 }
@@ -297,6 +302,24 @@ func (client *Transport) Execute(ctx context.Context, request transport.ActionRe
 			return transport.ActionResponse{OK: false, Error: err.Error()}
 		}
 		return transport.ActionResponse{OK: true, Data: map[string]any{"settings": settings}}
+	case "people.search":
+		people, err := client.searchPeople(ctx, mailbox, stringValue(request.Payload, "query", ""))
+		if err != nil {
+			return transport.ActionResponse{OK: false, Error: err.Error()}
+		}
+		return transport.ActionResponse{OK: true, Data: map[string]any{"people": people}}
+	case "people.resolve":
+		people, err := client.searchPeople(ctx, mailbox, stringValue(request.Payload, "query", ""))
+		if err != nil {
+			return transport.ActionResponse{OK: false, Error: err.Error()}
+		}
+		if len(people) == 1 {
+			return transport.ActionResponse{OK: true, Data: map[string]any{"person": people[0]}}
+		}
+		if len(people) == 0 {
+			return transport.ActionResponse{OK: false, Error: "people.resolve found no matches", Data: map[string]any{"candidates": []any{}}}
+		}
+		return transport.ActionResponse{OK: false, Error: "people.resolve is ambiguous", Data: map[string]any{"candidates": people}}
 	case "calendar.list":
 		events, err := client.listCalendarEvents(ctx, mailbox, stringValue(request.Payload, "start", ""), stringValue(request.Payload, "end", ""))
 		if err != nil {
@@ -309,6 +332,12 @@ func (client *Transport) Execute(ctx context.Context, request transport.ActionRe
 			return transport.ActionResponse{OK: false, Error: err.Error()}
 		}
 		return transport.ActionResponse{OK: true, Data: map[string]any{"windows": windows}}
+	case "calendar.find_time":
+		suggestions, err := client.findMeetingTime(ctx, mailbox, request.Payload)
+		if err != nil {
+			return transport.ActionResponse{OK: false, Error: err.Error()}
+		}
+		return transport.ActionResponse{OK: true, Data: map[string]any{"suggestions": suggestions}}
 	case "calendar.respond":
 		result, err := client.respondCalendarEvent(ctx, mailbox, request.Payload)
 		if err != nil {
@@ -720,12 +749,35 @@ type itemBody struct {
 }
 
 type eventList struct {
-	Value []calendarEvent `json:"value"`
+	NextLink string          `json:"@odata.nextLink"`
+	Value    []calendarEvent `json:"value"`
+}
+
+type peopleList struct {
+	Value []person `json:"value"`
+}
+
+type person struct {
+	ID                   string               `json:"id"`
+	DisplayName          string               `json:"displayName"`
+	UserPrincipalName    string               `json:"userPrincipalName"`
+	Mail                 string               `json:"mail"`
+	ScoredEmailAddresses []scoredEmailAddress `json:"scoredEmailAddresses"`
+	EmailAddresses       []personEmailAddress `json:"emailAddresses"`
+}
+
+type scoredEmailAddress struct {
+	Address string `json:"address"`
+}
+
+type personEmailAddress struct {
+	Address string `json:"address"`
 }
 
 type calendarEvent struct {
 	ID             string           `json:"id"`
 	Subject        string           `json:"subject"`
+	ShowAs         string           `json:"showAs"`
 	Start          dateTimeTimeZone `json:"start"`
 	End            dateTimeTimeZone `json:"end"`
 	Location       eventLocation    `json:"location"`
@@ -754,6 +806,12 @@ type getScheduleResponse struct {
 type scheduleInformation struct {
 	ScheduleID    string         `json:"scheduleId"`
 	ScheduleItems []scheduleItem `json:"scheduleItems"`
+	Error         scheduleError  `json:"error"`
+}
+
+type scheduleError struct {
+	ResponseCode string `json:"responseCode"`
+	Message      string `json:"message"`
 }
 
 type scheduleItem struct {
@@ -789,8 +847,9 @@ type tokenRefreshResponse struct {
 const messageMetadataSelect = "id,subject,from,receivedDateTime,importance,isRead,hasAttachments"
 const messageBodySelect = "id,body"
 const draftSendReviewSelect = "id,subject,body,toRecipients,ccRecipients,bccRecipients,hasAttachments"
-const eventMetadataSelect = "id,subject,start,end,location,organizer,attendees,responseStatus"
+const eventMetadataSelect = "id,subject,showAs,start,end,location,organizer,attendees,responseStatus"
 const maxReviewAttachmentPages = 10
+const maxCalendarViewPages = 10
 
 func (client *Transport) getMailFolder(ctx context.Context, mailbox string, folderID string) (mailFolder, error) {
 	requestURL, err := client.mailFolderURL(mailbox, folderID)
@@ -1226,6 +1285,29 @@ func (client *Transport) getMailboxSettings(ctx context.Context, mailbox string,
 	return settings, nil
 }
 
+func (client *Transport) searchPeople(ctx context.Context, mailbox string, query string) ([]any, error) {
+	query = strings.TrimSpace(query)
+	if query == "" {
+		return nil, fmt.Errorf("people.search requires query")
+	}
+	requestURL, err := client.peopleURL(mailbox, query)
+	if err != nil {
+		return nil, err
+	}
+	var response peopleList
+	if err := client.getJSON(ctx, requestURL, &response); err != nil {
+		return nil, err
+	}
+	people := make([]any, 0, len(response.Value))
+	for _, item := range response.Value {
+		people = append(people, normalizeGraphPerson(item))
+	}
+	if people == nil {
+		return []any{}, nil
+	}
+	return people, nil
+}
+
 func (client *Transport) listCalendarEvents(ctx context.Context, mailbox string, start string, end string) ([]any, error) {
 	if strings.TrimSpace(start) == "" || strings.TrimSpace(end) == "" {
 		return nil, fmt.Errorf("calendar.list requires start and end")
@@ -1234,18 +1316,91 @@ func (client *Transport) listCalendarEvents(ctx context.Context, mailbox string,
 	if err != nil {
 		return nil, err
 	}
-	var response eventList
-	if err := client.getJSON(ctx, requestURL, &response); err != nil {
+	events := []any{}
+	for page := 0; page < maxCalendarViewPages; page++ {
+		var response eventList
+		if err := client.getJSON(ctx, requestURL, &response); err != nil {
+			return nil, err
+		}
+		for _, item := range response.Value {
+			events = append(events, normalizeGraphEvent(item))
+		}
+		if strings.TrimSpace(response.NextLink) == "" {
+			return events, nil
+		}
+		requestURL, err = client.validCalendarViewNextLink(response.NextLink)
+		if err != nil {
+			return nil, err
+		}
+	}
+	return nil, fmt.Errorf("calendar.list has more than %d pages", maxCalendarViewPages)
+}
+
+func (client *Transport) findMeetingTime(ctx context.Context, mailbox string, payload map[string]any) ([]any, error) {
+	start := strings.TrimSpace(stringValue(payload, "start", ""))
+	end := strings.TrimSpace(stringValue(payload, "end", ""))
+	if start == "" || end == "" {
+		return nil, fmt.Errorf("calendar.find_time requires start and end")
+	}
+	attendees := stringSlice(payload["attendees"])
+	if len(attendees) == 0 {
+		return nil, fmt.Errorf("calendar.find_time requires attendees")
+	}
+	timeZone := stringValue(payload, "time_zone", "UTC")
+	windowStart, err := parseGraphTimeInZone(start, timeZone)
+	if err != nil {
+		return nil, fmt.Errorf("calendar.find_time requires parseable start")
+	}
+	windowEnd, err := parseGraphTimeInZone(end, timeZone)
+	if err != nil {
+		return nil, fmt.Errorf("calendar.find_time requires parseable end")
+	}
+	calendarViewStart := windowStart.UTC().Format(time.RFC3339)
+	calendarViewEnd := windowEnd.UTC().Format(time.RFC3339)
+	events, err := client.listCalendarEvents(ctx, mailbox, calendarViewStart, calendarViewEnd)
+	if err != nil {
 		return nil, err
 	}
-	events := make([]any, 0, len(response.Value))
-	for _, item := range response.Value {
-		events = append(events, normalizeGraphEvent(item))
+	busy, err := intervalsFromGraphEvents(events)
+	if err != nil {
+		return nil, err
 	}
-	if events == nil {
-		return []any{}, nil
+	for _, attendee := range attendees {
+		windows, err := client.getSchedule(ctx, map[string]any{
+			"mailbox":          mailbox,
+			"email":            attendee,
+			"start":            start,
+			"end":              end,
+			"time_zone":        timeZone,
+			"interval_minutes": intValue(payload, "interval_minutes", 30),
+		})
+		if err != nil {
+			return nil, err
+		}
+		attendeeBusy, err := intervalsFromGraphWindows(windows)
+		if err != nil {
+			return nil, err
+		}
+		busy = append(busy, attendeeBusy...)
 	}
-	return events, nil
+	duration := calendarplan.DurationFromMinutes(floatValue(payload, "duration_minutes", 30))
+	slots := calendarplan.FindSuggestions(windowStart, windowEnd, busy, calendarplan.Options{
+		Duration:        duration,
+		Step:            30 * time.Minute,
+		MaxSuggestions:  5,
+		TentativePolicy: stringValue(payload, "tentative", calendarplan.TentativeBusy),
+	})
+	suggestions := make([]any, 0, len(slots))
+	for _, slot := range slots {
+		suggestions = append(suggestions, map[string]any{
+			"start":            slot.Start.UTC().Format(time.RFC3339),
+			"end":              slot.End.UTC().Format(time.RFC3339),
+			"duration_minutes": int(duration / time.Minute),
+			"attendees":        attendees,
+			"source":           "availability_intersection",
+		})
+	}
+	return suggestions, nil
 }
 
 func (client *Transport) getSchedule(ctx context.Context, payload map[string]any) ([]any, error) {
@@ -1260,14 +1415,22 @@ func (client *Transport) getSchedule(ctx context.Context, payload map[string]any
 		return nil, fmt.Errorf("calendar.availability requires start and end")
 	}
 	timeZone := stringValue(payload, "time_zone", "UTC")
+	startDateTime, err := graphScheduleDateTime(start, timeZone)
+	if err != nil {
+		return nil, fmt.Errorf("calendar.availability requires parseable start")
+	}
+	endDateTime, err := graphScheduleDateTime(end, timeZone)
+	if err != nil {
+		return nil, fmt.Errorf("calendar.availability requires parseable end")
+	}
 	body := map[string]any{
 		"schedules": []string{email},
 		"startTime": map[string]any{
-			"dateTime": start,
+			"dateTime": startDateTime,
 			"timeZone": timeZone,
 		},
 		"endTime": map[string]any{
-			"dateTime": end,
+			"dateTime": endDateTime,
 			"timeZone": timeZone,
 		},
 		"availabilityViewInterval": intValue(payload, "interval_minutes", 30),
@@ -1282,8 +1445,19 @@ func (client *Transport) getSchedule(ctx context.Context, payload map[string]any
 	}
 	windows := make([]any, 0)
 	for _, schedule := range response.Value {
+		if schedule.Error.ResponseCode != "" || schedule.Error.Message != "" {
+			scheduleID := strings.TrimSpace(schedule.ScheduleID)
+			if scheduleID == "" {
+				scheduleID = email
+			}
+			detail := strings.TrimSpace(schedule.Error.ResponseCode)
+			if detail == "" {
+				detail = strings.TrimSpace(schedule.Error.Message)
+			}
+			return nil, fmt.Errorf("graph getSchedule failed for %s: %s", scheduleID, detail)
+		}
 		for _, item := range schedule.ScheduleItems {
-			windows = append(windows, normalizeGraphScheduleItem(schedule.ScheduleID, item))
+			windows = append(windows, normalizeGraphScheduleItem(schedule.ScheduleID, item, timeZone))
 		}
 	}
 	if windows == nil {
@@ -1676,6 +1850,10 @@ func (client *Transport) validAttachmentsNextLink(nextLink string) (string, erro
 	return client.validGraphNextLink(nextLink, isAllowedAttachmentsNextPath, "attachment next_link")
 }
 
+func (client *Transport) validCalendarViewNextLink(nextLink string) (string, error) {
+	return client.validGraphNextLink(nextLink, isAllowedCalendarViewNextPath, "calendarView next_link")
+}
+
 func (client *Transport) validGraphNextLink(nextLink string, allowedPath func(string) bool, label string) (string, error) {
 	raw := strings.TrimSpace(nextLink)
 	if raw == "" {
@@ -1715,6 +1893,16 @@ func isAllowedAttachmentsNextPath(relativePath string) bool {
 		return true
 	}
 	if strings.HasPrefix(relativePath, "/users/") && strings.Contains(relativePath, "/messages/") && strings.Contains(relativePath, "/attachments") {
+		return true
+	}
+	return false
+}
+
+func isAllowedCalendarViewNextPath(relativePath string) bool {
+	if strings.HasPrefix(relativePath, "/me/calendarView") {
+		return true
+	}
+	if strings.HasPrefix(relativePath, "/users/") && strings.Contains(relativePath, "/calendarView") {
 		return true
 	}
 	return false
@@ -1889,6 +2077,23 @@ func (client *Transport) calendarViewURL(mailbox string, start string, end strin
 	return base + graphOwnerPath(mailbox) + "/calendarView?" + values.Encode(), nil
 }
 
+func (client *Transport) peopleURL(mailbox string, query string) (string, error) {
+	base, err := client.config.normalizedBaseURL()
+	if err != nil {
+		return "", err
+	}
+	values := url.Values{}
+	if strings.TrimSpace(query) != "" {
+		values.Set("$search", query)
+	}
+	values.Set("$top", "10")
+	encoded := values.Encode()
+	if encoded == "" {
+		return base + graphOwnerPath(mailbox) + "/people", nil
+	}
+	return base + graphOwnerPath(mailbox) + "/people?" + encoded, nil
+}
+
 func (client *Transport) getScheduleURL(mailbox string) (string, error) {
 	base, err := client.config.normalizedBaseURL()
 	if err != nil {
@@ -1994,24 +2199,107 @@ func normalizeGraphAttachmentMetadata(item attachment) map[string]any {
 }
 
 func normalizeGraphEvent(item calendarEvent) map[string]any {
+	startTimeZone := graphDateTimeZone(item.Start.TimeZone, "UTC")
+	endTimeZone := graphDateTimeZone(item.End.TimeZone, "UTC")
 	return map[string]any{
-		"id":       item.ID,
-		"title":    item.Subject,
-		"start":    item.Start.DateTime,
-		"end":      item.End.DateTime,
-		"location": item.Location.DisplayName,
+		"id":              item.ID,
+		"title":           item.Subject,
+		"free_busy_type":  graphEventAvailabilityStatus(item.ShowAs),
+		"start":           item.Start.DateTime,
+		"start_time_zone": startTimeZone,
+		"end":             item.End.DateTime,
+		"end_time_zone":   endTimeZone,
+		"location":        item.Location.DisplayName,
 	}
 }
 
-func normalizeGraphScheduleItem(scheduleID string, item scheduleItem) map[string]any {
-	return map[string]any{
-		"schedule_id":    scheduleID,
-		"start":          item.Start.DateTime,
-		"end":            item.End.DateTime,
-		"status":         item.Status,
-		"free_busy_type": item.Status,
-		"subject":        item.Subject,
+func graphEventAvailabilityStatus(showAs string) string {
+	switch strings.ToLower(strings.TrimSpace(showAs)) {
+	case "free":
+		return "free"
+	case "tentative":
+		return "tentative"
+	case "busy":
+		return "busy"
+	case "oof", "outofoffice":
+		return "oof"
+	case "workingelsewhere", "working_elsewhere":
+		return "workingelsewhere"
+	default:
+		return "busy"
 	}
+}
+
+func normalizeGraphPerson(item person) map[string]any {
+	email := strings.TrimSpace(item.Mail)
+	if email == "" {
+		email = strings.TrimSpace(item.UserPrincipalName)
+	}
+	if email == "" && len(item.ScoredEmailAddresses) > 0 {
+		email = strings.TrimSpace(item.ScoredEmailAddresses[0].Address)
+	}
+	if email == "" && len(item.EmailAddresses) > 0 {
+		email = strings.TrimSpace(item.EmailAddresses[0].Address)
+	}
+	return map[string]any{
+		"id":           item.ID,
+		"display_name": item.DisplayName,
+		"email":        email,
+		"source":       "graph",
+	}
+}
+
+func normalizeGraphScheduleItem(scheduleID string, item scheduleItem, fallbackTimeZone string) map[string]any {
+	return map[string]any{
+		"schedule_id":     scheduleID,
+		"start":           item.Start.DateTime,
+		"start_time_zone": graphDateTimeZone(item.Start.TimeZone, fallbackTimeZone),
+		"end":             item.End.DateTime,
+		"end_time_zone":   graphDateTimeZone(item.End.TimeZone, fallbackTimeZone),
+		"status":          item.Status,
+		"free_busy_type":  item.Status,
+		"subject":         item.Subject,
+	}
+}
+
+func intervalsFromGraphEvents(events []any) ([]calendarplan.Interval, error) {
+	intervals := make([]calendarplan.Interval, 0, len(events))
+	for _, event := range events {
+		eventMap, ok := event.(map[string]any)
+		if !ok {
+			continue
+		}
+		start, err := parseGraphTimeInZone(stringValue(eventMap, "start", ""), stringValue(eventMap, "start_time_zone", "UTC"))
+		if err != nil {
+			return nil, fmt.Errorf("calendar.find_time requires parseable organizer event start")
+		}
+		end, err := parseGraphTimeInZone(stringValue(eventMap, "end", ""), stringValue(eventMap, "end_time_zone", "UTC"))
+		if err != nil {
+			return nil, fmt.Errorf("calendar.find_time requires parseable organizer event end")
+		}
+		intervals = append(intervals, calendarplan.Interval{Start: start, End: end, Status: stringValue(eventMap, "free_busy_type", "busy")})
+	}
+	return intervals, nil
+}
+
+func intervalsFromGraphWindows(windows []any) ([]calendarplan.Interval, error) {
+	intervals := make([]calendarplan.Interval, 0, len(windows))
+	for _, window := range windows {
+		windowMap, ok := window.(map[string]any)
+		if !ok {
+			continue
+		}
+		start, err := parseGraphTimeInZone(stringValue(windowMap, "start", ""), stringValue(windowMap, "start_time_zone", "UTC"))
+		if err != nil {
+			return nil, fmt.Errorf("calendar.find_time requires parseable attendee window start")
+		}
+		end, err := parseGraphTimeInZone(stringValue(windowMap, "end", ""), stringValue(windowMap, "end_time_zone", "UTC"))
+		if err != nil {
+			return nil, fmt.Errorf("calendar.find_time requires parseable attendee window end")
+		}
+		intervals = append(intervals, calendarplan.Interval{Start: start, End: end, Status: stringValue(windowMap, "free_busy_type", "")})
+	}
+	return intervals, nil
 }
 
 func formatAddress(address emailAddress) string {
@@ -2122,6 +2410,24 @@ func intValue(values map[string]any, key string, fallback int) int {
 	}
 }
 
+func floatValue(values map[string]any, key string, fallback float64) float64 {
+	if values == nil {
+		return fallback
+	}
+	value, ok := values[key]
+	if !ok {
+		return fallback
+	}
+	switch typed := value.(type) {
+	case int:
+		return float64(typed)
+	case float64:
+		return typed
+	default:
+		return fallback
+	}
+}
+
 func boolValue(values map[string]any, key string) (bool, bool) {
 	if values == nil {
 		return false, false
@@ -2150,6 +2456,60 @@ func stringSlice(value any) []string {
 	default:
 		return nil
 	}
+}
+
+func parseGraphTimeInZone(value string, timeZone string) (time.Time, error) {
+	for _, layout := range []string{time.RFC3339Nano, time.RFC3339} {
+		if parsed, err := time.Parse(layout, value); err == nil {
+			return parsed, nil
+		}
+	}
+	location, err := graphTimeLocation(timeZone)
+	if err != nil {
+		return time.Time{}, err
+	}
+	var lastErr error
+	for _, layout := range []string{"2006-01-02T15:04:05.999999999", "2006-01-02T15:04:05"} {
+		parsed, err := time.ParseInLocation(layout, value, location)
+		if err == nil {
+			return parsed, nil
+		}
+		lastErr = err
+	}
+	return time.Time{}, lastErr
+}
+
+func graphScheduleDateTime(value string, timeZone string) (string, error) {
+	parsed, err := parseGraphTimeInZone(value, timeZone)
+	if err != nil {
+		return "", err
+	}
+	location, err := graphTimeLocation(timeZone)
+	if err != nil {
+		return "", err
+	}
+	return parsed.In(location).Format("2006-01-02T15:04:05"), nil
+}
+
+func graphTimeLocation(timeZone string) (*time.Location, error) {
+	timeZone = strings.TrimSpace(timeZone)
+	if timeZone == "" {
+		return time.UTC, nil
+	}
+	if mapped := mstimezone.IANALocationName(timeZone); mapped != "" {
+		timeZone = mapped
+	}
+	return time.LoadLocation(timeZone)
+}
+
+func graphDateTimeZone(value string, fallback string) string {
+	for _, candidate := range []string{value, fallback, "UTC"} {
+		candidate = strings.TrimSpace(candidate)
+		if candidate != "" {
+			return candidate
+		}
+	}
+	return "UTC"
 }
 
 func messageIDs(payload map[string]any) []string {

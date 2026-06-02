@@ -357,6 +357,91 @@ func TestHighLevelCalendarAvailabilityCallsGetUserAvailabilityInternal(t *testin
 	}
 }
 
+func TestHighLevelCalendarAvailabilityFailsOnResponseError(t *testing.T) {
+	var calls []recordedServiceCall
+	server := newOWAServiceServer(t, &calls, map[string]any{
+		"Body": map[string]any{
+			"ResponseMessages": map[string]any{
+				"Items": []any{
+					map[string]any{
+						"ResponseClass": "Error",
+						"ResponseCode":  "ErrorMailRecipientNotFound",
+						"MessageText":   "The attendee schedule is unavailable.",
+					},
+				},
+			},
+		},
+	})
+	defer server.Close()
+	client := owa.NewTransport(owa.Config{
+		BaseURL:      server.URL,
+		Username:     "DOMAIN\\user",
+		SecretRef:    secret.Ref("memory:owa"),
+		MailboxEmail: "user@example.com",
+	}, secret.NewMemoryStore(map[string]string{"memory:owa": "password"}), server.Client())
+
+	response := client.Execute(context.Background(), transport.ActionRequest{
+		Name: "calendar.availability",
+		Payload: map[string]any{
+			"start": "2026-05-27T00:00:00",
+			"end":   "2026-05-28T00:00:00",
+		},
+	})
+
+	if response.OK {
+		t.Fatalf("expected calendar.availability to fail on OWA response error, got %#v", response)
+	}
+	if !strings.Contains(response.Error, "ErrorMailRecipientNotFound") {
+		t.Fatalf("expected availability error code, got %q", response.Error)
+	}
+}
+
+func TestHighLevelCalendarAvailabilityUsesRequestedTimeZoneHeader(t *testing.T) {
+	var calls []recordedServiceCall
+	server := newOWAServiceServer(t, &calls, map[string]any{
+		"Body": map[string]any{
+			"ResponseMessages": map[string]any{
+				"Items": []any{
+					map[string]any{
+						"ResponseClass": "Success",
+						"ResponseCode":  "NoError",
+						"FreeBusyView": map[string]any{
+							"CalendarView": map[string]any{"Items": []any{}},
+						},
+					},
+				},
+			},
+		},
+	})
+	defer server.Close()
+	client := owa.NewTransport(owa.Config{
+		BaseURL:      server.URL,
+		Username:     "DOMAIN\\user",
+		SecretRef:    secret.Ref("memory:owa"),
+		MailboxEmail: "user@example.com",
+		TimeZoneID:   "UTC",
+	}, secret.NewMemoryStore(map[string]string{"memory:owa": "password"}), server.Client())
+
+	response := client.Execute(context.Background(), transport.ActionRequest{
+		Name: "calendar.availability",
+		Payload: map[string]any{
+			"start":     "2026-05-27T00:00:00",
+			"end":       "2026-05-28T00:00:00",
+			"time_zone": "America/Los_Angeles",
+		},
+	})
+
+	if !response.OK {
+		t.Fatalf("expected calendar.availability ok: %#v", response)
+	}
+	request := calls[0].Body["request"].(map[string]any)
+	header := request["Header"].(map[string]any)
+	timeZone := header["TimeZoneContext"].(map[string]any)["TimeZoneDefinition"].(map[string]any)
+	if timeZone["Id"] != "America/Los_Angeles" {
+		t.Fatalf("expected requested availability timezone header, got %#v", timeZone)
+	}
+}
+
 func TestHighLevelCalendarAvailabilityRequiresMailboxEmail(t *testing.T) {
 	var calls []recordedServiceCall
 	server := newOWAServiceServer(t, &calls, map[string]any{"Body": map[string]any{"ResponseMessages": map[string]any{"Items": []any{}}}})
@@ -376,6 +461,562 @@ func TestHighLevelCalendarAvailabilityRequiresMailboxEmail(t *testing.T) {
 	}
 	if len(calls) != 0 {
 		t.Fatalf("expected missing mailbox email to fail before service call, got %#v", calls)
+	}
+}
+
+func TestHighLevelPeopleSearchCallsFindPeople(t *testing.T) {
+	var calls []recordedServiceCall
+	server := newOWAServiceServer(t, &calls, map[string]any{
+		"Body": map[string]any{
+			"People": []any{
+				map[string]any{
+					"PersonaId":    map[string]any{"Id": "persona-1"},
+					"DisplayName":  "Vlad Cheshenko",
+					"EmailAddress": "vlad.cheshenko@example.com",
+				},
+			},
+		},
+	})
+	defer server.Close()
+	client := newTestTransport(server)
+
+	response := client.Execute(context.Background(), transport.ActionRequest{
+		Name:    "people.search",
+		Payload: map[string]any{"query": "vlad"},
+	})
+
+	if !response.OK {
+		t.Fatalf("expected people.search ok: %#v", response)
+	}
+	if len(calls) != 1 || calls[0].Action != "FindPeople" {
+		t.Fatalf("expected FindPeople call, got %#v", calls)
+	}
+	body := calls[0].Body["Body"].(map[string]any)
+	if body["QueryString"] != "vlad" {
+		t.Fatalf("expected query string forwarded, got %#v", body)
+	}
+	pageView := body["IndexedPageItemView"].(map[string]any)
+	if pageView["MaxEntriesReturned"] != float64(20) {
+		t.Fatalf("expected bounded FindPeople page view, got %#v", pageView)
+	}
+	personaShape := body["PersonaShape"].(map[string]any)
+	if personaShape["BaseShape"] != "Default" || body["ShouldResolveOneOffEmailAddress"] != true || body["SearchPeopleSuggestionIndex"] != false {
+		t.Fatalf("expected metadata-only FindPeople options, got %#v", body)
+	}
+	people := response.Data["people"].([]any)
+	person := people[0].(map[string]any)
+	if person["display_name"] != "Vlad Cheshenko" || person["email"] != "vlad.cheshenko@example.com" {
+		t.Fatalf("unexpected normalized person: %#v", person)
+	}
+}
+
+func TestHighLevelPeopleResolveAmbiguousDoesNotGuess(t *testing.T) {
+	var calls []recordedServiceCall
+	server := newOWAServiceServer(t, &calls, map[string]any{
+		"Body": map[string]any{
+			"People": []any{
+				map[string]any{"PersonaId": map[string]any{"Id": "persona-1"}, "DisplayName": "Alex Morgan", "EmailAddress": "alex.morgan@example.com"},
+				map[string]any{"PersonaId": map[string]any{"Id": "persona-2"}, "DisplayName": "Alex Rivera", "EmailAddress": "alex.rivera@example.com"},
+			},
+		},
+	})
+	defer server.Close()
+	client := newTestTransport(server)
+
+	response := client.Execute(context.Background(), transport.ActionRequest{
+		Name:    "people.resolve",
+		Payload: map[string]any{"query": "alex"},
+	})
+
+	if response.OK {
+		t.Fatalf("expected ambiguous people.resolve to fail: %#v", response)
+	}
+	candidates := response.Data["candidates"].([]any)
+	if len(candidates) != 2 {
+		t.Fatalf("expected two candidates, got %#v", candidates)
+	}
+	if !strings.Contains(response.Error, "ambiguous") {
+		t.Fatalf("expected ambiguous error, got %q", response.Error)
+	}
+}
+
+func TestHighLevelPeopleResolveRequiresQueryBeforeServiceCall(t *testing.T) {
+	var calls []recordedServiceCall
+	server := newOWAServiceServer(t, &calls, map[string]any{
+		"Body": map[string]any{
+			"People": []any{
+				map[string]any{"PersonaId": map[string]any{"Id": "persona-1"}, "DisplayName": "Fallback Person", "EmailAddress": "fallback@example.com"},
+			},
+		},
+	})
+	defer server.Close()
+	client := newTestTransport(server)
+
+	response := client.Execute(context.Background(), transport.ActionRequest{
+		Name:    "people.resolve",
+		Payload: map[string]any{"query": "   "},
+	})
+
+	if response.OK {
+		t.Fatalf("expected people.resolve without query to fail: %#v", response)
+	}
+	if len(calls) != 0 {
+		t.Fatalf("expected people.resolve to fail before FindPeople, got %#v", calls)
+	}
+	if !strings.Contains(response.Error, "query") {
+		t.Fatalf("expected query validation error, got %q", response.Error)
+	}
+}
+
+func TestHighLevelCalendarFindTimeUsesCalendarAndAvailabilityWithoutSubjectLeak(t *testing.T) {
+	var calls []recordedServiceCall
+	server := newOWAServiceServerByAction(t, &calls, map[string]map[string]any{
+		"GetCalendarView": {
+			"Body": map[string]any{
+				"Items": []any{
+					map[string]any{
+						"ItemId":  map[string]any{"Id": "evt-1"},
+						"Subject": "Private focus",
+						"Start":   "2026-05-28T09:00:00Z",
+						"End":     "2026-05-28T09:30:00Z",
+					},
+				},
+			},
+		},
+		"GetUserAvailabilityInternal": {
+			"Body": map[string]any{
+				"Responses": []any{
+					map[string]any{
+						"ResponseClass": "Success",
+						"ResponseCode":  "NoError",
+						"CalendarView": map[string]any{
+							"Items": []any{
+								map[string]any{
+									"FreeBusyType": "Busy",
+									"Start":        "2026-05-28T09:30:00Z",
+									"End":          "2026-05-28T10:00:00Z",
+									"Subject":      "Hidden busy event",
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+	})
+	defer server.Close()
+	client := newTestTransport(server)
+
+	response := client.Execute(context.Background(), transport.ActionRequest{
+		Name: "calendar.find_time",
+		Payload: map[string]any{
+			"attendees":        []any{"vlad.cheshenko@example.com"},
+			"start":            "2026-05-28T09:00:00Z",
+			"end":              "2026-05-28T12:00:00Z",
+			"duration_minutes": float64(30),
+			"tentative":        "busy",
+		},
+	})
+
+	if !response.OK {
+		t.Fatalf("expected calendar.find_time ok: %#v", response)
+	}
+	if len(calls) != 2 || calls[0].Action != "GetCalendarView" || calls[1].Action != "GetUserAvailabilityInternal" {
+		t.Fatalf("expected calendar and availability calls, got %#v", calls)
+	}
+	suggestions := response.Data["suggestions"].([]any)
+	first := suggestions[0].(map[string]any)
+	if first["start"] != "2026-05-28T10:00:00Z" || first["end"] != "2026-05-28T10:30:00Z" {
+		t.Fatalf("unexpected first suggestion: %#v", first)
+	}
+	if strings.Contains(first["start"].(string), "Private") || strings.Contains(strings.Join(mapKeys(first), " "), "subject") {
+		t.Fatalf("find-time suggestion must not expose subjects: %#v", first)
+	}
+}
+
+func TestHighLevelCalendarFindTimeFailsOnAvailabilityError(t *testing.T) {
+	var calls []recordedServiceCall
+	server := newOWAServiceServerByAction(t, &calls, map[string]map[string]any{
+		"GetCalendarView": {
+			"Body": map[string]any{"Items": []any{}},
+		},
+		"GetUserAvailabilityInternal": {
+			"Body": map[string]any{
+				"Responses": []any{
+					map[string]any{
+						"ResponseClass": "Error",
+						"ResponseCode":  "ErrorMailRecipientNotFound",
+						"MessageText":   "The attendee schedule is unavailable.",
+					},
+				},
+			},
+		},
+	})
+	defer server.Close()
+	client := newTestTransport(server)
+
+	response := client.Execute(context.Background(), transport.ActionRequest{
+		Name: "calendar.find_time",
+		Payload: map[string]any{
+			"attendees":        []any{"vlad.cheshenko@example.com"},
+			"start":            "2026-05-28T09:00:00Z",
+			"end":              "2026-05-28T10:00:00Z",
+			"duration_minutes": float64(30),
+			"tentative":        "busy",
+		},
+	})
+
+	if response.OK {
+		t.Fatalf("expected availability error to abort find-time, got %#v", response)
+	}
+	if !strings.Contains(response.Error, "ErrorMailRecipientNotFound") {
+		t.Fatalf("expected availability error code, got %q", response.Error)
+	}
+}
+
+func TestHighLevelCalendarFindTimeTreatsOrganizerFreeEventAsAvailable(t *testing.T) {
+	var calls []recordedServiceCall
+	server := newOWAServiceServerByAction(t, &calls, map[string]map[string]any{
+		"GetCalendarView": {
+			"Body": map[string]any{
+				"Items": []any{
+					map[string]any{
+						"ItemId":       map[string]any{"Id": "evt-1"},
+						"Subject":      "FYI hold",
+						"Start":        "2026-05-28T09:00:00Z",
+						"End":          "2026-05-28T09:30:00Z",
+						"FreeBusyType": "Free",
+					},
+				},
+			},
+		},
+		"GetUserAvailabilityInternal": {
+			"Body": map[string]any{
+				"Responses": []any{
+					map[string]any{
+						"CalendarView": map[string]any{
+							"Items": []any{},
+						},
+					},
+				},
+			},
+		},
+	})
+	defer server.Close()
+	client := newTestTransport(server)
+
+	response := client.Execute(context.Background(), transport.ActionRequest{
+		Name: "calendar.find_time",
+		Payload: map[string]any{
+			"attendees":        []any{"vlad.cheshenko@example.com"},
+			"start":            "2026-05-28T09:00:00Z",
+			"end":              "2026-05-28T10:00:00Z",
+			"duration_minutes": float64(30),
+			"tentative":        "busy",
+		},
+	})
+
+	if !response.OK {
+		t.Fatalf("expected calendar.find_time ok: %#v", response)
+	}
+	suggestions := response.Data["suggestions"].([]any)
+	first := suggestions[0].(map[string]any)
+	if first["start"] != "2026-05-28T09:00:00Z" || first["end"] != "2026-05-28T09:30:00Z" {
+		t.Fatalf("expected free organizer event not to block first slot, got %#v", first)
+	}
+}
+
+func TestHighLevelCalendarFindTimeParsesWindowInRequestedTimezone(t *testing.T) {
+	var calls []recordedServiceCall
+	server := newOWAServiceServerByAction(t, &calls, map[string]map[string]any{
+		"GetCalendarView": {
+			"Body": map[string]any{"Items": []any{}},
+		},
+		"GetUserAvailabilityInternal": {
+			"Body": map[string]any{
+				"Responses": []any{
+					map[string]any{
+						"CalendarView": map[string]any{
+							"Items": []any{
+								map[string]any{
+									"FreeBusyType": "Busy",
+									"Start":        "2026-05-28T09:00:00",
+									"End":          "2026-05-28T09:30:00",
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+	})
+	defer server.Close()
+	client := newTestTransport(server)
+
+	response := client.Execute(context.Background(), transport.ActionRequest{
+		Name: "calendar.find_time",
+		Payload: map[string]any{
+			"attendees":        []any{"vlad.cheshenko@example.com"},
+			"start":            "2026-05-28T09:00:00",
+			"end":              "2026-05-28T11:00:00",
+			"duration_minutes": float64(30),
+			"time_zone":        "America/Los_Angeles",
+			"tentative":        "busy",
+		},
+	})
+
+	if !response.OK {
+		t.Fatalf("expected calendar.find_time ok: %#v", response)
+	}
+	suggestions := response.Data["suggestions"].([]any)
+	first := suggestions[0].(map[string]any)
+	if first["start"] != "2026-05-28T16:30:00Z" || first["end"] != "2026-05-28T17:00:00Z" {
+		t.Fatalf("unexpected first suggestion: %#v", first)
+	}
+}
+
+func TestHighLevelCalendarFindTimeParsesOWAWindowsTimeZone(t *testing.T) {
+	var calls []recordedServiceCall
+	server := newOWAServiceServerByAction(t, &calls, map[string]map[string]any{
+		"GetCalendarView": {
+			"Body": map[string]any{
+				"Items": []any{
+					map[string]any{
+						"Start": "2026-05-28T09:00:00",
+						"End":   "2026-05-28T09:30:00",
+					},
+				},
+			},
+		},
+		"GetUserAvailabilityInternal": {
+			"Body": map[string]any{
+				"Responses": []any{
+					map[string]any{
+						"CalendarView": map[string]any{"Items": []any{}},
+					},
+				},
+			},
+		},
+	})
+	defer server.Close()
+	client := newTestTransport(server)
+
+	response := client.Execute(context.Background(), transport.ActionRequest{
+		Name: "calendar.find_time",
+		Payload: map[string]any{
+			"attendees":        []any{"vlad.cheshenko@example.com"},
+			"start":            "2026-05-28T03:30:00Z",
+			"end":              "2026-05-28T05:00:00Z",
+			"duration_minutes": float64(30),
+			"time_zone":        "India Standard Time",
+			"tentative":        "busy",
+		},
+	})
+
+	if !response.OK {
+		t.Fatalf("expected calendar.find_time ok: %#v", response)
+	}
+	suggestions := response.Data["suggestions"].([]any)
+	first := suggestions[0].(map[string]any)
+	if first["start"] != "2026-05-28T04:00:00Z" || first["end"] != "2026-05-28T04:30:00Z" {
+		t.Fatalf("expected India Standard Time organizer event to block first slot, got %#v", first)
+	}
+}
+
+func TestHighLevelCalendarFindTimeParsesAdditionalOWAWindowsTimeZones(t *testing.T) {
+	var calls []recordedServiceCall
+	server := newOWAServiceServerByAction(t, &calls, map[string]map[string]any{
+		"GetCalendarView": {
+			"Body": map[string]any{
+				"Items": []any{
+					map[string]any{
+						"Start": "2026-05-28T09:00:00",
+						"End":   "2026-05-28T09:30:00",
+					},
+				},
+			},
+		},
+		"GetUserAvailabilityInternal": {
+			"Body": map[string]any{
+				"Responses": []any{
+					map[string]any{
+						"CalendarView": map[string]any{"Items": []any{}},
+					},
+				},
+			},
+		},
+	})
+	defer server.Close()
+	client := newTestTransport(server)
+
+	response := client.Execute(context.Background(), transport.ActionRequest{
+		Name: "calendar.find_time",
+		Payload: map[string]any{
+			"attendees":        []any{"vlad.cheshenko@example.com"},
+			"start":            "2026-05-27T23:00:00Z",
+			"end":              "2026-05-28T00:30:00Z",
+			"duration_minutes": float64(30),
+			"time_zone":        "AUS Eastern Standard Time",
+			"tentative":        "busy",
+		},
+	})
+
+	if !response.OK {
+		t.Fatalf("expected calendar.find_time ok: %#v", response)
+	}
+	suggestions := response.Data["suggestions"].([]any)
+	first := suggestions[0].(map[string]any)
+	if first["start"] != "2026-05-27T23:30:00Z" || first["end"] != "2026-05-28T00:00:00Z" {
+		t.Fatalf("expected AUS Eastern Standard Time organizer event to block first slot, got %#v", first)
+	}
+}
+
+func TestHighLevelCalendarFindTimeRejectsUnknownOWATimeZone(t *testing.T) {
+	var calls []recordedServiceCall
+	server := newOWAServiceServerByAction(t, &calls, map[string]map[string]any{
+		"GetCalendarView": {
+			"Body": map[string]any{"Items": []any{}},
+		},
+		"GetUserAvailabilityInternal": {
+			"Body": map[string]any{
+				"Responses": []any{
+					map[string]any{
+						"CalendarView": map[string]any{"Items": []any{}},
+					},
+				},
+			},
+		},
+	})
+	defer server.Close()
+	client := newTestTransport(server)
+
+	response := client.Execute(context.Background(), transport.ActionRequest{
+		Name: "calendar.find_time",
+		Payload: map[string]any{
+			"attendees":        []any{"vlad.cheshenko@example.com"},
+			"start":            "2026-05-28T03:30:00Z",
+			"end":              "2026-05-28T05:00:00Z",
+			"duration_minutes": float64(30),
+			"time_zone":        "Unknown Standard Time",
+			"tentative":        "busy",
+		},
+	})
+
+	if response.OK {
+		t.Fatalf("expected unknown OWA timezone to abort find-time, got %#v", response)
+	}
+	if !strings.Contains(response.Error, "parseable") {
+		t.Fatalf("expected timezone parse error, got %q", response.Error)
+	}
+}
+
+func TestHighLevelCalendarFindTimeUsesRequestedTimeZoneHeaders(t *testing.T) {
+	var calls []recordedServiceCall
+	server := newOWAServiceServerByAction(t, &calls, map[string]map[string]any{
+		"GetCalendarView": {
+			"Body": map[string]any{"Items": []any{}},
+		},
+		"GetUserAvailabilityInternal": {
+			"Body": map[string]any{
+				"Responses": []any{
+					map[string]any{
+						"CalendarView": map[string]any{"Items": []any{}},
+					},
+				},
+			},
+		},
+	})
+	defer server.Close()
+	client := owa.NewTransport(owa.Config{
+		BaseURL:    server.URL,
+		Username:   "DOMAIN\\user",
+		SecretRef:  secret.Ref("memory:owa"),
+		TimeZoneID: "UTC",
+	}, secret.NewMemoryStore(map[string]string{"memory:owa": "password"}), server.Client())
+
+	response := client.Execute(context.Background(), transport.ActionRequest{
+		Name: "calendar.find_time",
+		Payload: map[string]any{
+			"attendees":        []any{"vlad.cheshenko@example.com"},
+			"start":            "2026-05-28T09:00:00",
+			"end":              "2026-05-28T10:00:00",
+			"duration_minutes": float64(30),
+			"time_zone":        "America/Los_Angeles",
+			"tentative":        "busy",
+		},
+	})
+
+	if !response.OK {
+		t.Fatalf("expected calendar.find_time ok: %#v", response)
+	}
+	if len(calls) != 2 || calls[0].Action != "GetCalendarView" || calls[1].Action != "GetUserAvailabilityInternal" {
+		t.Fatalf("expected calendar and availability calls, got %#v", calls)
+	}
+	calendarHeader := calls[0].Body["Header"].(map[string]any)
+	calendarTimeZone := calendarHeader["TimeZoneContext"].(map[string]any)["TimeZoneDefinition"].(map[string]any)
+	if calendarTimeZone["Id"] != "America/Los_Angeles" {
+		t.Fatalf("expected requested calendar timezone header, got %#v", calendarTimeZone)
+	}
+	availabilityRequest := calls[1].Body["request"].(map[string]any)
+	availabilityHeader := availabilityRequest["Header"].(map[string]any)
+	availabilityTimeZone := availabilityHeader["TimeZoneContext"].(map[string]any)["TimeZoneDefinition"].(map[string]any)
+	if availabilityTimeZone["Id"] != "America/Los_Angeles" {
+		t.Fatalf("expected requested availability timezone header, got %#v", availabilityTimeZone)
+	}
+}
+
+func TestHighLevelCalendarFindTimeParsesFractionalBusyTimestamps(t *testing.T) {
+	var calls []recordedServiceCall
+	server := newOWAServiceServerByAction(t, &calls, map[string]map[string]any{
+		"GetCalendarView": {
+			"Body": map[string]any{
+				"Items": []any{
+					map[string]any{
+						"Start": "2026-05-28T09:00:00.0000000",
+						"End":   "2026-05-28T09:30:00.0000000",
+					},
+				},
+			},
+		},
+		"GetUserAvailabilityInternal": {
+			"Body": map[string]any{
+				"Responses": []any{
+					map[string]any{
+						"CalendarView": map[string]any{
+							"Items": []any{
+								map[string]any{
+									"FreeBusyType": "Busy",
+									"Start":        "2026-05-28T09:30:00.0000000",
+									"End":          "2026-05-28T10:00:00.0000000",
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+	})
+	defer server.Close()
+	client := newTestTransport(server)
+
+	response := client.Execute(context.Background(), transport.ActionRequest{
+		Name: "calendar.find_time",
+		Payload: map[string]any{
+			"attendees":        []any{"vlad.cheshenko@example.com"},
+			"start":            "2026-05-28T09:00:00Z",
+			"end":              "2026-05-28T12:00:00Z",
+			"duration_minutes": float64(30),
+			"tentative":        "busy",
+		},
+	})
+
+	if !response.OK {
+		t.Fatalf("expected calendar.find_time ok: %#v", response)
+	}
+	suggestions := response.Data["suggestions"].([]any)
+	first := suggestions[0].(map[string]any)
+	if first["start"] != "2026-05-28T10:00:00Z" || first["end"] != "2026-05-28T10:30:00Z" {
+		t.Fatalf("unexpected first suggestion: %#v", first)
 	}
 }
 
@@ -1167,6 +1808,11 @@ func TestHighLevelMoveToDeletedDryRunCountsIDs(t *testing.T) {
 
 func newOWAServiceServer(t *testing.T, calls *[]recordedServiceCall, payload map[string]any) *httptest.Server {
 	t.Helper()
+	return newOWAServiceServerByAction(t, calls, map[string]map[string]any{"*": payload})
+}
+
+func newOWAServiceServerByAction(t *testing.T, calls *[]recordedServiceCall, payloadByAction map[string]map[string]any) *httptest.Server {
+	t.Helper()
 	return httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
 		switch request.URL.Path {
 		case "/owa/auth.owa":
@@ -1196,6 +1842,13 @@ func newOWAServiceServer(t *testing.T, calls *[]recordedServiceCall, payload map
 				call.Body = raw
 			}
 			*calls = append(*calls, call)
+			payload := payloadByAction[call.Action]
+			if payload == nil {
+				payload = payloadByAction["*"]
+			}
+			if payload == nil {
+				t.Fatalf("no payload for action %q", call.Action)
+			}
 			response.Header().Set("Content-Type", "application/json")
 			_ = json.NewEncoder(response).Encode(payload)
 		default:
@@ -1210,4 +1863,12 @@ func newTestTransport(server *httptest.Server) *owa.Transport {
 		Username:  "DOMAIN\\user",
 		SecretRef: secret.Ref("memory:owa"),
 	}, secret.NewMemoryStore(map[string]string{"memory:owa": "password"}), server.Client())
+}
+
+func mapKeys(values map[string]any) []string {
+	keys := make([]string, 0, len(values))
+	for key := range values {
+		keys = append(keys, key)
+	}
+	return keys
 }
