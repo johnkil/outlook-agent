@@ -19,21 +19,26 @@ phrases such as "tomorrow" into explicit date ranges before calling tools.
 1. Resolve timezone and calendar scope.
 2. Call `outlook.capabilities` before raw, gated, or unfamiliar calendar
    actions.
-3. Use `outlook.people_search` and `outlook.people_resolve` for attendee names
-   or emails before planning with a person.
-4. Use `outlook.calendar_list` for bounded time windows.
-5. Use `outlook.calendar_availability` for single-person free/busy questions.
-6. Use `outlook.calendar_find_time` for mutual free-time planning. Treat it as
-   planning-only: it does not create or send meetings.
-7. Surface conflicts before suggesting changes.
-8. Respond to one exact event with `outlook.calendar_respond` only after
+3. Resolve attendees with `outlook.people_search` and
+   `outlook.people_resolve`.
+4. Use `outlook.calendar_list` for bounded organizer windows.
+5. Use `outlook.calendar_availability` for explicit free/busy checks.
+6. Use `outlook.calendar_find_time` for mutual planning only.
+7. Present the exact subject, attendees, start, end, timezone, and optional
+   body/location before creating a meeting.
+8. Create meetings only with `outlook.calendar_create_meeting` after
+   `outlook.action_dry_run`, exact confirmation, and required host approval.
+9. Do not construct raw OWA `FindPeople`, `GetUserAvailabilityInternal`, or
+   `CreateItem` payloads for the standard scheduling workflow.
+10. Surface conflicts before suggesting changes.
+11. Respond to one exact event with `outlook.calendar_respond` only after
    `outlook.action_dry_run`, exact confirmation, and required host approval.
    When dry-run returns an `approval_challenge`, the host must provide
    `approval_challenge_id` and `approval_token`; never ask the user for the
    approval secret.
-9. Use `outlook.raw_action` only for a capability-discovered transport action
+12. Use `outlook.raw_action` only for a capability-discovered transport action
    that does not have a high-level tool.
-10. Create, reschedule, or cancel only after exact confirmation.
+13. Reschedule or cancel only after exact confirmation.
 
 ## Safety
 

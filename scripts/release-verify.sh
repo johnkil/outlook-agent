@@ -112,6 +112,24 @@ while IFS= read -r manifest; do
   fi
 done < <(find "$dist_dir" -maxdepth 1 -type f -name "*_dependency-manifest.json" | sort)
 
+plugin_calendar_skill="${repo_root}/plugins/outlook-agent/skills/outlook-calendar/SKILL.md"
+if [[ ! -f "$plugin_calendar_skill" ]]; then
+  echo "generated plugin calendar skill is missing: ${plugin_calendar_skill}" >&2
+  exit 1
+fi
+for marker in \
+  "outlook.calendar_create_meeting" \
+  "Present the exact subject, attendees, start, end, timezone" \
+  "Create meetings only with \`outlook.calendar_create_meeting\` after" \
+  "Do not construct raw OWA \`FindPeople\`, \`GetUserAvailabilityInternal\`, or" \
+  "\`CreateItem\` payloads for the standard scheduling workflow."
+do
+  if ! grep -Fq "$marker" "$plugin_calendar_skill"; then
+    echo "generated plugin calendar skill is missing guidance marker: ${marker}" >&2
+    exit 1
+  fi
+done
+
 signature_status="absent"
 if [[ -f "$signature_file" ]]; then
   if command -v gpg >/dev/null 2>&1; then
