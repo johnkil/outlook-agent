@@ -1730,7 +1730,7 @@ func canonicalActionPayload(actionName string, payload map[string]any) (map[stri
 		}
 		delete(canonical, "timezone")
 	}
-	for _, key := range []string{"time_zone", "body", "location"} {
+	for _, key := range []string{"subject", "start", "end", "mailbox", "time_zone", "body", "location"} {
 		trimmed := strings.TrimSpace(stringMetadata(canonical, key))
 		if trimmed == "" {
 			delete(canonical, key)
