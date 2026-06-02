@@ -1406,14 +1406,22 @@ func (client *Transport) getSchedule(ctx context.Context, payload map[string]any
 		return nil, fmt.Errorf("calendar.availability requires start and end")
 	}
 	timeZone := stringValue(payload, "time_zone", "UTC")
+	startDateTime, err := graphScheduleDateTime(start, timeZone)
+	if err != nil {
+		return nil, fmt.Errorf("calendar.availability requires parseable start")
+	}
+	endDateTime, err := graphScheduleDateTime(end, timeZone)
+	if err != nil {
+		return nil, fmt.Errorf("calendar.availability requires parseable end")
+	}
 	body := map[string]any{
 		"schedules": []string{email},
 		"startTime": map[string]any{
-			"dateTime": start,
+			"dateTime": startDateTime,
 			"timeZone": timeZone,
 		},
 		"endTime": map[string]any{
-			"dateTime": end,
+			"dateTime": endDateTime,
 			"timeZone": timeZone,
 		},
 		"availabilityViewInterval": intValue(payload, "interval_minutes", 30),
@@ -2446,6 +2454,18 @@ func parseGraphTimeInZone(value string, timeZone string) (time.Time, error) {
 		lastErr = err
 	}
 	return time.Time{}, lastErr
+}
+
+func graphScheduleDateTime(value string, timeZone string) (string, error) {
+	parsed, err := parseGraphTimeInZone(value, timeZone)
+	if err != nil {
+		return "", err
+	}
+	location, err := graphTimeLocation(timeZone)
+	if err != nil {
+		return "", err
+	}
+	return parsed.In(location).Format("2006-01-02T15:04:05"), nil
 }
 
 func graphTimeLocation(timeZone string) (*time.Location, error) {

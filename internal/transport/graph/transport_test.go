@@ -2478,6 +2478,9 @@ func TestTransportCalendarFindTimeParsesScheduleTimezone(t *testing.T) {
 			if start["timeZone"] != "Europe/Berlin" || end["timeZone"] != "Europe/Berlin" {
 				t.Fatalf("expected requested timezone in getSchedule body, got %#v", body)
 			}
+			if start["dateTime"] != "2026-05-28T09:00:00" || end["dateTime"] != "2026-05-28T11:00:00" {
+				t.Fatalf("expected Graph getSchedule local dateTime values without offsets, got %#v", body)
+			}
 			response.Header().Set("Content-Type", "application/json")
 			_ = json.NewEncoder(response).Encode(map[string]any{
 				"value": []any{
