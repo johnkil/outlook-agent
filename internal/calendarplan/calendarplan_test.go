@@ -73,3 +73,20 @@ func TestFindSuggestionsTreatsWorkingElsewhereAsFree(t *testing.T) {
 		t.Fatalf("expected workingElsewhere not to block first slot, got %#v", suggestions[0])
 	}
 }
+
+func TestFindSuggestionsTreatsUnknownAvailabilityAsBusy(t *testing.T) {
+	start := mustTime(t, "2026-05-28T09:00:00Z")
+	end := mustTime(t, "2026-05-28T10:30:00Z")
+
+	suggestions := calendarplan.FindSuggestions(start, end, []calendarplan.Interval{
+		{Start: mustTime(t, "2026-05-28T09:00:00Z"), End: mustTime(t, "2026-05-28T09:30:00Z"), Status: "unknown"},
+		{Start: mustTime(t, "2026-05-28T09:30:00Z"), End: mustTime(t, "2026-05-28T10:00:00Z"), Status: "NoData"},
+	}, calendarplan.Options{Duration: 30 * time.Minute, Step: 30 * time.Minute})
+
+	if len(suggestions) != 1 {
+		t.Fatalf("expected only one known-free suggestion, got %#v", suggestions)
+	}
+	if suggestions[0].Start != mustTime(t, "2026-05-28T10:00:00Z") || suggestions[0].End != mustTime(t, "2026-05-28T10:30:00Z") {
+		t.Fatalf("expected unknown availability to block earlier slots, got %#v", suggestions[0])
+	}
+}
