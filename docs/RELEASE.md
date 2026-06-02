@@ -152,10 +152,15 @@ Release process:
 2. If the Codex marketplace package changed under `plugins/outlook-agent`,
    bump `codexPluginVersion`, regenerate the package, and verify the committed
    package still matches the exporter.
-3. Create an annotated version tag on that exact commit.
-4. Push the tag.
-5. Verify the release workflow passed.
-6. Fill release evidence, including the commit SHA and hosted CI run URL.
+3. Run `scripts/release-preflight.sh vX.Y.Z` from the exact commit that will be
+   tagged. The preflight fails if the tag-derived version,
+   `codexPluginVersion`, and `plugins/outlook-agent/.codex-plugin/plugin.json`
+   are not aligned.
+4. Create an annotated version tag on that exact commit.
+5. Push the tag.
+6. Verify the release workflow passed; the workflow repeats release preflight
+   before building artifacts.
+7. Fill release evidence, including the commit SHA and hosted CI run URL.
 
 Then create and push a version tag:
 
