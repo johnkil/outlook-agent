@@ -86,6 +86,9 @@ func (client *Transport) executeHighLevel(ctx context.Context, request transport
 		if !response.OK {
 			return response, true
 		}
+		if errorText := availabilityResponseError(response.Data); errorText != "" {
+			return transport.ActionResponse{OK: false, Error: "calendar.availability failed: " + errorText}, true
+		}
 		return transport.ActionResponse{OK: true, Data: map[string]any{"windows": normalizeAvailabilityWindows(response.Data)}}, true
 	case "calendar.find_time":
 		response, err := client.findMeetingTime(ctx, request.Payload)

@@ -357,6 +357,45 @@ func TestHighLevelCalendarAvailabilityCallsGetUserAvailabilityInternal(t *testin
 	}
 }
 
+func TestHighLevelCalendarAvailabilityFailsOnResponseError(t *testing.T) {
+	var calls []recordedServiceCall
+	server := newOWAServiceServer(t, &calls, map[string]any{
+		"Body": map[string]any{
+			"ResponseMessages": map[string]any{
+				"Items": []any{
+					map[string]any{
+						"ResponseClass": "Error",
+						"ResponseCode":  "ErrorMailRecipientNotFound",
+						"MessageText":   "The attendee schedule is unavailable.",
+					},
+				},
+			},
+		},
+	})
+	defer server.Close()
+	client := owa.NewTransport(owa.Config{
+		BaseURL:      server.URL,
+		Username:     "DOMAIN\\user",
+		SecretRef:    secret.Ref("memory:owa"),
+		MailboxEmail: "user@example.com",
+	}, secret.NewMemoryStore(map[string]string{"memory:owa": "password"}), server.Client())
+
+	response := client.Execute(context.Background(), transport.ActionRequest{
+		Name: "calendar.availability",
+		Payload: map[string]any{
+			"start": "2026-05-27T00:00:00",
+			"end":   "2026-05-28T00:00:00",
+		},
+	})
+
+	if response.OK {
+		t.Fatalf("expected calendar.availability to fail on OWA response error, got %#v", response)
+	}
+	if !strings.Contains(response.Error, "ErrorMailRecipientNotFound") {
+		t.Fatalf("expected availability error code, got %q", response.Error)
+	}
+}
+
 func TestHighLevelCalendarAvailabilityRequiresMailboxEmail(t *testing.T) {
 	var calls []recordedServiceCall
 	server := newOWAServiceServer(t, &calls, map[string]any{"Body": map[string]any{"ResponseMessages": map[string]any{"Items": []any{}}}})
