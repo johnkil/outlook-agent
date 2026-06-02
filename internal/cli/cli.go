@@ -18,6 +18,7 @@ import (
 	"github.com/johnkil/outlook-agent/internal/buildinfo"
 	"github.com/johnkil/outlook-agent/internal/capability"
 	"github.com/johnkil/outlook-agent/internal/config"
+	"github.com/johnkil/outlook-agent/internal/mstimezone"
 	"github.com/johnkil/outlook-agent/internal/policy"
 	"github.com/johnkil/outlook-agent/internal/secret"
 	setupcore "github.com/johnkil/outlook-agent/internal/setup"
@@ -1067,35 +1068,10 @@ func applyDateWindow(payload map[string]any, workingHours bool) error {
 
 func cliTimeLocation(timeZone string) (*time.Location, error) {
 	timeZone = strings.TrimSpace(timeZone)
-	if mapped := cliWindowsTimeZoneLocation(timeZone); mapped != "" {
+	if mapped := mstimezone.IANALocationName(timeZone); mapped != "" {
 		timeZone = mapped
 	}
 	return time.LoadLocation(timeZone)
-}
-
-func cliWindowsTimeZoneLocation(timeZone string) string {
-	switch strings.ToLower(strings.TrimSpace(timeZone)) {
-	case "utc", "coordinated universal time":
-		return "UTC"
-	case "gmt standard time":
-		return "Europe/London"
-	case "india standard time":
-		return "Asia/Kolkata"
-	case "w. europe standard time", "central european standard time", "romance standard time":
-		return "Europe/Berlin"
-	case "russian standard time":
-		return "Europe/Moscow"
-	case "eastern standard time":
-		return "America/New_York"
-	case "central standard time":
-		return "America/Chicago"
-	case "mountain standard time":
-		return "America/Denver"
-	case "pacific standard time":
-		return "America/Los_Angeles"
-	default:
-		return ""
-	}
 }
 
 func parseDurationMinutes(value string) (float64, error) {

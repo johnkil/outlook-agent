@@ -823,6 +823,54 @@ func TestHighLevelCalendarFindTimeParsesOWAWindowsTimeZone(t *testing.T) {
 	}
 }
 
+func TestHighLevelCalendarFindTimeParsesAdditionalOWAWindowsTimeZones(t *testing.T) {
+	var calls []recordedServiceCall
+	server := newOWAServiceServerByAction(t, &calls, map[string]map[string]any{
+		"GetCalendarView": {
+			"Body": map[string]any{
+				"Items": []any{
+					map[string]any{
+						"Start": "2026-05-28T09:00:00",
+						"End":   "2026-05-28T09:30:00",
+					},
+				},
+			},
+		},
+		"GetUserAvailabilityInternal": {
+			"Body": map[string]any{
+				"Responses": []any{
+					map[string]any{
+						"CalendarView": map[string]any{"Items": []any{}},
+					},
+				},
+			},
+		},
+	})
+	defer server.Close()
+	client := newTestTransport(server)
+
+	response := client.Execute(context.Background(), transport.ActionRequest{
+		Name: "calendar.find_time",
+		Payload: map[string]any{
+			"attendees":        []any{"vlad.cheshenko@example.com"},
+			"start":            "2026-05-27T23:00:00Z",
+			"end":              "2026-05-28T00:30:00Z",
+			"duration_minutes": float64(30),
+			"time_zone":        "AUS Eastern Standard Time",
+			"tentative":        "busy",
+		},
+	})
+
+	if !response.OK {
+		t.Fatalf("expected calendar.find_time ok: %#v", response)
+	}
+	suggestions := response.Data["suggestions"].([]any)
+	first := suggestions[0].(map[string]any)
+	if first["start"] != "2026-05-27T23:30:00Z" || first["end"] != "2026-05-28T00:00:00Z" {
+		t.Fatalf("expected AUS Eastern Standard Time organizer event to block first slot, got %#v", first)
+	}
+}
+
 func TestHighLevelCalendarFindTimeRejectsUnknownOWATimeZone(t *testing.T) {
 	var calls []recordedServiceCall
 	server := newOWAServiceServerByAction(t, &calls, map[string]map[string]any{

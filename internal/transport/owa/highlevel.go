@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/johnkil/outlook-agent/internal/calendarplan"
+	"github.com/johnkil/outlook-agent/internal/mstimezone"
 	"github.com/johnkil/outlook-agent/internal/transport"
 )
 
@@ -1240,33 +1241,8 @@ func owaTimeLocation(timeZone string) (*time.Location, error) {
 	if timeZone == "" {
 		return time.UTC, nil
 	}
-	if mapped := owaWindowsTimeZoneLocation(timeZone); mapped != "" {
+	if mapped := mstimezone.IANALocationName(timeZone); mapped != "" {
 		timeZone = mapped
 	}
 	return time.LoadLocation(timeZone)
-}
-
-func owaWindowsTimeZoneLocation(timeZone string) string {
-	switch strings.ToLower(strings.TrimSpace(timeZone)) {
-	case "utc", "coordinated universal time":
-		return "UTC"
-	case "gmt standard time":
-		return "Europe/London"
-	case "india standard time":
-		return "Asia/Kolkata"
-	case "w. europe standard time", "central european standard time", "romance standard time":
-		return "Europe/Berlin"
-	case "russian standard time":
-		return "Europe/Moscow"
-	case "eastern standard time":
-		return "America/New_York"
-	case "central standard time":
-		return "America/Chicago"
-	case "mountain standard time":
-		return "America/Denver"
-	case "pacific standard time":
-		return "America/Los_Angeles"
-	default:
-		return ""
-	}
 }

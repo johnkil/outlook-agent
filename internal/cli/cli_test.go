@@ -1638,6 +1638,37 @@ func TestCalendarFindTimeDateAcceptsProviderTimeZone(t *testing.T) {
 	}
 }
 
+func TestCalendarFindTimeDateAcceptsAdditionalProviderTimeZones(t *testing.T) {
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	client := &cliCapturingTransport{}
+
+	code := RunWithRuntime([]string{
+		"calendar", "find-time",
+		"--attendee", "vlad.cheshenko@example.com",
+		"--date", "2026-05-28",
+		"--timezone", "Tokyo Standard Time",
+		"--duration", "30",
+	}, &stdout, &stderr, Runtime{
+		BuildTransport: func(context.Context, Options) (transport.Transport, string, error) {
+			return client, "work", nil
+		},
+	})
+
+	if code != 0 {
+		t.Fatalf("expected exit code 0, got %d, stderr=%s", code, stderr.String())
+	}
+	if client.lastRequest.Name != "calendar.find_time" {
+		t.Fatalf("expected calendar.find_time request, got %#v", client.lastRequest)
+	}
+	if client.lastRequest.Payload["time_zone"] != "Tokyo Standard Time" {
+		t.Fatalf("expected provider timezone to be preserved, got %#v", client.lastRequest.Payload)
+	}
+	if client.lastRequest.Payload["start"] != "2026-05-28T09:00:00+09:00" || client.lastRequest.Payload["end"] != "2026-05-28T18:00:00+09:00" {
+		t.Fatalf("expected date window computed in provider timezone, got %#v", client.lastRequest.Payload)
+	}
+}
+
 func TestCalendarListCommandForwardsWindow(t *testing.T) {
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer
