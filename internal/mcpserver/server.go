@@ -1723,8 +1723,8 @@ func canonicalActionPayload(actionName string, payload map[string]any) (map[stri
 	for key, value := range payload {
 		canonical[key] = value
 	}
-	if timezone, exists := canonical["timezone"]; exists {
-		timezone = strings.TrimSpace(stringMetadata(canonical, "timezone"))
+	if _, exists := canonical["timezone"]; exists {
+		timezone := strings.TrimSpace(stringMetadata(canonical, "timezone"))
 		if timezone != "" && strings.TrimSpace(stringMetadata(canonical, "time_zone")) == "" {
 			canonical["time_zone"] = timezone
 		}
