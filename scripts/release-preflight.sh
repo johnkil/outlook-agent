@@ -25,10 +25,18 @@ if [[ "${GITHUB_REF_TYPE:-}" == "tag" ]]; then
   fi
 fi
 
-if git rev-parse --verify --quiet origin/main >/dev/null; then
-  if ! git merge-base --is-ancestor origin/main HEAD; then
-    fail "HEAD is not based on origin/main"
+if ! git rev-parse --verify --quiet origin/main >/dev/null; then
+  if git remote get-url origin >/dev/null 2>&1; then
+    git fetch origin main >/dev/null 2>&1 || true
   fi
+fi
+
+if ! git rev-parse --verify --quiet origin/main >/dev/null; then
+  fail "origin/main is unavailable; cannot prove release commit is on main"
+fi
+
+if ! git merge-base --is-ancestor HEAD origin/main; then
+  fail "release commit HEAD is not on origin/main"
 fi
 
 if ! codex_plugin_version="$(
