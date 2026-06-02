@@ -670,7 +670,7 @@ func runPeopleCommand(args []string, options Options, runtime Runtime, stdout io
 
 func runCalendarCommand(args []string, options Options, runtime Runtime, stdout io.Writer, stderr io.Writer) int {
 	if len(args) < 1 {
-		fmt.Fprintln(stderr, "calendar command requires list, availability, find-time, or mutual-free")
+		fmt.Fprintln(stderr, "calendar command requires list, availability, find-time, mutual-free, or create-meeting")
 		return 1
 	}
 	switch args[0] {
@@ -695,6 +695,13 @@ func runCalendarCommand(args []string, options Options, runtime Runtime, stdout 
 			return 1
 		}
 		return runCalendarFindTime(stdout, options, runtime, payload)
+	case "create-meeting":
+		payload, dryRunOnly, confirmToken, err := parseCalendarCreateMeetingArgs(args[1:])
+		if err != nil {
+			fmt.Fprintln(stderr, err)
+			return 1
+		}
+		return runCalendarCreateMeeting(stdout, options, runtime, payload, dryRunOnly, confirmToken)
 	default:
 		fmt.Fprintf(stderr, "unknown calendar command: %s\n", args[0])
 		return 1
@@ -735,6 +742,46 @@ func runCalendarFindTime(stdout io.Writer, options Options, runtime Runtime, pay
 	payload["attendees"] = attendees
 	delete(payload, "with")
 	return runTypedReadActionWithClient(stdout, client, "calendar find-time", "calendar.find_time", payload, "suggestions")
+}
+
+func runCalendarCreateMeeting(stdout io.Writer, options Options, runtime Runtime, payload map[string]any, dryRunOnly bool, confirmToken string) int {
+	client, errCode, err := buildCLITransport(stdout, options, runtime, "calendar create-meeting")
+	if err != nil {
+		return errCode
+	}
+	attendees := nonEmptyStrings(stringSliceAny(payload["attendees"]))
+	for _, query := range stringSliceAny(payload["with"]) {
+		email, resolveData, err := resolvePersonEmail(client, query, stringAny(payload["mailbox"]))
+		if err != nil {
+			_ = writeJSON(stdout, resolveErrorOutput("calendar create-meeting", err, resolveData))
+			return 3
+		}
+		attendees = append(attendees, email)
+	}
+	payload["attendees"] = nonEmptyStrings(attendees)
+	delete(payload, "with")
+	if dryRunOnly {
+		summary := client.DryRun(context.Background(), transport.ActionRequest{Name: "calendar.create_meeting", Payload: payload})
+		return writeJSON(stdout, map[string]any{
+			"ok":      summary.Error == "",
+			"command": "calendar create-meeting dry-run",
+			"dry_run": summary,
+		})
+	}
+	if strings.TrimSpace(confirmToken) == "" {
+		_ = writeJSON(stdout, map[string]any{
+			"ok":      false,
+			"command": "calendar create-meeting",
+			"error":   "calendar create-meeting CLI supports review-only dry-run and does not issue confirmation tokens; confirmed execution must go through MCP outlook.calendar_create_meeting or outlook.action_confirm",
+		})
+		return 1
+	}
+	_ = writeJSON(stdout, map[string]any{
+		"ok":      false,
+		"command": "calendar create-meeting",
+		"error":   "confirmed calendar create-meeting execution is available through MCP outlook.calendar_create_meeting or outlook.action_confirm",
+	})
+	return 1
 }
 
 func resolveErrorOutput(command string, err error, data map[string]any) map[string]any {
@@ -1030,6 +1077,107 @@ func parseCalendarFindTimeArgs(args []string) (map[string]any, error) {
 	return payload, nil
 }
 
+func parseCalendarCreateMeetingArgs(args []string) (map[string]any, bool, string, error) {
+	payload := map[string]any{}
+	attendees := make([]string, 0)
+	withPeople := make([]string, 0)
+	var dryRunOnly bool
+	var confirmToken string
+	for index := 0; index < len(args); index++ {
+		switch args[index] {
+		case "--json":
+			continue
+		case "--subject":
+			value, next, err := valueArg(args, index, "--subject")
+			if err != nil {
+				return nil, false, "", err
+			}
+			payload["subject"] = value
+			index = next
+		case "--attendee":
+			value, next, err := valueArg(args, index, "--attendee")
+			if err != nil {
+				return nil, false, "", err
+			}
+			attendees = append(attendees, value)
+			index = next
+		case "--with":
+			value, next, err := valueArg(args, index, "--with")
+			if err != nil {
+				return nil, false, "", err
+			}
+			withPeople = append(withPeople, value)
+			index = next
+		case "--start":
+			value, next, err := valueArg(args, index, "--start")
+			if err != nil {
+				return nil, false, "", err
+			}
+			payload["start"] = value
+			index = next
+		case "--end":
+			value, next, err := valueArg(args, index, "--end")
+			if err != nil {
+				return nil, false, "", err
+			}
+			payload["end"] = value
+			index = next
+		case "--timezone":
+			value, next, err := valueArg(args, index, "--timezone")
+			if err != nil {
+				return nil, false, "", err
+			}
+			payload["time_zone"] = value
+			index = next
+		case "--location":
+			value, next, err := valueArg(args, index, "--location")
+			if err != nil {
+				return nil, false, "", err
+			}
+			payload["location"] = value
+			index = next
+		case "--body":
+			value, next, err := valueArg(args, index, "--body")
+			if err != nil {
+				return nil, false, "", err
+			}
+			payload["body"] = value
+			index = next
+		case "--mailbox":
+			value, next, err := valueArg(args, index, "--mailbox")
+			if err != nil {
+				return nil, false, "", err
+			}
+			payload["mailbox"] = value
+			index = next
+		case "--dry-run":
+			dryRunOnly = true
+		case "--confirm-token":
+			value, next, err := valueArg(args, index, "--confirm-token")
+			if err != nil {
+				return nil, false, "", err
+			}
+			confirmToken = value
+			index = next
+		default:
+			return nil, false, "", fmt.Errorf("unknown calendar create-meeting option: %s", args[index])
+		}
+	}
+	if strings.TrimSpace(stringAny(payload["subject"])) == "" {
+		return nil, false, "", fmt.Errorf("calendar create-meeting requires --subject")
+	}
+	if payload["start"] == nil || payload["end"] == nil {
+		return nil, false, "", fmt.Errorf("calendar create-meeting requires --start and --end")
+	}
+	attendees = nonEmptyStrings(attendees)
+	if len(attendees) == 0 && len(withPeople) == 0 {
+		return nil, false, "", fmt.Errorf("calendar create-meeting requires at least one nonblank --attendee or --with")
+	}
+	payload["attendees"] = attendees
+	payload["with"] = withPeople
+	return payload, dryRunOnly, confirmToken, nil
+}
+
 func valueArg(args []string, index int, flag string) (string, int, error) {
 	index++
 	if index >= len(args) {
@@ -1125,6 +1273,17 @@ func stringSliceAny(value any) []string {
 	default:
 		return nil
 	}
+}
+
+func nonEmptyStrings(values []string) []string {
+	output := make([]string, 0, len(values))
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value != "" {
+			output = append(output, value)
+		}
+	}
+	return output
 }
 
 func runAuthCheck(stdout io.Writer, options Options, runtime Runtime) int {
@@ -1453,6 +1612,7 @@ Usage:
   outlook-agent calendar list (--date <today|tomorrow|YYYY-MM-DD>|--start <ts> --end <ts>) [--timezone <tz>]
   outlook-agent calendar availability (--email <addr>|--with <query>) (--date <date>|--start <ts> --end <ts>) [--timezone <tz>]
   outlook-agent calendar find-time (--attendee <addr>|--with <query>) (--date <date>|--start <ts> --end <ts>) [--duration <minutes|30m>] [--timezone <tz>] [--tentative busy|free]
+  outlook-agent calendar create-meeting --subject <text> (--attendee <addr>|--with <query>) --start <ts> --end <ts> [--timezone <tz>] [--location <text>] [--body <text>] --dry-run
   outlook-agent policy explain [--action <name>]
   outlook-agent setup opencode --print [--binary <path>] [--config <path>]
   outlook-agent setup opencode print [--binary <path>] [--config <path>]

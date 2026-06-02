@@ -40,6 +40,7 @@ Compatibility version `0.1` includes these tool names:
 - `outlook.calendar_list`
 - `outlook.calendar_availability`
 - `outlook.calendar_find_time`
+- `outlook.calendar_create_meeting`
 - `outlook.calendar_respond`
 - `outlook.action_dry_run`
 - `outlook.action_confirm`
@@ -135,6 +136,15 @@ dry-run review, exact confirmation, and host approval when approval mode
 requires it. Graph review packets include metadata-only meeting context such as
 subject, time, location, organizer, attendees, and current response status when
 available, never event body content.
+
+Compatibility version `0.1` also includes
+`outlook.calendar_create_meeting` for creating one meeting through typed
+scheduling. The underlying action is `calendar.create_meeting`, is classified
+as `send_like`, and requires clients to first call `outlook.action_dry_run`,
+review the packet, and then call `outlook.calendar_create_meeting` with the
+exact confirmation token plus host approval fields when approval mode requires
+them. `outlook.calendar_create_meeting` must not require clients to construct
+raw OWA `CreateItem` payloads.
 
 Compatibility version `0.1` also includes `outlook.mail_fetch_bodies`, an
 explicit-id batch helper capped at 50 ids per call. It is not a mailbox search,

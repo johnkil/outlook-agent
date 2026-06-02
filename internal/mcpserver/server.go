@@ -319,6 +319,22 @@ type CalendarFindTimeInput struct {
 	Mailbox         string   `json:"mailbox,omitempty" jsonschema:"optional mailbox user id or user principal name"`
 }
 
+type CalendarCreateMeetingInput struct {
+	Subject             string   `json:"subject" jsonschema:"meeting subject"`
+	Start               string   `json:"start" jsonschema:"meeting start timestamp"`
+	End                 string   `json:"end" jsonschema:"meeting end timestamp"`
+	Attendees           []string `json:"attendees" jsonschema:"attendee email addresses"`
+	TimeZone            string   `json:"timezone,omitempty" jsonschema:"display and interpretation timezone"`
+	Body                string   `json:"body,omitempty" jsonschema:"plain text meeting body"`
+	Location            string   `json:"location,omitempty" jsonschema:"meeting location"`
+	IsOnlineMeeting     *bool    `json:"is_online_meeting,omitempty" jsonschema:"whether to request an online meeting"`
+	ReminderMinutes     *float64 `json:"reminder_minutes,omitempty" jsonschema:"reminder minutes before start"`
+	ConfirmToken        string   `json:"confirm_token" jsonschema:"confirmation token from outlook.action_dry_run"`
+	ApprovalChallengeID string   `json:"approval_challenge_id,omitempty" jsonschema:"payload-bound external approval challenge id"`
+	ApprovalToken       string   `json:"approval_token,omitempty" jsonschema:"external approval token supplied by the host after user approval"`
+	Mailbox             string   `json:"mailbox,omitempty" jsonschema:"optional mailbox user id or user principal name"`
+}
+
 type CalendarFindTimeOutput struct {
 	Suggestions []any `json:"suggestions"`
 }
@@ -493,6 +509,9 @@ var toolRegistrations = []toolRegistration{
 	{name: "outlook.calendar_find_time", add: func(server *mcp.Server, runtime *Runtime, name string) {
 		mcp.AddTool(server, mcpTool(name), calendarFindTimeHandler(runtime.client))
 	}},
+	{name: "outlook.calendar_create_meeting", add: func(server *mcp.Server, runtime *Runtime, name string) {
+		mcp.AddTool(server, mcpTool(name), calendarCreateMeetingHandler(runtime))
+	}},
 	{name: "outlook.calendar_respond", add: func(server *mcp.Server, runtime *Runtime, name string) {
 		mcp.AddTool(server, mcpTool(name), calendarRespondHandler(runtime))
 	}},
@@ -537,6 +556,7 @@ var toolDescriptionByName = map[string]string{
 	"outlook.calendar_list":               "List calendar events for a bounded time window.",
 	"outlook.calendar_availability":       "List free/busy availability for a bounded time window.",
 	"outlook.calendar_find_time":          "Find mutual free time suggestions for attendees; planning-only and does not create or send meetings.",
+	"outlook.calendar_create_meeting":     "Create a calendar meeting only after dry-run review, exact confirmation, and required host approval.",
 	"outlook.calendar_respond":            "Respond to one exact event only after dry-run review, confirmation, and required approval.",
 	"outlook.action_dry_run":              "Required summary step for broad, mutating, send-like, destructive, or unknown actions.",
 	"outlook.action_confirm":              "Execute only the exact payload reviewed by outlook.action_dry_run.",
@@ -1290,6 +1310,75 @@ func calendarFindTimeHandler(client transport.Transport) func(context.Context, *
 		redacted := redact.Value(response.Data).(map[string]any)
 		suggestions, _ := redacted["suggestions"].([]any)
 		return nil, CalendarFindTimeOutput{Suggestions: suggestions}, nil
+	}
+}
+
+func calendarCreateMeetingHandler(runtime *Runtime) func(context.Context, *mcp.CallToolRequest, CalendarCreateMeetingInput) (*mcp.CallToolResult, ActionResultOutput, error) {
+	return func(ctx context.Context, _ *mcp.CallToolRequest, input CalendarCreateMeetingInput) (*mcp.CallToolResult, ActionResultOutput, error) {
+		if strings.TrimSpace(input.Subject) == "" {
+			return nil, ActionResultOutput{OK: false, Error: "subject required"}, nil
+		}
+		if strings.TrimSpace(input.Start) == "" || strings.TrimSpace(input.End) == "" {
+			return nil, ActionResultOutput{OK: false, Error: "start and end required"}, nil
+		}
+		attendees := nonEmptyStrings(input.Attendees)
+		if len(attendees) == 0 {
+			return nil, ActionResultOutput{OK: false, Error: "attendees required"}, nil
+		}
+		if input.ConfirmToken == "" {
+			return nil, ActionResultOutput{OK: false, Error: "confirm_token required"}, nil
+		}
+		payload := map[string]any{
+			"subject":   input.Subject,
+			"start":     input.Start,
+			"end":       input.End,
+			"attendees": attendees,
+		}
+		if strings.TrimSpace(input.TimeZone) != "" {
+			payload["time_zone"] = input.TimeZone
+		}
+		if strings.TrimSpace(input.Body) != "" {
+			payload["body"] = input.Body
+		}
+		if strings.TrimSpace(input.Location) != "" {
+			payload["location"] = input.Location
+		}
+		if input.IsOnlineMeeting != nil {
+			payload["is_online_meeting"] = *input.IsOnlineMeeting
+		}
+		if input.ReminderMinutes != nil {
+			payload["reminder_minutes"] = *input.ReminderMinutes
+		}
+		payload = withMailbox(payload, input.Mailbox)
+		actionName := "calendar.create_meeting"
+		summary, class, review := dryRunReviewFor(ctx, runtime.client, actionName, payload, false)
+		if summary.Error != "" {
+			message := redact.String(summary.Error)
+			runtime.recordAudit(audit.TypeReject, actionName, payload, runtime.profile, class, review, "blocked", summary.Count, message)
+			return nil, ActionResultOutput{OK: false, Error: message}, nil
+		}
+		pendingApproval, err := runtime.validateExternalApproval(input.ApprovalChallengeID, input.ApprovalToken, actionName, payload, false, runtime.profile, review, class)
+		if err != nil {
+			runtime.recordAudit(audit.TypeReject, actionName, payload, runtime.profile, class, review, "blocked", summary.Count, err.Error())
+			return nil, ActionResultOutput{OK: false, Error: err.Error()}, nil
+		}
+		if !runtime.confirm.Consume(input.ConfirmToken, confirmationBindingFor(runtime.client, runtime.profile, actionName, payload, false, review, class)) {
+			runtime.recordAudit(audit.TypeReject, actionName, payload, runtime.profile, class, review, "blocked", summary.Count, "confirmation token is invalid")
+			return nil, ActionResultOutput{OK: false, Error: "confirmation token is invalid"}, nil
+		}
+		if err := runtime.consumeExternalApproval(pendingApproval); err != nil {
+			runtime.recordAudit(audit.TypeReject, actionName, payload, runtime.profile, class, review, "blocked", summary.Count, err.Error())
+			return nil, ActionResultOutput{OK: false, Error: err.Error()}, nil
+		}
+		decision := confirmedActionDecision(runtime.client, actionName, payload, false)
+		if !decision.Allowed {
+			runtime.recordAudit(audit.TypeReject, actionName, payload, runtime.profile, class, review, "blocked", summary.Count, decision.Reason)
+			return nil, ActionResultOutput{OK: false, Error: decision.Reason}, nil
+		}
+		runtime.recordAudit(audit.TypeConfirm, actionName, payload, runtime.profile, class, review, "accepted", summary.Count, "")
+		response := runtime.client.Execute(ctx, transport.ActionRequest{Name: actionName, Payload: payload})
+		runtime.recordAudit(audit.TypeExecute, actionName, payload, runtime.profile, class, review, auditDecisionForResponse(response), summary.Count, response.Error)
+		return nil, actionResultFromResponse(response), nil
 	}
 }
 
