@@ -1291,15 +1291,29 @@ func calendarCreateBodyHTML(body string) string {
 	return fmt.Sprintf(`<html><head><meta http-equiv="Content-Type" content="text/html; charset=UTF-8"></head><body dir="ltr"><div dir="ltr"><p>%s</p></div></body></html>`, escaped)
 }
 
-func calendarDeleteEventItemID(eventID string, changeKey string) map[string]any {
-	itemID := map[string]any{
-		"__type": "ItemId:#Exchange",
-		"Id":     eventID,
+func calendarDeleteEventItemID(eventID string, changeKey string) orderedObject {
+	fields := []orderedField{
+		field("__type", "ItemId:#Exchange"),
+		field("Id", eventID),
 	}
 	if changeKey = strings.TrimSpace(changeKey); changeKey != "" {
-		itemID["ChangeKey"] = changeKey
+		fields = append(fields, field("ChangeKey", changeKey))
 	}
-	return itemID
+	return object(fields...)
+}
+
+func orderedItemIDValue(value any) any {
+	switch typed := value.(type) {
+	case string:
+		return object(field("__type", "ItemId:#Exchange"), field("Id", typed))
+	case map[string]any:
+		if strings.TrimSpace(stringValue(typed, "__type")) == "ItemId:#Exchange" {
+			return calendarDeleteEventItemID(stringValue(typed, "Id"), stringValue(typed, "ChangeKey"))
+		}
+		return orderTypeFieldsFirst(typed)
+	default:
+		return value
+	}
 }
 
 func (client *Transport) buildCancelCalendarEventRequest(eventID string, changeKey string, comment string) any {
@@ -1324,11 +1338,9 @@ func (client *Transport) buildCancelCalendarEventRequest(eventID string, changeK
 func (client *Transport) buildMoveToDeletedItemsRequest(ids []any) any {
 	itemIDs := make([]any, 0, len(ids))
 	for _, id := range ids {
-		switch typed := id.(type) {
-		case string:
-			itemIDs = append(itemIDs, object(field("__type", "ItemId:#Exchange"), field("Id", typed)))
-		case map[string]any:
-			itemIDs = append(itemIDs, typed)
+		itemID := orderedItemIDValue(id)
+		if itemID != nil {
+			itemIDs = append(itemIDs, itemID)
 		}
 	}
 	return object(
@@ -1346,11 +1358,9 @@ func (client *Transport) buildMoveToDeletedItemsRequest(ids []any) any {
 func (client *Transport) buildMoveItemRequest(ids []any, folderID string) any {
 	itemIDs := make([]any, 0, len(ids))
 	for _, id := range ids {
-		switch typed := id.(type) {
-		case string:
-			itemIDs = append(itemIDs, object(field("__type", "ItemId:#Exchange"), field("Id", typed)))
-		case map[string]any:
-			itemIDs = append(itemIDs, typed)
+		itemID := orderedItemIDValue(id)
+		if itemID != nil {
+			itemIDs = append(itemIDs, itemID)
 		}
 	}
 	return object(
