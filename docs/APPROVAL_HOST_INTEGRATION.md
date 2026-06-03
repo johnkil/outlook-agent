@@ -125,6 +125,19 @@ A minimal standalone signer example is available in
 `OUTLOOK_AGENT_APPROVAL_SECRET`, reads the exact signing payload from stdin or a
 file, and prints only the approval token plus safe metadata.
 
+## Live Calendar Mutation Smoke
+
+The live create/delete calendar smoke is opt-in and requires a generic attendee
+fixture from the environment:
+
+```bash
+OUTLOOK_AGENT_LIVE_CONFIG=/path/to/outlook-agent.json \
+OUTLOOK_AGENT_LIVE_CALENDAR_ATTENDEE=teammate@example.com \
+OUTLOOK_AGENT_LIVE_MUTATION_SMOKE=1 \
+OUTLOOK_AGENT_APPROVAL_SECRET="$(cat /path/to/approval-secret)" \
+go test ./cmd/outlook-agent -run TestLiveBinaryMCPStdioCalendarCreateDeleteSmoke -count=1
+```
+
 ## Logging Rules
 
 Safe to log:
