@@ -45,6 +45,8 @@ func New() *Transport {
 			{Name: "calendar.find_time", Transport: "fake", Class: policy.ReadMetadata, Level: action.LevelHighLevelMCPTool},
 			{Name: "calendar.respond", Transport: "fake", Class: policy.SendLike, Level: action.LevelHighLevelMCPTool},
 			{Name: "calendar.create_meeting", Transport: "fake", Class: policy.SendLike, Level: action.LevelHighLevelMCPTool},
+			{Name: "calendar.delete_event", Transport: "fake", Class: policy.ReversibleBulk, Level: action.LevelHighLevelMCPTool},
+			{Name: "calendar.cancel_meeting", Transport: "fake", Class: policy.SendLike, Level: action.LevelHighLevelMCPTool},
 		},
 	}
 }
@@ -297,6 +299,30 @@ func (client *Transport) Execute(_ context.Context, request transport.ActionRequ
 				},
 			},
 		}
+	case "calendar.delete_event":
+		eventID := calendarEventID(request.Payload)
+		if eventID == "" {
+			return transport.ActionResponse{OK: false, Error: "event_id is required"}
+		}
+		return transport.ActionResponse{
+			OK: true,
+			Data: map[string]any{
+				"id":     eventID,
+				"status": "moved_to_deleted_items",
+			},
+		}
+	case "calendar.cancel_meeting":
+		eventID := calendarEventID(request.Payload)
+		if eventID == "" {
+			return transport.ActionResponse{OK: false, Error: "event_id is required"}
+		}
+		return transport.ActionResponse{
+			OK: true,
+			Data: map[string]any{
+				"id":     eventID,
+				"status": "cancelled",
+			},
+		}
 	default:
 		return transport.ActionResponse{
 			OK:    false,
@@ -512,12 +538,68 @@ func (client *Transport) DryRun(_ context.Context, request transport.ActionReque
 		}
 		return summary
 	}
+	if request.Name == "calendar.delete_event" {
+		return fakeCalendarEventMutationDryRun(request.Name, request.Payload, policy.ReversibleBulk, true, false)
+	}
+	if request.Name == "calendar.cancel_meeting" {
+		return fakeCalendarEventMutationDryRun(request.Name, request.Payload, policy.SendLike, false, true)
+	}
 	return transport.DryRunSummary{
 		Action:               request.Name,
 		Count:                dryRunCount(request),
 		Reversible:           request.Name == "mail.move_to_deleted_items" || request.Name == "mail.rules.set_enabled",
 		RequiresConfirmation: true,
 	}
+}
+
+func fakeCalendarEventMutationDryRun(actionName string, payload map[string]any, class policy.SafetyClass, reversible bool, sendsResponse bool) transport.DryRunSummary {
+	review, err := fakeCalendarEventMutationReview(actionName, payload, class, sendsResponse)
+	summary := transport.DryRunSummary{
+		Action:               actionName,
+		Count:                1,
+		Reversible:           reversible,
+		RequiresConfirmation: true,
+		SafetyClass:          string(class),
+		Review:               &review,
+		Warnings:             review.Limitations,
+	}
+	if err != nil {
+		summary.Count = 0
+		summary.Error = err.Error()
+	}
+	return summary
+}
+
+func fakeCalendarEventMutationReview(actionName string, payload map[string]any, class policy.SafetyClass, sendsResponse bool) (transport.ReviewPacket, error) {
+	eventID := calendarEventID(payload)
+	if eventID == "" {
+		err := fmt.Errorf("event_id is required")
+		return transport.ReviewPacket{
+			Version:            transport.ReviewPacketVersion,
+			Transport:          "fake",
+			Action:             actionName,
+			SafetyClass:        string(class),
+			Completeness:       transport.ReviewCompletenessMinimal,
+			PayloadFingerprint: transport.PayloadFingerprint(payload),
+			Limitations:        []string{err.Error()},
+		}, err
+	}
+
+	mutation := &transport.MutationReview{Operation: "move", To: "Deleted Items"}
+	if actionName == "calendar.cancel_meeting" {
+		mutation = &transport.MutationReview{Operation: "cancel"}
+	}
+	return transport.ReviewPacket{
+		Version:            transport.ReviewPacketVersion,
+		Transport:          "fake",
+		Action:             actionName,
+		SafetyClass:        string(class),
+		Completeness:       transport.ReviewCompletenessComplete,
+		Targets:            []transport.TargetRef{{Kind: "event", ID: eventID, Name: "Fake event"}},
+		Mutation:           mutation,
+		Calendar:           &transport.CalendarReview{EventID: eventID, SendsResponse: sendsResponse},
+		PayloadFingerprint: transport.PayloadFingerprint(payload),
+	}, nil
 }
 
 func fakeCalendarCreateMeetingReview(actionName string, payload map[string]any) (transport.ReviewPacket, error) {
@@ -628,6 +710,10 @@ func reversibleClassForCount(count int) policy.SafetyClass {
 		return policy.ReversibleSingleItem
 	}
 	return policy.ReversibleBulk
+}
+
+func calendarEventID(payload map[string]any) string {
+	return strings.TrimSpace(stringValue(payload, "event_id", ""))
 }
 
 func dryRunCount(request transport.ActionRequest) int {
