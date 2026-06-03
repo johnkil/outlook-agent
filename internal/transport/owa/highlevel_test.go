@@ -2754,6 +2754,70 @@ func TestHighLevelMailMoveToDeletedItemsReportsMapItemIDs(t *testing.T) {
 	}
 }
 
+func TestHighLevelCalendarDeleteEventMovesSingleEventToDeletedItems(t *testing.T) {
+	var calls []recordedServiceCall
+	server := newOWAServiceServer(t, &calls, map[string]any{
+		"Body": map[string]any{"ResponseMessages": map[string]any{"Items": []any{map[string]any{"ResponseClass": "Success"}}}},
+	})
+	defer server.Close()
+	client := newTestTransport(server)
+
+	response := client.Execute(context.Background(), transport.ActionRequest{
+		Name: "calendar.delete_event",
+		Payload: map[string]any{
+			"event_id":   "event-1",
+			"change_key": "ck-1",
+		},
+	})
+
+	if !response.OK {
+		t.Fatalf("expected calendar.delete_event ok: %#v", response)
+	}
+	if calls[0].Action != "DeleteItem" {
+		t.Fatalf("expected DeleteItem, got %q", calls[0].Action)
+	}
+	body := calls[0].Body["Body"].(map[string]any)
+	if body["DeleteType"] != "MoveToDeletedItems" {
+		t.Fatalf("expected MoveToDeletedItems, got %#v", body["DeleteType"])
+	}
+	if body["SendMeetingCancellations"] != "SendToNone" {
+		t.Fatalf("expected SendToNone meeting cancellations, got %#v", body["SendMeetingCancellations"])
+	}
+	itemIDs := body["ItemIds"].([]any)
+	if len(itemIDs) != 1 {
+		t.Fatalf("expected exactly one item id, got %#v", itemIDs)
+	}
+	itemID := itemIDs[0].(map[string]any)
+	if itemID["Id"] != "event-1" || itemID["ChangeKey"] != "ck-1" {
+		t.Fatalf("expected event id/change key in ItemIds payload, got %#v", itemIDs)
+	}
+	if response.Data["id"] != "event-1" || response.Data["status"] != "moved_to_deleted_items" {
+		t.Fatalf("expected typed delete-event response, got %#v", response.Data)
+	}
+}
+
+func TestHighLevelCalendarDeleteEventRequiresEventID(t *testing.T) {
+	var calls []recordedServiceCall
+	server := newOWAServiceServer(t, &calls, map[string]any{"Body": map[string]any{"ResponseMessages": map[string]any{"Items": []any{}}}})
+	defer server.Close()
+	client := newTestTransport(server)
+
+	response := client.Execute(context.Background(), transport.ActionRequest{
+		Name:    "calendar.delete_event",
+		Payload: map[string]any{},
+	})
+
+	if response.OK {
+		t.Fatalf("expected calendar.delete_event without event_id to fail, got %#v", response)
+	}
+	if !strings.Contains(response.Error, "event_id is required") {
+		t.Fatalf("expected event_id validation error, got %q", response.Error)
+	}
+	if len(calls) != 0 {
+		t.Fatalf("expected missing event_id to fail before service call, got %#v", calls)
+	}
+}
+
 func TestHighLevelMailSearchRejectsOversizedServiceResponse(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
 		switch request.URL.Path {

@@ -22,6 +22,7 @@ func highLevelCapabilities() []action.Definition {
 		{Name: "calendar.availability", Transport: "owa", Class: policy.ReadMetadata, Level: action.LevelHighLevelMCPTool},
 		{Name: "calendar.find_time", Transport: "owa", Class: policy.ReadMetadata, Level: action.LevelHighLevelMCPTool},
 		{Name: "calendar.create_meeting", Transport: "owa", Class: policy.SendLike, Level: action.LevelHighLevelMCPTool},
+		{Name: "calendar.delete_event", Transport: "owa", Class: policy.ReversibleBulk, Level: action.LevelHighLevelMCPTool},
 	}
 }
 

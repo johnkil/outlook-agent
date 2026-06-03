@@ -122,6 +122,18 @@ func (client *Transport) executeHighLevel(ctx context.Context, request transport
 		}
 		event["verification_status"] = "returned"
 		return transport.ActionResponse{OK: true, Data: map[string]any{"event": event}}, true
+	case "calendar.delete_event":
+		eventID := strings.TrimSpace(stringValue(request.Payload, "event_id"))
+		if eventID == "" {
+			return transport.ActionResponse{OK: false, Error: "event_id is required"}, true
+		}
+		response := client.executeService(ctx, "DeleteItem", client.buildMoveToDeletedItemsRequest([]any{
+			calendarDeleteEventItemID(eventID, stringValue(request.Payload, "change_key")),
+		}), false)
+		if !response.OK {
+			return response, true
+		}
+		return calendarDeleteEventResult(eventID, response.Data), true
 	case "mail.fetch_metadata":
 		messageID := strings.TrimSpace(stringValue(request.Payload, "id"))
 		if messageID == "" {
@@ -277,6 +289,29 @@ func moveToDeletedResult(ids []any, payload map[string]any) transport.ActionResp
 		return transport.ActionResponse{OK: false, Error: "some messages failed to move to Deleted Items", Data: data}
 	}
 	return transport.ActionResponse{OK: true, Data: data}
+}
+
+func calendarDeleteEventResult(eventID string, payload map[string]any) transport.ActionResponse {
+	messages := responseMessages(payload)
+	if len(messages) > 0 {
+		message, _ := messages[0].(map[string]any)
+		responseClass := strings.TrimSpace(stringValue(message, "ResponseClass"))
+		if responseClass != "" && !strings.EqualFold(responseClass, "Success") {
+			return transport.ActionResponse{
+				OK:    false,
+				Error: "calendar.delete_event failed: " + responseMessageError(message),
+				Data: map[string]any{
+					"id":     eventID,
+					"status": "failed",
+				},
+			}
+		}
+	}
+	return transport.ActionResponse{OK: true, Data: map[string]any{
+		"id":         eventID,
+		"status":     "moved_to_deleted_items",
+		"reversible": true,
+	}}
 }
 
 func moveItemResult(ids []any, payload map[string]any) transport.ActionResponse {
@@ -668,6 +703,32 @@ func (client *Transport) buildGetItemRequest(id string, includeBody bool) any {
 			field("ItemShape", object(itemShapeFields...)),
 			field("ItemIds", []any{
 				object(field("__type", "ItemId:#Exchange"), field("Id", id)),
+			}),
+		)),
+	)
+}
+
+func (client *Transport) buildGetCalendarEventReviewRequest(id string, changeKey string) any {
+	return object(
+		field("__type", "GetItemJsonRequest:#Exchange"),
+		field("Header", client.requestHeaderPayload("Exchange2013")),
+		field("Body", object(
+			field("__type", "GetItemRequest:#Exchange"),
+			field("ItemShape", object(
+				field("__type", "ItemResponseShape:#Exchange"),
+				field("BaseShape", "IdOnly"),
+				field("AdditionalProperties", []any{
+					propertyURI("item:Subject"),
+					propertyURI("calendar:Start"),
+					propertyURI("calendar:End"),
+					propertyURI("calendar:Location"),
+					propertyURI("calendar:Organizer"),
+					propertyURI("calendar:RequiredAttendees"),
+					propertyURI("calendar:MyResponseType"),
+				}),
+			)),
+			field("ItemIds", []any{
+				calendarDeleteEventItemID(id, changeKey),
 			}),
 		)),
 	)
@@ -1195,6 +1256,17 @@ func calendarCreateBodyHTML(body string) string {
 	}
 	escaped := html.EscapeString(body)
 	return fmt.Sprintf(`<html><head><meta http-equiv="Content-Type" content="text/html; charset=UTF-8"></head><body dir="ltr"><div dir="ltr"><p>%s</p></div></body></html>`, escaped)
+}
+
+func calendarDeleteEventItemID(eventID string, changeKey string) map[string]any {
+	itemID := map[string]any{
+		"__type": "ItemId:#Exchange",
+		"Id":     eventID,
+	}
+	if changeKey = strings.TrimSpace(changeKey); changeKey != "" {
+		itemID["ChangeKey"] = changeKey
+	}
+	return itemID
 }
 
 func (client *Transport) buildMoveToDeletedItemsRequest(ids []any) any {
