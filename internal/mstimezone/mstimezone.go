@@ -1,6 +1,9 @@
 package mstimezone
 
-import "strings"
+import (
+	"sort"
+	"strings"
+)
 
 var windowsToIANA = map[string]string{
 	"dateline standard time":          "Etc/GMT+12",
@@ -153,6 +156,39 @@ var preferredWindowsByIANA = map[string]string{
 	"asia/kamchatka": "Russia Time Zone 11",
 }
 
+var canonicalWindowsNames = map[string]string{
+	"utc":                             "UTC",
+	"utc-11":                          "UTC-11",
+	"utc-09":                          "UTC-09",
+	"utc-08":                          "UTC-08",
+	"utc-02":                          "UTC-02",
+	"utc+12":                          "UTC+12",
+	"utc+13":                          "UTC+13",
+	"gmt standard time":               "GMT Standard Time",
+	"us mountain standard time":       "US Mountain Standard Time",
+	"us eastern standard time":        "US Eastern Standard Time",
+	"sa pacific standard time":        "SA Pacific Standard Time",
+	"pacific sa standard time":        "Pacific SA Standard Time",
+	"sa western standard time":        "SA Western Standard Time",
+	"sa eastern standard time":        "SA Eastern Standard Time",
+	"e. south america standard time":  "E. South America Standard Time",
+	"w. europe standard time":         "W. Europe Standard Time",
+	"w. central africa standard time": "W. Central Africa Standard Time",
+	"e. europe standard time":         "E. Europe Standard Time",
+	"e. africa standard time":         "E. Africa Standard Time",
+	"w. mongolia standard time":       "W. Mongolia Standard Time",
+	"w. australia standard time":      "W. Australia Standard Time",
+	"n. central asia standard time":   "N. Central Asia Standard Time",
+	"cen. australia standard time":    "Cen. Australia Standard Time",
+	"mid-atlantic standard time":      "Mid-Atlantic Standard Time",
+	"gtb standard time":               "GTB Standard Time",
+	"fle standard time":               "FLE Standard Time",
+	"se asia standard time":           "SE Asia Standard Time",
+	"aus central w. standard time":    "AUS Central W. Standard Time",
+	"aus central standard time":       "AUS Central Standard Time",
+	"aus eastern standard time":       "AUS Eastern Standard Time",
+}
+
 var ianaToWindows = buildIANAToWindows()
 
 func WindowsLocationName(timeZone string) string {
@@ -168,7 +204,14 @@ func WindowsLocationName(timeZone string) string {
 
 func buildIANAToWindows() map[string]string {
 	out := make(map[string]string, len(windowsToIANA))
-	for windows, iana := range windowsToIANA {
+	windowsKeys := make([]string, 0, len(windowsToIANA))
+	for windows := range windowsToIANA {
+		windowsKeys = append(windowsKeys, windows)
+	}
+	sort.Strings(windowsKeys)
+
+	for _, windows := range windowsKeys {
+		iana := windowsToIANA[windows]
 		key := strings.ToLower(strings.TrimSpace(iana))
 		if key == "" {
 			continue
@@ -184,7 +227,12 @@ func buildIANAToWindows() map[string]string {
 }
 
 func canonicalWindowsName(value string) string {
-	words := strings.Fields(strings.ToLower(strings.TrimSpace(value)))
+	normalized := strings.ToLower(strings.TrimSpace(value))
+	if canonical, ok := canonicalWindowsNames[normalized]; ok {
+		return canonical
+	}
+
+	words := strings.Fields(normalized)
 	for index, word := range words {
 		words[index] = canonicalWindowsWord(word)
 	}

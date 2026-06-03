@@ -72,6 +72,25 @@ func TestWindowsLocationNameCanonicalizesParenthesizedProviderIDs(t *testing.T) 
 	}
 }
 
+func TestWindowsLocationNamePreservesWindowsAcronymCasing(t *testing.T) {
+	cases := []struct {
+		input string
+		want  string
+	}{
+		{input: "Europe/Bucharest", want: "GTB Standard Time"},
+		{input: "Europe/Kyiv", want: "FLE Standard Time"},
+		{input: "Asia/Bangkok", want: "SE Asia Standard Time"},
+		{input: "Australia/Sydney", want: "AUS Eastern Standard Time"},
+		{input: "Atlantic/South_Georgia", want: "Mid-Atlantic Standard Time"},
+		{input: " aus eastern standard time ", want: "AUS Eastern Standard Time"},
+	}
+	for _, tt := range cases {
+		if got := WindowsLocationName(tt.input); got != tt.want {
+			t.Fatalf("WindowsLocationName(%q) = %q, want %q", tt.input, got, tt.want)
+		}
+	}
+}
+
 func TestWindowsLocationNamePreservesProviderID(t *testing.T) {
 	if got := WindowsLocationName(" russian standard time "); got != "Russian Standard Time" {
 		t.Fatalf("expected canonical provider name, got %q", got)
