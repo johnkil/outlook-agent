@@ -116,10 +116,11 @@ func (client *Transport) executeHighLevel(ctx context.Context, request transport
 			return response, true
 		}
 		events := normalizeCalendarItems(extractItems(response.Data))
-		event := firstMap(events)
+		event := firstMapWithID(events)
 		if strings.TrimSpace(stringValue(event, "id")) == "" {
-			return transport.ActionResponse{OK: false, Error: "calendar.create_meeting missing created event id"}, true
+			return client.recoverCreatedMeetingEvent(ctx, meeting), true
 		}
+		event["verification_status"] = "returned"
 		return transport.ActionResponse{OK: true, Data: map[string]any{"event": event}}, true
 	case "mail.fetch_metadata":
 		messageID := strings.TrimSpace(stringValue(request.Payload, "id"))
@@ -939,6 +940,112 @@ func createMeetingAttendeeEmails(attendees []createMeetingAttendee) []string {
 	return emails
 }
 
+func (client *Transport) recoverCreatedMeetingEvent(ctx context.Context, meeting createMeetingPayload) transport.ActionResponse {
+	timeZone := client.createMeetingTimeZone(meeting)
+	rangeStart, err := formatOWACalendarCreateTime(meeting.start, timeZone)
+	if err != nil {
+		return transport.ActionResponse{OK: false, Error: "calendar.create_meeting created event id was not returned; unable to verify created event start"}
+	}
+	rangeEnd, err := formatOWACalendarCreateTime(meeting.end, timeZone)
+	if err != nil {
+		return transport.ActionResponse{OK: false, Error: "calendar.create_meeting created event id was not returned; unable to verify created event end"}
+	}
+	response := client.executeService(ctx, "GetCalendarView", client.buildCalendarViewRequestInTimeZone(rangeStart, rangeEnd, timeZone), true)
+	if !response.OK {
+		detail := strings.Join(strings.Fields(response.Error), " ")
+		if detail == "" {
+			detail = "GetCalendarView failed"
+		}
+		return transport.ActionResponse{OK: false, Error: "calendar.create_meeting created event id was not returned; verification lookup failed: " + detail}
+	}
+	matches := matchingCreatedMeetingEvents(normalizeCalendarItems(extractItems(response.Data)), meeting, timeZone)
+	if len(matches) == 0 {
+		return transport.ActionResponse{OK: false, Error: "calendar.create_meeting created event id was not returned; verification lookup found no matching calendar event"}
+	}
+	if len(matches) > 1 {
+		return transport.ActionResponse{OK: false, Error: "calendar.create_meeting created event id was not returned; verification lookup is ambiguous"}
+	}
+	event := matches[0]
+	event["verification_status"] = "recovered"
+	return transport.ActionResponse{OK: true, Data: map[string]any{"event": event}}
+}
+
+func (client *Transport) createMeetingTimeZone(meeting createMeetingPayload) string {
+	timeZone := strings.TrimSpace(meeting.timeZone)
+	if timeZone == "" {
+		timeZone = client.config.effectiveTimeZoneID()
+	}
+	return timeZone
+}
+
+func matchingCreatedMeetingEvents(events []any, meeting createMeetingPayload, timeZone string) []map[string]any {
+	expectedStart, err := parseOWATimeInZone(meeting.start, timeZone)
+	if err != nil {
+		return nil
+	}
+	expectedEnd, err := parseOWATimeInZone(meeting.end, timeZone)
+	if err != nil {
+		return nil
+	}
+	matches := make([]map[string]any, 0, 1)
+	for _, item := range events {
+		event, ok := item.(map[string]any)
+		if !ok {
+			continue
+		}
+		if strings.TrimSpace(stringValue(event, "id")) == "" {
+			continue
+		}
+		if strings.TrimSpace(stringValue(event, "title")) != meeting.subject {
+			continue
+		}
+		if !calendarEventTimeMatches(stringValue(event, "start"), expectedStart, timeZone) {
+			continue
+		}
+		if !calendarEventTimeMatches(stringValue(event, "end"), expectedEnd, timeZone) {
+			continue
+		}
+		if !calendarEventAttendeesMatch(event, meeting.attendees) {
+			continue
+		}
+		matches = append(matches, event)
+	}
+	return matches
+}
+
+func calendarEventTimeMatches(value string, expected time.Time, timeZone string) bool {
+	actual, err := parseOWATimeInZone(value, timeZone)
+	return err == nil && actual.Equal(expected)
+}
+
+func calendarEventAttendeesMatch(event map[string]any, attendees []createMeetingAttendee) bool {
+	eventAttendees := anySlice(event["attendees"])
+	if len(eventAttendees) == 0 {
+		return true
+	}
+	emails := make(map[string]bool, len(eventAttendees))
+	for _, attendee := range eventAttendees {
+		attendeeMap, ok := attendee.(map[string]any)
+		if !ok {
+			continue
+		}
+		email := strings.ToLower(strings.TrimSpace(stringValue(attendeeMap, "email")))
+		if email != "" {
+			emails[email] = true
+		}
+	}
+	if len(emails) == 0 {
+		return true
+	}
+	for _, attendee := range attendees {
+		email := strings.ToLower(strings.TrimSpace(attendee.email))
+		if email != "" && !emails[email] {
+			return false
+		}
+	}
+	return true
+}
+
 func owaCalendarFolderID(mailbox string) any {
 	fields := []orderedField{
 		field("__type", "DistinguishedFolderId:#Exchange"),
@@ -1188,6 +1295,19 @@ func firstMap(values []any) map[string]any {
 	return value
 }
 
+func firstMapWithID(values []any) map[string]any {
+	for _, value := range values {
+		valueMap, ok := value.(map[string]any)
+		if !ok {
+			continue
+		}
+		if strings.TrimSpace(stringValue(valueMap, "id")) != "" {
+			return valueMap
+		}
+	}
+	return map[string]any{}
+}
+
 func normalizeMailItems(items []any) []any {
 	output := make([]any, 0, len(items))
 	for _, item := range items {
@@ -1306,7 +1426,7 @@ func normalizeCalendarItems(items []any) []any {
 			continue
 		}
 		itemID := itemID(itemMap)
-		output = append(output, map[string]any{
+		event := map[string]any{
 			"id":             itemID["id"],
 			"change_key":     itemID["change_key"],
 			"title":          stringValue(itemMap, "Subject"),
@@ -1314,9 +1434,97 @@ func normalizeCalendarItems(items []any) []any {
 			"end":            stringValue(itemMap, "End"),
 			"location":       stringValue(itemMap, "Location"),
 			"free_busy_type": stringValue(itemMap, "FreeBusyType"),
+		}
+		if attendees := normalizeCalendarItemAttendees(itemMap); len(attendees) > 0 {
+			event["attendees"] = attendees
+		}
+		if _, exists := itemMap["IsMeeting"]; exists {
+			event["is_meeting"] = boolValue(itemMap, "IsMeeting")
+		}
+		if _, exists := itemMap["MeetingRequestWasSent"]; exists {
+			event["meeting_request_was_sent"] = boolValue(itemMap, "MeetingRequestWasSent")
+		}
+		output = append(output, event)
+	}
+	return output
+}
+
+func normalizeCalendarItemAttendees(item map[string]any) []any {
+	seen := map[string]bool{}
+	attendees := make([]any, 0)
+	for _, key := range []string{"RequiredAttendees", "OptionalAttendees", "Attendees"} {
+		attendees = appendCalendarItemAttendees(attendees, item[key], seen)
+	}
+	return attendees
+}
+
+func appendCalendarItemAttendees(output []any, value any, seen map[string]bool) []any {
+	for _, attendee := range calendarAttendeeValues(value) {
+		email := strings.TrimSpace(calendarAttendeeEmail(attendee))
+		if email == "" {
+			continue
+		}
+		normalized := strings.ToLower(email)
+		if seen[normalized] {
+			continue
+		}
+		seen[normalized] = true
+		output = append(output, map[string]any{
+			"email": email,
+			"name":  strings.TrimSpace(calendarAttendeeName(attendee)),
 		})
 	}
 	return output
+}
+
+func calendarAttendeeValues(value any) []map[string]any {
+	values := make([]map[string]any, 0)
+	switch typed := value.(type) {
+	case []any:
+		for _, item := range typed {
+			values = append(values, calendarAttendeeValues(item)...)
+		}
+	case map[string]any:
+		if items := anySlice(typed["Items"]); len(items) > 0 {
+			for _, item := range items {
+				values = append(values, calendarAttendeeValues(item)...)
+			}
+			return values
+		}
+		values = append(values, typed)
+	}
+	return values
+}
+
+func calendarAttendeeEmail(attendee map[string]any) string {
+	if mailbox, ok := attendee["Mailbox"].(map[string]any); ok {
+		if email := strings.TrimSpace(stringValue(mailbox, "EmailAddress")); email != "" {
+			return email
+		}
+	}
+	if emailAddress, ok := attendee["EmailAddress"].(map[string]any); ok {
+		if email := strings.TrimSpace(stringValue(emailAddress, "EmailAddress")); email != "" {
+			return email
+		}
+	}
+	if email := strings.TrimSpace(stringValue(attendee, "EmailAddress")); email != "" {
+		return email
+	}
+	return strings.TrimSpace(stringValue(attendee, "Email"))
+}
+
+func calendarAttendeeName(attendee map[string]any) string {
+	if mailbox, ok := attendee["Mailbox"].(map[string]any); ok {
+		if name := strings.TrimSpace(stringValue(mailbox, "Name")); name != "" {
+			return name
+		}
+	}
+	if emailAddress, ok := attendee["EmailAddress"].(map[string]any); ok {
+		if name := strings.TrimSpace(stringValue(emailAddress, "Name")); name != "" {
+			return name
+		}
+	}
+	return strings.TrimSpace(stringValue(attendee, "Name"))
 }
 
 func normalizeAvailabilityWindows(payload map[string]any) []any {
@@ -1607,12 +1815,16 @@ func floatValue(values map[string]any, key string, fallback float64) float64 {
 }
 
 func parseOWATimeInZone(value string, timeZone string) (time.Time, error) {
+	value = strings.TrimSpace(value)
 	if parsed, err := time.Parse(time.RFC3339, value); err == nil {
 		return parsed, nil
 	}
 	location, err := owaTimeLocation(timeZone)
 	if err != nil {
 		return time.Time{}, err
+	}
+	if parsed, err := time.ParseInLocation("2006-01-02T15:04:05.000", value, location); err == nil {
+		return parsed, nil
 	}
 	return time.ParseInLocation("2006-01-02T15:04:05", value, location)
 }
