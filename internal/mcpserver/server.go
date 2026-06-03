@@ -430,8 +430,9 @@ type pendingApproval struct {
 }
 
 type toolRegistration struct {
-	name string
-	add  func(*mcp.Server, *Runtime, string)
+	name           string
+	requiredAction string
+	add            func(*mcp.Server, *Runtime, string)
 }
 
 const ApprovalTokenEnv = approval.LegacyTokenEnv
@@ -531,10 +532,10 @@ var toolRegistrations = []toolRegistration{
 	{name: "outlook.calendar_create_meeting", add: func(server *mcp.Server, runtime *Runtime, name string) {
 		mcp.AddTool(server, mcpTool(name), calendarCreateMeetingHandler(runtime))
 	}},
-	{name: "outlook.calendar_delete_event", add: func(server *mcp.Server, runtime *Runtime, name string) {
+	{name: "outlook.calendar_delete_event", requiredAction: "calendar.delete_event", add: func(server *mcp.Server, runtime *Runtime, name string) {
 		mcp.AddTool(server, mcpTool(name), calendarDeleteEventHandler(runtime))
 	}},
-	{name: "outlook.calendar_cancel_meeting", add: func(server *mcp.Server, runtime *Runtime, name string) {
+	{name: "outlook.calendar_cancel_meeting", requiredAction: "calendar.cancel_meeting", add: func(server *mcp.Server, runtime *Runtime, name string) {
 		mcp.AddTool(server, mcpTool(name), calendarCancelMeetingHandler(runtime))
 	}},
 	{name: "outlook.calendar_respond", add: func(server *mcp.Server, runtime *Runtime, name string) {
@@ -670,12 +671,24 @@ func NewWithTransportProfile(client transport.Transport, profile string) *mcp.Se
 
 func NewWithRuntime(runtime *Runtime) *mcp.Server {
 	server := mcp.NewServer(&mcp.Implementation{Name: "outlook-agent", Version: buildinfo.Current().Version}, nil)
+	supportedActions := supportedActionNames(runtime.client.Capabilities(context.Background()))
 
 	for _, registration := range toolRegistrations {
+		if registration.requiredAction != "" && !supportedActions[registration.requiredAction] {
+			continue
+		}
 		registration.add(server, runtime, registration.name)
 	}
 
 	return server
+}
+
+func supportedActionNames(capabilities transport.CapabilitySet) map[string]bool {
+	supported := make(map[string]bool, len(capabilities.Actions))
+	for _, definition := range capabilities.Actions {
+		supported[definition.Name] = true
+	}
+	return supported
 }
 
 func authCheckHandler(runtime *Runtime) func(context.Context, *mcp.CallToolRequest, AuthCheckInput) (*mcp.CallToolResult, AuthCheckOutput, error) {

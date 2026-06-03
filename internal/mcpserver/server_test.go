@@ -242,6 +242,47 @@ func TestServerListsExpectedTools(t *testing.T) {
 	}
 }
 
+func TestServerHidesUnsupportedCalendarMutationTools(t *testing.T) {
+	ctx := context.Background()
+	capturing := &calendarMutationCapturingTransport{
+		definitions: []action.Definition{
+			{Name: "calendar.create_meeting", Transport: "test", Class: policy.SendLike, Level: action.LevelHighLevelMCPTool},
+		},
+	}
+	serverTransport, clientTransport := mcp.NewInMemoryTransports()
+
+	serverSession, err := mcpserver.NewWithTransport(capturing).Connect(ctx, serverTransport, nil)
+	if err != nil {
+		t.Fatalf("connect server: %v", err)
+	}
+	defer serverSession.Close()
+	defer serverSession.Wait()
+
+	client := mcp.NewClient(&mcp.Implementation{Name: "test-client", Version: "0.0.1"}, nil)
+	clientSession, err := client.Connect(ctx, clientTransport, nil)
+	if err != nil {
+		t.Fatalf("connect client: %v", err)
+	}
+	defer clientSession.Close()
+
+	listed, err := clientSession.ListTools(ctx, nil)
+	if err != nil {
+		t.Fatalf("list tools: %v", err)
+	}
+	names := make([]string, 0, len(listed.Tools))
+	for _, tool := range listed.Tools {
+		names = append(names, tool.Name)
+	}
+	for _, unsupported := range []string{"outlook.calendar_delete_event", "outlook.calendar_cancel_meeting"} {
+		if slices.Contains(names, unsupported) {
+			t.Fatalf("expected unsupported tool %q to be hidden, got %#v", unsupported, names)
+		}
+	}
+	if !slices.Contains(names, "outlook.calendar_create_meeting") {
+		t.Fatalf("expected supported create meeting tool in %#v", names)
+	}
+}
+
 func TestToolSchemas(t *testing.T) {
 	ctx := context.Background()
 	serverTransport, clientTransport := mcp.NewInMemoryTransports()
