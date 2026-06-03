@@ -2248,7 +2248,6 @@ func parseSetupAgentArgs(args []string) (setupAgentArgs, error) {
 		Command: "plan",
 		Client:  setupcore.ClientOpenCode,
 		Scope:   setupcore.ScopeProject,
-		Binary:  "outlook-agent",
 	}
 	if len(args) > 0 {
 		switch args[0] {
@@ -2311,6 +2310,9 @@ func parseSetupAgentArgs(args []string) (setupAgentArgs, error) {
 	}
 	if settings.Command != "apply" && (settings.Yes || settings.Backup || settings.AllowDuplicates) {
 		return setupAgentArgs{}, fmt.Errorf("--yes, --backup, and --allow-duplicates are only valid for setup agent apply")
+	}
+	if settings.UseApprovalWrapper && strings.TrimSpace(settings.Binary) != "" {
+		return setupAgentArgs{}, fmt.Errorf("--binary cannot be used with --use-approval-wrapper; configure the wrapper child binary with setup approval --binary")
 	}
 	return settings, nil
 }

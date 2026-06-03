@@ -777,6 +777,23 @@ func TestSetupAgentRejectsApprovalWrapperWithCustomBinary(t *testing.T) {
 	}
 }
 
+func TestParseSetupAgentRejectsApprovalWrapperWithCustomBinary(t *testing.T) {
+	_, err := parseSetupAgentArgs([]string{
+		"plan",
+		"--client", "codex",
+		"--scope", "user",
+		"--config", filepath.Join(t.TempDir(), ".local", "outlook-agent.json"),
+		"--use-approval-wrapper",
+		"--binary", "custom-outlook-agent",
+	})
+	if err == nil {
+		t.Fatal("expected parser to reject wrapper with custom binary")
+	}
+	if !strings.Contains(err.Error(), "setup approval --binary") {
+		t.Fatalf("expected setup approval --binary guidance, got %v", err)
+	}
+}
+
 func TestSetupAgentUsesLeadingGlobalConfigWhenNoLocalConfig(t *testing.T) {
 	projectDir := t.TempDir()
 	homeDir := t.TempDir()
