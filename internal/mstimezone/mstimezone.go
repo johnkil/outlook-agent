@@ -148,6 +148,11 @@ func IANALocationName(timeZone string) string {
 	return windowsToIANA[strings.ToLower(strings.TrimSpace(timeZone))]
 }
 
+var preferredWindowsByIANA = map[string]string{
+	"utc":            "UTC",
+	"asia/kamchatka": "Russia Time Zone 11",
+}
+
 var ianaToWindows = buildIANAToWindows()
 
 func WindowsLocationName(timeZone string) string {
@@ -171,6 +176,9 @@ func buildIANAToWindows() map[string]string {
 		if _, exists := out[key]; !exists {
 			out[key] = canonicalWindowsName(windows)
 		}
+	}
+	for iana, windows := range preferredWindowsByIANA {
+		out[strings.ToLower(strings.TrimSpace(iana))] = canonicalWindowsName(windows)
 	}
 	return out
 }
@@ -197,5 +205,14 @@ func canonicalWindowsWord(word string) string {
 	if len(word) == 0 {
 		return word
 	}
-	return strings.ToUpper(word[:1]) + word[1:]
+	return capitalizeFirstAlphabetic(word)
+}
+
+func capitalizeFirstAlphabetic(word string) string {
+	for index, char := range word {
+		if char >= 'a' && char <= 'z' {
+			return word[:index] + strings.ToUpper(word[index:index+1]) + word[index+1:]
+		}
+	}
+	return word
 }

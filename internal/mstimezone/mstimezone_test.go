@@ -26,15 +26,48 @@ func TestIANALocationNameTrimsAndIgnoresCase(t *testing.T) {
 }
 
 func TestWindowsLocationNameMapsIANAToProviderID(t *testing.T) {
-	cases := map[string]string{
-		"Europe/Moscow":       "Russian Standard Time",
-		" europe/moscow ":     "Russian Standard Time",
-		"Asia/Tokyo":          "Tokyo Standard Time",
-		"America/Los_Angeles": "Pacific Standard Time",
+	cases := []struct {
+		input string
+		want  string
+	}{
+		{input: "Europe/Moscow", want: "Russian Standard Time"},
+		{input: " europe/moscow ", want: "Russian Standard Time"},
+		{input: "Asia/Tokyo", want: "Tokyo Standard Time"},
+		{input: "America/Los_Angeles", want: "Pacific Standard Time"},
 	}
-	for input, expected := range cases {
-		if got := WindowsLocationName(input); got != expected {
-			t.Fatalf("WindowsLocationName(%q) = %q, want %q", input, got, expected)
+	for _, tt := range cases {
+		if got := WindowsLocationName(tt.input); got != tt.want {
+			t.Fatalf("WindowsLocationName(%q) = %q, want %q", tt.input, got, tt.want)
+		}
+	}
+}
+
+func TestWindowsLocationNameUsesDeterministicCanonicalProviderIDs(t *testing.T) {
+	cases := []struct {
+		input string
+		want  string
+	}{
+		{input: "UTC", want: "UTC"},
+		{input: "Asia/Kamchatka", want: "Russia Time Zone 11"},
+	}
+	for _, tt := range cases {
+		if got := WindowsLocationName(tt.input); got != tt.want {
+			t.Fatalf("WindowsLocationName(%q) = %q, want %q", tt.input, got, tt.want)
+		}
+	}
+}
+
+func TestWindowsLocationNameCanonicalizesParenthesizedProviderIDs(t *testing.T) {
+	cases := []struct {
+		input string
+		want  string
+	}{
+		{input: "America/Tijuana", want: "Pacific Standard Time (Mexico)"},
+		{input: " pacific standard time (mexico) ", want: "Pacific Standard Time (Mexico)"},
+	}
+	for _, tt := range cases {
+		if got := WindowsLocationName(tt.input); got != tt.want {
+			t.Fatalf("WindowsLocationName(%q) = %q, want %q", tt.input, got, tt.want)
 		}
 	}
 }
