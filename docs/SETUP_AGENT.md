@@ -29,6 +29,15 @@ outlook-agent setup approval apply --client codex --scope project --config .loca
 approval secret in MCP config. Review `plan` and `diff` before `apply`, and keep
 project-scope approval material under `.local/`.
 
+For mutation-ready Codex setup, run approval setup first, then point the MCP server at the wrapper:
+
+```bash
+outlook-agent setup approval apply --client codex --scope user --config /path/to/outlook-agent.json --yes
+outlook-agent setup agent apply --client codex --scope user --config /path/to/outlook-agent.json --use-approval-wrapper --yes --backup
+```
+
+The wrapper reads the host-owned approval secret and launches `outlook-agent --config /path/to/outlook-agent.json mcp` without storing the secret in Codex config.
+
 ## MCP Targets
 
 | Client | Scope | MCP target |

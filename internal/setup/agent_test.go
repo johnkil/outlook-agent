@@ -198,6 +198,35 @@ func TestBuildAgentPlanUsesUserCodexConfigTOML(t *testing.T) {
 	}
 }
 
+func TestBuildAgentPlanCanUseApprovalWrapperForCodex(t *testing.T) {
+	homeDir := t.TempDir()
+	projectDir := t.TempDir()
+	configPath := filepath.Join(projectDir, ".local", "outlook-agent.json")
+	wrapperPath := filepath.Join(homeDir, ".local", "bin", "outlook-agent-host-mcp")
+
+	plan, err := BuildAgentPlan(testSkillFS(), AgentOptions{
+		Client:             ClientCodex,
+		Scope:              ScopeUser,
+		ProjectDir:         projectDir,
+		HomeDir:            homeDir,
+		ConfigPath:         configPath,
+		UseApprovalWrapper: true,
+	})
+	if err != nil {
+		t.Fatalf("BuildAgentPlan returned error: %v", err)
+	}
+	content := string(plan.MCP.content)
+	if !strings.Contains(content, `command = "`+filepath.ToSlash(wrapperPath)+`"`) {
+		t.Fatalf("expected Codex MCP command to use approval wrapper, got %s", content)
+	}
+	if strings.Contains(content, `"mcp"`) || strings.Contains(content, `"--config"`) {
+		t.Fatalf("wrapper-backed config must not pass duplicate child args, got %s", content)
+	}
+	if !strings.Contains(strings.Join(plan.Warnings, "\n"), "setup approval apply") {
+		t.Fatalf("expected setup approval guidance warning, got %#v", plan.Warnings)
+	}
+}
+
 func TestBuildAgentPlanUsesUserClaudeConfigJSON(t *testing.T) {
 	homeDir := t.TempDir()
 	plan, err := BuildAgentPlan(testSkillFS(), AgentOptions{

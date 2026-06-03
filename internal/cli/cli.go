@@ -1710,7 +1710,7 @@ Usage:
   outlook-agent setup skills plan --client <opencode|codex|claude-code|all> --scope <project|user>
   outlook-agent setup skills diff --client <opencode|codex|claude-code|all> --scope <project|user>
   outlook-agent setup skills apply --client <opencode|codex|claude-code|all> --scope <project|user> --yes [--backup] [--allow-duplicates]
-  outlook-agent setup agent plan --client <opencode|codex|claude-code> --scope <project|user> --config <path>
+  outlook-agent setup agent plan --client <opencode|codex|claude-code> --scope <project|user> --config <path> [--use-approval-wrapper]
   outlook-agent setup agent diff --client <opencode|codex|claude-code> --scope <project|user> --config <path>
   outlook-agent setup agent apply --client <opencode|codex|claude-code> --scope <project|user> --config <path> --yes [--backup] [--allow-duplicates]
   outlook-agent setup approval plan --client <opencode|codex|claude-code> --scope <project|user> --config <path> [--secret-file <path>]
@@ -1843,17 +1843,18 @@ type setupSkillsArgs struct {
 }
 
 type setupAgentArgs struct {
-	Command         string
-	Client          setupcore.Client
-	Scope           setupcore.Scope
-	ProjectDir      string
-	HomeDir         string
-	ConfigPath      string
-	Binary          string
-	Yes             bool
-	Backup          bool
-	AllowDuplicates bool
-	JSON            bool
+	Command            string
+	Client             setupcore.Client
+	Scope              setupcore.Scope
+	ProjectDir         string
+	HomeDir            string
+	ConfigPath         string
+	Binary             string
+	UseApprovalWrapper bool
+	Yes                bool
+	Backup             bool
+	AllowDuplicates    bool
+	JSON               bool
 }
 
 type setupApprovalArgs struct {
@@ -1938,12 +1939,13 @@ func runSetupAgent(args []string, options Options, stdout io.Writer, stderr io.W
 		settings.ConfigPath = options.ConfigPath
 	}
 	plan, err := setupcore.BuildAgentPlan(skillassets.FS, setupcore.AgentOptions{
-		Client:     settings.Client,
-		Scope:      settings.Scope,
-		ProjectDir: settings.ProjectDir,
-		HomeDir:    settings.HomeDir,
-		ConfigPath: settings.ConfigPath,
-		Binary:     settings.Binary,
+		Client:             settings.Client,
+		Scope:              settings.Scope,
+		ProjectDir:         settings.ProjectDir,
+		HomeDir:            settings.HomeDir,
+		ConfigPath:         settings.ConfigPath,
+		Binary:             settings.Binary,
+		UseApprovalWrapper: settings.UseApprovalWrapper,
 	})
 	if err != nil {
 		fmt.Fprintln(stderr, err)
@@ -2289,6 +2291,8 @@ func parseSetupAgentArgs(args []string) (setupAgentArgs, error) {
 				return setupAgentArgs{}, fmt.Errorf("--binary requires a value")
 			}
 			settings.Binary = args[index]
+		case "--use-approval-wrapper":
+			settings.UseApprovalWrapper = true
 		case "--yes":
 			settings.Yes = true
 		case "--backup":
