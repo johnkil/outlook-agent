@@ -379,6 +379,20 @@ func owaCalendarCreateMeetingReview(actionName string, payload map[string]any) (
 			Limitations:        []string{err.Error()},
 		}, err
 	}
+	for _, attendee := range meeting.attendees {
+		if !looksLikeSMTPAddress(attendee.email) {
+			err := fmt.Errorf("calendar.create_meeting dry-run requires resolved attendee email addresses; resolve %q before requesting confirmation", attendee.email)
+			return transport.ReviewPacket{
+				Version:            transport.ReviewPacketVersion,
+				Transport:          "owa",
+				Action:             actionName,
+				SafetyClass:        string(policy.SendLike),
+				Completeness:       transport.ReviewCompletenessMinimal,
+				PayloadFingerprint: transport.PayloadFingerprint(payload),
+				Limitations:        []string{err.Error()},
+			}, err
+		}
+	}
 	bodyPreview := transport.RedactedPreview(meeting.body, 500)
 	review := transport.ReviewPacket{
 		Version:      transport.ReviewPacketVersion,

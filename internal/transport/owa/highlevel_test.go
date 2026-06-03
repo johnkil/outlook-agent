@@ -1838,6 +1838,32 @@ func TestHighLevelCalendarCreateMeetingDryRunReview(t *testing.T) {
 	}
 }
 
+func TestHighLevelCalendarCreateMeetingDryRunRejectsUnresolvedAttendeeReview(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
+	defer server.Close()
+	client := newTestTransport(server)
+
+	summary := client.DryRun(context.Background(), transport.ActionRequest{
+		Name: "calendar.create_meeting",
+		Payload: map[string]any{
+			"subject":   "Planning",
+			"start":     "2026-06-02T15:00:00+03:00",
+			"end":       "2026-06-02T15:30:00+03:00",
+			"attendees": []any{"Alex"},
+		},
+	})
+
+	if summary.Error == "" {
+		t.Fatalf("expected dry-run to reject unresolved attendee before confirmation, got %#v", summary)
+	}
+	if !strings.Contains(summary.Error, "requires resolved attendee email addresses") {
+		t.Fatalf("expected unresolved attendee error, got %q", summary.Error)
+	}
+	if summary.Review == nil || summary.Review.Completeness == transport.ReviewCompletenessComplete {
+		t.Fatalf("unresolved attendee must not produce complete review: %#v", summary.Review)
+	}
+}
+
 func TestHighLevelCalendarCreateMeetingDryRunRejectsInvalidPayloadReview(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
 	defer server.Close()
