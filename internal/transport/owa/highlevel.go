@@ -1393,6 +1393,7 @@ func (client *Transport) requestHeaderPayloadInTimeZone(version string, timeZone
 	if timeZone == "" {
 		timeZone = client.config.effectiveTimeZoneID()
 	}
+	timeZone = owaProviderTimeZone(timeZone)
 	return object(
 		field("__type", "JsonRequestHeaders:#Exchange"),
 		field("RequestServerVersion", version),
@@ -2011,4 +2012,12 @@ func owaTimeLocation(timeZone string) (*time.Location, error) {
 		timeZone = mapped
 	}
 	return time.LoadLocation(timeZone)
+}
+
+func owaProviderTimeZone(timeZone string) string {
+	timeZone = strings.TrimSpace(timeZone)
+	if mapped := mstimezone.WindowsLocationName(timeZone); mapped != "" {
+		return mapped
+	}
+	return timeZone
 }

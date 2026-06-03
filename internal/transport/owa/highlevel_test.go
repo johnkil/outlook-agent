@@ -429,7 +429,7 @@ func TestHighLevelCalendarAvailabilityUsesRequestedTimeZoneHeader(t *testing.T) 
 		Payload: map[string]any{
 			"start":     "2026-05-27T00:00:00",
 			"end":       "2026-05-28T00:00:00",
-			"time_zone": "America/Los_Angeles",
+			"time_zone": "Europe/Moscow",
 		},
 	})
 
@@ -439,8 +439,8 @@ func TestHighLevelCalendarAvailabilityUsesRequestedTimeZoneHeader(t *testing.T) 
 	request := calls[0].Body["request"].(map[string]any)
 	header := request["Header"].(map[string]any)
 	timeZone := header["TimeZoneContext"].(map[string]any)["TimeZoneDefinition"].(map[string]any)
-	if timeZone["Id"] != "America/Los_Angeles" {
-		t.Fatalf("expected requested availability timezone header, got %#v", timeZone)
+	if timeZone["Id"] != "Russian Standard Time" {
+		t.Fatalf("expected requested availability timezone header to use OWA provider id, got %#v", timeZone)
 	}
 }
 
@@ -1084,7 +1084,7 @@ func TestHighLevelCalendarFindTimeUsesRequestedTimeZoneHeaders(t *testing.T) {
 			"start":            "2026-05-28T09:00:00",
 			"end":              "2026-05-28T10:00:00",
 			"duration_minutes": float64(30),
-			"time_zone":        "America/Los_Angeles",
+			"time_zone":        "Europe/Moscow",
 			"tentative":        "busy",
 		},
 	})
@@ -1097,14 +1097,14 @@ func TestHighLevelCalendarFindTimeUsesRequestedTimeZoneHeaders(t *testing.T) {
 	}
 	calendarHeader := calls[0].Body["Header"].(map[string]any)
 	calendarTimeZone := calendarHeader["TimeZoneContext"].(map[string]any)["TimeZoneDefinition"].(map[string]any)
-	if calendarTimeZone["Id"] != "America/Los_Angeles" {
-		t.Fatalf("expected requested calendar timezone header, got %#v", calendarTimeZone)
+	if calendarTimeZone["Id"] != "Russian Standard Time" {
+		t.Fatalf("expected requested calendar timezone header to use OWA provider id, got %#v", calendarTimeZone)
 	}
 	availabilityRequest := calls[1].Body["request"].(map[string]any)
 	availabilityHeader := availabilityRequest["Header"].(map[string]any)
 	availabilityTimeZone := availabilityHeader["TimeZoneContext"].(map[string]any)["TimeZoneDefinition"].(map[string]any)
-	if availabilityTimeZone["Id"] != "America/Los_Angeles" {
-		t.Fatalf("expected requested availability timezone header, got %#v", availabilityTimeZone)
+	if availabilityTimeZone["Id"] != "Russian Standard Time" {
+		t.Fatalf("expected requested availability timezone header to use OWA provider id, got %#v", availabilityTimeZone)
 	}
 }
 
