@@ -146,6 +146,39 @@ func TestTransportRetriesTransientLoginFailure(t *testing.T) {
 	}
 }
 
+func TestTransportRetriesMissingCanaryLoginFailure(t *testing.T) {
+	var loginCount atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		switch request.URL.Path {
+		case "/owa/auth.owa":
+			count := loginCount.Add(1)
+			if count == 1 {
+				response.WriteHeader(http.StatusOK)
+				return
+			}
+			http.SetCookie(response, &http.Cookie{Name: "X-OWA-CANARY", Value: "canary-secret"})
+			response.WriteHeader(http.StatusOK)
+		case "/owa/service.svc":
+			response.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(response).Encode(map[string]any{"ok": true})
+		default:
+			t.Fatalf("unexpected path: %s", request.URL.Path)
+		}
+	}))
+	defer server.Close()
+
+	client := NewTransport(Config{BaseURL: server.URL, Username: "DOMAIN\\user", SecretRef: secret.Ref("memory:owa")}, secret.NewMemoryStore(map[string]string{"memory:owa": "password"}), server.Client())
+	client.loginRetryBackoff = func(context.Context, time.Duration) error { return nil }
+
+	result := client.Execute(context.Background(), transport.ActionRequest{Name: "FindPeople", Payload: map[string]any{"Body": map[string]any{}}})
+	if !result.OK {
+		t.Fatalf("expected execute ok after missing canary login retry: %#v", result)
+	}
+	if loginCount.Load() != 2 {
+		t.Fatalf("expected one retry after missing canary login failure, got %d logins", loginCount.Load())
+	}
+}
+
 func TestTransportDoesNotRetryUnauthorizedForever(t *testing.T) {
 	var loginCount atomic.Int32
 	var serviceCount atomic.Int32
