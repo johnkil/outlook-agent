@@ -842,10 +842,7 @@ func (client *Transport) resolveCreateMeetingAttendees(ctx context.Context, atte
 		}
 		response := client.executeService(ctx, "FindPeople", client.buildFindPeopleRequest(attendee.email), false)
 		if !response.OK {
-			if !looksLikeSMTPAddress(attendee.email) {
-				return nil, fmt.Errorf("unresolved attendee %q; use a full email address or a more specific display name", attendee.email)
-			}
-			continue
+			return nil, createMeetingAttendeeResolutionServiceError(attendee.email, response.Error)
 		}
 		candidates := createMeetingAttendeesFromPeople(response.Data)
 		if looksLikeSMTPAddress(attendee.email) {
@@ -870,6 +867,14 @@ func (client *Transport) resolveCreateMeetingAttendees(ctx context.Context, atte
 		resolved[index] = candidate
 	}
 	return resolved, nil
+}
+
+func createMeetingAttendeeResolutionServiceError(attendee string, serviceError string) error {
+	detail := strings.Join(strings.Fields(serviceError), " ")
+	if detail == "" {
+		detail = "FindPeople service returned an error"
+	}
+	return fmt.Errorf("attendee resolution failed for %q: %s", attendee, detail)
 }
 
 func createMeetingAttendeesFromPeople(payload map[string]any) []createMeetingAttendee {

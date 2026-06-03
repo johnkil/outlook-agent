@@ -2099,6 +2099,63 @@ func TestHighLevelCalendarCreateMeetingRejectsAmbiguousDisplayNameAttendee(t *te
 	}
 }
 
+func TestHighLevelCalendarCreateMeetingReportsDisplayNameResolutionServiceFailure(t *testing.T) {
+	var calls []recordedServiceCall
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		switch request.URL.Path {
+		case "/owa/auth.owa":
+			http.SetCookie(response, &http.Cookie{Name: "X-OWA-CANARY", Value: "canary-secret"})
+			response.WriteHeader(http.StatusOK)
+		case "/owa/service.svc":
+			call := recordedServiceCall{Action: request.URL.Query().Get("action")}
+			var raw map[string]any
+			payload, err := io.ReadAll(request.Body)
+			if err != nil {
+				t.Fatalf("read body: %v", err)
+			}
+			call.RawBody = string(payload)
+			if err := json.Unmarshal([]byte(call.RawBody), &raw); err != nil {
+				t.Fatalf("decode body: %v", err)
+			}
+			call.Body = raw
+			calls = append(calls, call)
+			if call.Action != "FindPeople" {
+				t.Fatalf("unexpected service action: %s", call.Action)
+			}
+			response.Header().Set("Content-Type", "application/json")
+			response.WriteHeader(http.StatusInternalServerError)
+			_ = json.NewEncoder(response).Encode(map[string]any{"error": "find people backend unavailable"})
+		default:
+			t.Fatalf("unexpected path: %s", request.URL.Path)
+		}
+	}))
+	defer server.Close()
+	client := newTestTransport(server)
+
+	response := client.Execute(context.Background(), transport.ActionRequest{
+		Name: "calendar.create_meeting",
+		Payload: map[string]any{
+			"subject":   "Planning",
+			"start":     "2026-06-02T15:00:00+03:00",
+			"end":       "2026-06-02T15:30:00+03:00",
+			"attendees": []any{"Generic Teammate"},
+		},
+	})
+
+	if response.OK || !strings.Contains(response.Error, "attendee resolution failed") {
+		t.Fatalf("expected attendee resolution failure, got %#v", response)
+	}
+	if !strings.Contains(response.Error, "owa service returned HTTP 500") {
+		t.Fatalf("expected service error text, got %q", response.Error)
+	}
+	if strings.Contains(response.Error, "unresolved attendee") {
+		t.Fatalf("service failure must not be reported as unresolved: %q", response.Error)
+	}
+	if len(calls) != 1 || calls[0].Action != "FindPeople" {
+		t.Fatalf("expected only FindPeople call, got %#v", calls)
+	}
+}
+
 func TestHighLevelCalendarCreateMeetingOmitsEmptyBodyHTML(t *testing.T) {
 	var calls []recordedServiceCall
 	server := newOWAServiceServer(t, &calls, map[string]any{
