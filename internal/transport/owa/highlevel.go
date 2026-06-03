@@ -842,6 +842,9 @@ func (client *Transport) resolveCreateMeetingAttendees(ctx context.Context, atte
 		}
 		response := client.executeService(ctx, "FindPeople", client.buildFindPeopleRequest(attendee.email), false)
 		if !response.OK {
+			if looksLikeSMTPAddress(attendee.email) {
+				continue
+			}
 			return nil, createMeetingAttendeeResolutionServiceError(attendee.email, response.Error)
 		}
 		candidates := createMeetingAttendeesFromPeople(response.Data)

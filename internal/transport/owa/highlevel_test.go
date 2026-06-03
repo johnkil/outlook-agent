@@ -2156,6 +2156,82 @@ func TestHighLevelCalendarCreateMeetingReportsDisplayNameResolutionServiceFailur
 	}
 }
 
+func TestHighLevelCalendarCreateMeetingKeepsEmailAttendeeWhenPeopleLookupFails(t *testing.T) {
+	var calls []recordedServiceCall
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		switch request.URL.Path {
+		case "/owa/auth.owa":
+			http.SetCookie(response, &http.Cookie{Name: "X-OWA-CANARY", Value: "canary-secret"})
+			response.WriteHeader(http.StatusOK)
+		case "/owa/service.svc":
+			call := recordedServiceCall{Action: request.URL.Query().Get("action")}
+			var raw map[string]any
+			payload, err := io.ReadAll(request.Body)
+			if err != nil {
+				t.Fatalf("read body: %v", err)
+			}
+			call.RawBody = string(payload)
+			if err := json.Unmarshal([]byte(call.RawBody), &raw); err != nil {
+				t.Fatalf("decode body: %v", err)
+			}
+			call.Body = raw
+			calls = append(calls, call)
+			response.Header().Set("Content-Type", "application/json")
+			switch call.Action {
+			case "FindPeople":
+				response.WriteHeader(http.StatusInternalServerError)
+				_ = json.NewEncoder(response).Encode(map[string]any{"error": "find people backend unavailable"})
+			case "CreateCalendarEvent":
+				_ = json.NewEncoder(response).Encode(map[string]any{
+					"Body": map[string]any{
+						"Items": []any{
+							map[string]any{
+								"ItemId":  map[string]any{"Id": "event-1", "ChangeKey": "ck-1"},
+								"Subject": "Planning",
+							},
+						},
+					},
+				})
+			default:
+				t.Fatalf("unexpected service action: %s", call.Action)
+			}
+		default:
+			t.Fatalf("unexpected path: %s", request.URL.Path)
+		}
+	}))
+	defer server.Close()
+	client := newTestTransport(server)
+
+	response := client.Execute(context.Background(), transport.ActionRequest{
+		Name: "calendar.create_meeting",
+		Payload: map[string]any{
+			"subject":   "Planning",
+			"start":     "2026-06-02T15:00:00+03:00",
+			"end":       "2026-06-02T15:30:00+03:00",
+			"attendees": []any{"teammate@example.com"},
+		},
+	})
+
+	if !response.OK {
+		t.Fatalf("expected calendar.create_meeting ok: %#v", response)
+	}
+	if len(calls) != 2 || calls[0].Action != "FindPeople" || calls[1].Action != "CreateCalendarEvent" {
+		t.Fatalf("expected FindPeople then CreateCalendarEvent calls, got %#v", calls)
+	}
+	item := calls[1].Body["Body"].(map[string]any)["Items"].([]any)[0].(map[string]any)
+	required := item["RequiredAttendees"].([]any)
+	if len(required) != 1 {
+		t.Fatalf("expected one required attendee, got %#v", required)
+	}
+	mailbox := required[0].(map[string]any)["Mailbox"].(map[string]any)
+	if mailbox["EmailAddress"] != "teammate@example.com" {
+		t.Fatalf("expected raw attendee email fallback, got %#v", mailbox)
+	}
+	if mailbox["MailboxType"] != "Mailbox" {
+		t.Fatalf("expected raw attendee mailbox type fallback, got %#v", mailbox)
+	}
+}
+
 func TestHighLevelCalendarCreateMeetingOmitsEmptyBodyHTML(t *testing.T) {
 	var calls []recordedServiceCall
 	server := newOWAServiceServer(t, &calls, map[string]any{
