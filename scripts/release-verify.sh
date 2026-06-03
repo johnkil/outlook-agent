@@ -119,10 +119,14 @@ if [[ ! -f "$plugin_calendar_skill" ]]; then
 fi
 for marker in \
   "outlook.calendar_create_meeting" \
+  "outlook.calendar_delete_event" \
+  "outlook.calendar_cancel_meeting" \
   "Present the exact subject, attendees, start, end, timezone" \
-  "Create meetings only with \`outlook.calendar_create_meeting\` after" \
-  "Do not construct raw OWA \`FindPeople\`, \`GetUserAvailabilityInternal\`, or" \
-  "\`CreateItem\` payloads for the standard scheduling workflow."
+  "Use \`outlook.calendar_create_meeting\` for meeting creation after" \
+  "Use \`outlook.calendar_delete_event\` after \`outlook.action_dry_run\` and" \
+  "Use \`outlook.calendar_cancel_meeting\` after \`outlook.action_dry_run\`," \
+  "Standard flow must not construct raw OWA \`CreateCalendarEvent\`," \
+  "\`DeleteItem\`, or \`CancelCalendarEvent\` payloads for normal"
 do
   if ! grep -Fq "$marker" "$plugin_calendar_skill"; then
     echo "generated plugin calendar skill is missing guidance marker: ${marker}" >&2

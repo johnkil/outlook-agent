@@ -16,6 +16,8 @@ outlook-agent --help
 outlook-agent doctor [--json]
 outlook-agent --config <path> auth check [--profile <name>]
 outlook-agent --config <path> auth graph-device-code [--profile <name>]
+outlook-agent calendar delete-event --event-id <id> [--change-key <ck>] [--mailbox <mailbox>] --dry-run
+outlook-agent calendar cancel-meeting --event-id <id> [--change-key <ck>] [--comment <text>] [--mailbox <mailbox>] --dry-run
 outlook-agent policy explain [--action <name>]
 outlook-agent policy coverage
 outlook-agent setup opencode --print [--binary <path>] [--config <path>]
@@ -24,6 +26,13 @@ outlook-agent --config <path> owa discover-actions --url <path-or-url> [--includ
 outlook-agent --config <path> owa discover-action-context --action <OWAAction> --url <path-or-url> [--include-linked-scripts] [--follow-navigation-hints] [--max-sources <positive-int>]
 outlook-agent --config <path> mcp
 ```
+
+The `outlook-agent calendar delete-event ... --dry-run` and
+`outlook-agent calendar cancel-meeting ... --dry-run` commands are review-only
+helpers for the typed calendar mutation contract. They produce dry-run review
+output for `calendar.delete_event` or `calendar.cancel_meeting`; confirmed
+execution goes through MCP `outlook.calendar_delete_event`,
+`outlook.calendar_cancel_meeting`, or the exact `outlook.action_confirm` flow.
 
 Exit codes:
 
@@ -131,6 +140,8 @@ outlook.calendar_list
 outlook.calendar_availability
 outlook.calendar_find_time
 outlook.calendar_create_meeting
+outlook.calendar_delete_event
+outlook.calendar_cancel_meeting
 outlook.calendar_respond
 outlook.action_dry_run
 outlook.action_confirm
@@ -185,12 +196,36 @@ Key tool inputs:
   intersections and never creates, updates, or sends meeting items.
 - `outlook.calendar_create_meeting`: `subject`, `attendees`, `start`, `end`,
   `confirm_token`, optional `timezone`, optional `body`, optional `location`,
-  optional `approval_challenge_id`, optional `approval_token`, and optional
-  `mailbox`. The action maps to `calendar.create_meeting`, is classified as
-  `send_like`, and requires a matching `outlook.action_dry_run` review before
-  execution. Clients must present the exact subject, attendees, start, end,
-  timezone, and optional body/location before creating a meeting. It never
-  requires clients to construct raw OWA `CreateItem` payloads.
+  optional `is_online_meeting`, optional `reminder_minutes`, optional
+  `approval_challenge_id`, optional `approval_token`, and optional `mailbox`.
+  The action maps to `calendar.create_meeting`, is classified as `send_like`,
+  and requires a matching `outlook.action_dry_run` review before execution.
+  Clients must present the exact subject, attendees, start, end, timezone, and
+  optional body/location before creating a meeting. When the user supplies a
+  display-name attendee, the typed path resolves attendees before create and
+  rejects ambiguous or unresolved names instead of guessing. Created event
+  metadata includes `verification_status`: `returned` when the OWA create
+  response includes the event id, or `recovered` when conservative post-create
+  lookup recovers an event after OWA creates it but omits the id. Normal meeting
+  creation must not require clients to construct raw OWA `CreateCalendarEvent`
+  payloads, and no raw fallback is expected.
+- `outlook.calendar_delete_event`: `event_id`, `confirm_token`, optional
+  `change_key`, optional `approval_challenge_id`, optional `approval_token`,
+  and optional `mailbox`. The action maps to `calendar.delete_event`, moves one
+  exact calendar event to Deleted Items, requires a matching
+  `outlook.action_dry_run` confirmation token before execution, and does not
+  send cancellations. Use it for removing accidental or local created event
+  artifacts without notifying attendees. Normal cleanup must not require
+  clients to construct raw OWA `DeleteItem` payloads.
+- `outlook.calendar_cancel_meeting`: `event_id`, `confirm_token`, optional
+  `change_key`, optional `comment`, optional `approval_challenge_id`, optional
+  `approval_token`, and optional `mailbox`. The action maps to
+  `calendar.cancel_meeting`, cancels one exact organizer-owned meeting, sends a
+  cancellation, and requires a matching `outlook.action_dry_run` confirmation
+  token plus host approval fields when approval mode requires them. Use it only
+  when the user explicitly wants cancellation and notification semantics.
+  Normal cancellation must not require clients to construct raw OWA
+  `CancelCalendarEvent` payloads.
 - `outlook.calendar_respond`: `event_id`, `response` (`accept`, `decline`, or
   `tentative`), `send_response`, `confirm_token`, optional `comment`, optional
   `approval_challenge_id`, optional `approval_token`, and optional `mailbox`.
