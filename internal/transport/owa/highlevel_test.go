@@ -2788,6 +2788,9 @@ func TestHighLevelMailMoveToDeletedItemsReportsMapItemIDs(t *testing.T) {
 	if len(itemIDs) != 2 || itemIDs[0].(map[string]any)["ChangeKey"] != "ck-1" {
 		t.Fatalf("expected original map item ids to be sent, got %#v", itemIDs)
 	}
+	if !strings.Contains(calls[0].RawBody, `"ItemIds":[{"__type":"ItemId:#Exchange","Id":"msg-map-1","ChangeKey":"ck-1"},{"__type":"ItemId:#Exchange","Id":"msg-map-2","ChangeKey":"ck-2"}]`) {
+		t.Fatalf("expected map ItemIds to serialize with __type first, got raw body %s", calls[0].RawBody)
+	}
 }
 
 func TestHighLevelCalendarDeleteEventMovesSingleEventToDeletedItems(t *testing.T) {
@@ -2826,6 +2829,9 @@ func TestHighLevelCalendarDeleteEventMovesSingleEventToDeletedItems(t *testing.T
 	itemID := itemIDs[0].(map[string]any)
 	if itemID["Id"] != "event-1" || itemID["ChangeKey"] != "ck-1" {
 		t.Fatalf("expected event id/change key in ItemIds payload, got %#v", itemIDs)
+	}
+	if !strings.Contains(calls[0].RawBody, `"ItemIds":[{"__type":"ItemId:#Exchange","Id":"event-1","ChangeKey":"ck-1"}]`) {
+		t.Fatalf("expected nested calendar delete ItemId __type first, got raw body %s", calls[0].RawBody)
 	}
 	if response.Data["id"] != "event-1" || response.Data["status"] != "moved_to_deleted_items" {
 		t.Fatalf("expected typed delete-event response, got %#v", response.Data)
@@ -2887,6 +2893,9 @@ func TestHighLevelCalendarCancelMeetingSendsCancellation(t *testing.T) {
 	reference := body["ReferenceItemId"].(map[string]any)
 	if reference["Id"] != "event-1" || reference["ChangeKey"] != "ck-1" {
 		t.Fatalf("expected ReferenceItemId id/change key, got %#v", reference)
+	}
+	if !strings.Contains(calls[0].RawBody, `"ReferenceItemId":{"__type":"ItemId:#Exchange","Id":"event-1","ChangeKey":"ck-1"}`) {
+		t.Fatalf("expected nested calendar cancel ReferenceItemId __type first, got raw body %s", calls[0].RawBody)
 	}
 	if !strings.Contains(fmt.Sprint(body), "Canceled because plans changed.") {
 		t.Fatalf("expected cancellation comment in request body, got %#v", body)
