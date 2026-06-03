@@ -134,6 +134,16 @@ func (client *Transport) executeHighLevel(ctx context.Context, request transport
 			return response, true
 		}
 		return calendarDeleteEventResult(eventID, response.Data), true
+	case "calendar.cancel_meeting":
+		eventID := strings.TrimSpace(stringValue(request.Payload, "event_id"))
+		if eventID == "" {
+			return transport.ActionResponse{OK: false, Error: "event_id is required"}, true
+		}
+		response := client.executeService(ctx, "CancelCalendarEvent", client.buildCancelCalendarEventRequest(eventID, stringValue(request.Payload, "change_key"), stringValue(request.Payload, "comment")), false)
+		if !response.OK {
+			return response, true
+		}
+		return calendarCancelMeetingResult(eventID, response.Data), true
 	case "mail.fetch_metadata":
 		messageID := strings.TrimSpace(stringValue(request.Payload, "id"))
 		if messageID == "" {
@@ -311,6 +321,28 @@ func calendarDeleteEventResult(eventID string, payload map[string]any) transport
 		"id":         eventID,
 		"status":     "moved_to_deleted_items",
 		"reversible": true,
+	}}
+}
+
+func calendarCancelMeetingResult(eventID string, payload map[string]any) transport.ActionResponse {
+	messages := responseMessages(payload)
+	if len(messages) > 0 {
+		message, _ := messages[0].(map[string]any)
+		responseClass := strings.TrimSpace(stringValue(message, "ResponseClass"))
+		if responseClass != "" && !strings.EqualFold(responseClass, "Success") {
+			return transport.ActionResponse{
+				OK:    false,
+				Error: "calendar.cancel_meeting failed: " + responseMessageError(message),
+				Data: map[string]any{
+					"id":     eventID,
+					"status": "failed",
+				},
+			}
+		}
+	}
+	return transport.ActionResponse{OK: true, Data: map[string]any{
+		"id":     eventID,
+		"status": "cancelled",
 	}}
 }
 
@@ -1267,6 +1299,25 @@ func calendarDeleteEventItemID(eventID string, changeKey string) map[string]any 
 		itemID["ChangeKey"] = changeKey
 	}
 	return itemID
+}
+
+func (client *Transport) buildCancelCalendarEventRequest(eventID string, changeKey string, comment string) any {
+	bodyFields := []orderedField{
+		field("__type", "CancelCalendarEventRequest:#Exchange"),
+		field("ReferenceItemId", calendarDeleteEventItemID(eventID, changeKey)),
+	}
+	if comment = strings.TrimSpace(comment); comment != "" {
+		bodyFields = append(bodyFields, field("NewBodyContent", object(
+			field("__type", "BodyContentType:#Exchange"),
+			field("BodyType", "Text"),
+			field("Value", comment),
+		)))
+	}
+	return object(
+		field("__type", "CancelCalendarEventJsonRequest:#Exchange"),
+		field("Header", client.requestHeaderPayload("Exchange2013")),
+		field("Body", object(bodyFields...)),
+	)
 }
 
 func (client *Transport) buildMoveToDeletedItemsRequest(ids []any) any {
