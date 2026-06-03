@@ -180,6 +180,36 @@ func TestTransportRetriesMissingCanaryLoginFailure(t *testing.T) {
 	}
 }
 
+func TestTransportDoesNotRetryAuthPageMissingCanaryLoginFailure(t *testing.T) {
+	var loginCount atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		switch request.URL.Path {
+		case "/owa/auth.owa":
+			loginCount.Add(1)
+			response.Header().Set("Content-Type", "text/html")
+			response.WriteHeader(http.StatusOK)
+			_, _ = response.Write([]byte(`<html><form action="/owa/auth/logon.aspx">auth/logon.aspx marker must not leak</form></html>`))
+		default:
+			t.Fatalf("unexpected path: %s", request.URL.Path)
+		}
+	}))
+	defer server.Close()
+
+	client := NewTransport(Config{BaseURL: server.URL, Username: "DOMAIN\\user", SecretRef: secret.Ref("memory:owa")}, secret.NewMemoryStore(map[string]string{"memory:owa": "password"}), server.Client())
+	client.loginRetryBackoff = func(context.Context, time.Duration) error { return nil }
+
+	result := client.Authenticate(context.Background(), "default")
+	if result.OK {
+		t.Fatalf("expected auth failure")
+	}
+	if loginCount.Load() != 1 {
+		t.Fatalf("expected no retry for auth page missing canary, got %d logins", loginCount.Load())
+	}
+	if strings.Contains(result.Error, "auth/logon.aspx") || strings.Contains(result.Error, "marker must not leak") {
+		t.Fatalf("login error leaked response body: %q", result.Error)
+	}
+}
+
 func TestTransportDoesNotRetryNonTransientLoginFailure(t *testing.T) {
 	var loginCount atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
@@ -206,6 +236,72 @@ func TestTransportDoesNotRetryNonTransientLoginFailure(t *testing.T) {
 	}
 	if strings.Contains(result.Error, "wrong password body") || strings.Contains(result.Error, "password") {
 		t.Fatalf("login error leaked response body or secret-like text: %q", result.Error)
+	}
+}
+
+func TestTransportStopsAfterTransientLoginRetryExhaustion(t *testing.T) {
+	var loginCount atomic.Int32
+	var backoffs []time.Duration
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		switch request.URL.Path {
+		case "/owa/auth.owa":
+			loginCount.Add(1)
+			response.WriteHeader(http.StatusInternalServerError)
+			_, _ = response.Write([]byte("temporary failure body must not leak"))
+		default:
+			t.Fatalf("unexpected path: %s", request.URL.Path)
+		}
+	}))
+	defer server.Close()
+
+	client := NewTransport(Config{BaseURL: server.URL, Username: "DOMAIN\\user", SecretRef: secret.Ref("memory:owa")}, secret.NewMemoryStore(map[string]string{"memory:owa": "password"}), server.Client())
+	client.loginRetryBackoff = func(ctx context.Context, duration time.Duration) error {
+		backoffs = append(backoffs, duration)
+		return nil
+	}
+
+	result := client.Authenticate(context.Background(), "default")
+	if result.OK {
+		t.Fatalf("expected auth failure")
+	}
+	if loginCount.Load() != 3 {
+		t.Fatalf("expected default retry exhaustion after 3 logins, got %d", loginCount.Load())
+	}
+	if len(backoffs) != 2 || backoffs[0] != 250*time.Millisecond || backoffs[1] != 500*time.Millisecond {
+		t.Fatalf("unexpected retry backoffs: %#v", backoffs)
+	}
+	if result.Error != "owa login returned HTTP 500" {
+		t.Fatalf("expected sanitized status-only error, got %q", result.Error)
+	}
+}
+
+func TestTransportStopsWhenLoginRetryBackoffContextIsCanceled(t *testing.T) {
+	var loginCount atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		switch request.URL.Path {
+		case "/owa/auth.owa":
+			loginCount.Add(1)
+			response.WriteHeader(http.StatusInternalServerError)
+		default:
+			t.Fatalf("unexpected path: %s", request.URL.Path)
+		}
+	}))
+	defer server.Close()
+
+	client := NewTransport(Config{BaseURL: server.URL, Username: "DOMAIN\\user", SecretRef: secret.Ref("memory:owa")}, secret.NewMemoryStore(map[string]string{"memory:owa": "password"}), server.Client())
+	client.loginRetryBackoff = func(context.Context, time.Duration) error {
+		return context.Canceled
+	}
+
+	result := client.Authenticate(context.Background(), "default")
+	if result.OK {
+		t.Fatalf("expected auth failure")
+	}
+	if loginCount.Load() != 1 {
+		t.Fatalf("expected backoff cancellation to stop retries after first login, got %d", loginCount.Load())
+	}
+	if !strings.Contains(result.Error, "context canceled") {
+		t.Fatalf("expected cancellation error, got %q", result.Error)
 	}
 }
 

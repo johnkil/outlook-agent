@@ -809,7 +809,7 @@ func (client *Transport) login(ctx context.Context) (Session, error) {
 	if err != nil {
 		return Session{}, err
 	}
-	session, err := client.loginWithRetry(ctx, string(value))
+	session, err := client.loginWithRetry(ctx, value)
 	if err != nil {
 		return Session{}, err
 	}
@@ -826,14 +826,14 @@ func (client *Transport) login(ctx context.Context) (Session, error) {
 	return session, nil
 }
 
-func (client *Transport) loginWithRetry(ctx context.Context, password string) (Session, error) {
+func (client *Transport) loginWithRetry(ctx context.Context, password secret.Value) (Session, error) {
 	var lastErr error
 	attempts := client.loginRetries + 1
 	if attempts < 1 {
 		attempts = 1
 	}
 	for attempt := 0; attempt < attempts; attempt++ {
-		session, err := Login(ctx, client.client, client.config, secret.Value(password))
+		session, err := Login(ctx, client.client, client.config, password)
 		if err == nil {
 			return session, nil
 		}

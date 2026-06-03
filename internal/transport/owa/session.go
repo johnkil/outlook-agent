@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/johnkil/outlook-agent/internal/secret"
+	"github.com/johnkil/outlook-agent/internal/transport"
 )
 
 type Session struct {
@@ -87,11 +88,30 @@ func Login(ctx context.Context, client *http.Client, config Config, password sec
 	if canary == "" {
 		err := fmt.Errorf("owa canary not received")
 		if response.StatusCode >= 200 && response.StatusCode < 300 {
+			body, readErr := transport.ReadLimited(response.Body, transport.MaxResponseBytes)
+			if readErr != nil {
+				return Session{}, readErr
+			}
+			if loginResponseLooksLikeAuthPage(response, body) {
+				return Session{}, err
+			}
 			return Session{}, transientLoginError{err: err}
 		}
 		return Session{}, err
 	}
 	return Session{Canary: canary, Principal: config.Username, Client: &sessionClient}, nil
+}
+
+func loginResponseLooksLikeAuthPage(response *http.Response, body []byte) bool {
+	contentType := ""
+	if response != nil {
+		contentType = strings.ToLower(response.Header.Get("Content-Type"))
+	}
+	if !strings.Contains(contentType, "html") {
+		return false
+	}
+	lower := strings.ToLower(string(body))
+	return strings.Contains(lower, "auth/logon.aspx") || strings.Contains(lower, "/owa/auth.owa")
 }
 
 func canaryFromCookies(jar http.CookieJar, rawURL string) string {
