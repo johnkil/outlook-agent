@@ -24,3 +24,29 @@ func TestIANALocationNameTrimsAndIgnoresCase(t *testing.T) {
 		t.Fatalf("unexpected AUS Eastern mapping: %q", got)
 	}
 }
+
+func TestWindowsLocationNameMapsIANAToProviderID(t *testing.T) {
+	cases := map[string]string{
+		"Europe/Moscow":       "Russian Standard Time",
+		" europe/moscow ":     "Russian Standard Time",
+		"Asia/Tokyo":          "Tokyo Standard Time",
+		"America/Los_Angeles": "Pacific Standard Time",
+	}
+	for input, expected := range cases {
+		if got := WindowsLocationName(input); got != expected {
+			t.Fatalf("WindowsLocationName(%q) = %q, want %q", input, got, expected)
+		}
+	}
+}
+
+func TestWindowsLocationNamePreservesProviderID(t *testing.T) {
+	if got := WindowsLocationName(" russian standard time "); got != "Russian Standard Time" {
+		t.Fatalf("expected canonical provider name, got %q", got)
+	}
+}
+
+func TestWindowsLocationNameReturnsEmptyForUnknownZone(t *testing.T) {
+	if got := WindowsLocationName("Mars/Olympus"); got != "" {
+		t.Fatalf("expected unknown zone to return empty string, got %q", got)
+	}
+}

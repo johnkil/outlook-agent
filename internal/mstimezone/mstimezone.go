@@ -147,3 +147,55 @@ var windowsToIANA = map[string]string{
 func IANALocationName(timeZone string) string {
 	return windowsToIANA[strings.ToLower(strings.TrimSpace(timeZone))]
 }
+
+var ianaToWindows = buildIANAToWindows()
+
+func WindowsLocationName(timeZone string) string {
+	normalized := strings.ToLower(strings.TrimSpace(timeZone))
+	if normalized == "" {
+		return ""
+	}
+	if _, ok := windowsToIANA[normalized]; ok {
+		return canonicalWindowsName(normalized)
+	}
+	return ianaToWindows[normalized]
+}
+
+func buildIANAToWindows() map[string]string {
+	out := make(map[string]string, len(windowsToIANA))
+	for windows, iana := range windowsToIANA {
+		key := strings.ToLower(strings.TrimSpace(iana))
+		if key == "" {
+			continue
+		}
+		if _, exists := out[key]; !exists {
+			out[key] = canonicalWindowsName(windows)
+		}
+	}
+	return out
+}
+
+func canonicalWindowsName(value string) string {
+	words := strings.Fields(strings.ToLower(strings.TrimSpace(value)))
+	for index, word := range words {
+		words[index] = canonicalWindowsWord(word)
+	}
+	return strings.Join(words, " ")
+}
+
+func canonicalWindowsWord(word string) string {
+	switch word {
+	case "utc", "gmt", "sa", "us":
+		return strings.ToUpper(word)
+	}
+	if strings.HasPrefix(word, "utc") {
+		return strings.ToUpper(word)
+	}
+	if len(word) == 2 && strings.HasSuffix(word, ".") {
+		return strings.ToUpper(word[:1]) + "."
+	}
+	if len(word) == 0 {
+		return word
+	}
+	return strings.ToUpper(word[:1]) + word[1:]
+}
