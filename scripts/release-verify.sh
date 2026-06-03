@@ -126,7 +126,7 @@ for marker in \
   "Use \`outlook.calendar_delete_event\` after \`outlook.action_dry_run\` and" \
   "Use \`outlook.calendar_cancel_meeting\` after \`outlook.action_dry_run\`," \
   "Standard flow must not construct raw OWA \`CreateCalendarEvent\`," \
-  "\`DeleteItem\`, or \`CancelCalendarEvent\` payloads for normal"
+  "\`DeleteItem\`, or cancellation payloads for normal"
 do
   if ! grep -Fq "$marker" "$plugin_calendar_skill"; then
     echo "generated plugin calendar skill is missing guidance marker: ${marker}" >&2

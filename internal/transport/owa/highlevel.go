@@ -139,7 +139,7 @@ func (client *Transport) executeHighLevel(ctx context.Context, request transport
 		if eventID == "" {
 			return transport.ActionResponse{OK: false, Error: "event_id is required"}, true
 		}
-		response := client.executeService(ctx, "CancelCalendarEvent", client.buildCancelCalendarEventRequest(eventID, stringValue(request.Payload, "change_key"), stringValue(request.Payload, "comment")), false)
+		response := client.executeService(ctx, "CreateItem", client.buildCancelCalendarItemRequest(eventID, stringValue(request.Payload, "change_key"), stringValue(request.Payload, "comment")), false)
 		if !response.OK {
 			return response, true
 		}
@@ -1291,44 +1291,63 @@ func calendarCreateBodyHTML(body string) string {
 	return fmt.Sprintf(`<html><head><meta http-equiv="Content-Type" content="text/html; charset=UTF-8"></head><body dir="ltr"><div dir="ltr"><p>%s</p></div></body></html>`, escaped)
 }
 
-func calendarDeleteEventItemID(eventID string, changeKey string) map[string]any {
-	itemID := map[string]any{
-		"__type": "ItemId:#Exchange",
-		"Id":     eventID,
+func calendarDeleteEventItemID(eventID string, changeKey string) orderedObject {
+	fields := []orderedField{
+		field("__type", "ItemId:#Exchange"),
+		field("Id", eventID),
 	}
 	if changeKey = strings.TrimSpace(changeKey); changeKey != "" {
-		itemID["ChangeKey"] = changeKey
+		fields = append(fields, field("ChangeKey", changeKey))
 	}
-	return itemID
+	return object(fields...)
 }
 
-func (client *Transport) buildCancelCalendarEventRequest(eventID string, changeKey string, comment string) any {
-	bodyFields := []orderedField{
-		field("__type", "CancelCalendarEventRequest:#Exchange"),
+func orderedItemIDValue(value any) any {
+	switch typed := value.(type) {
+	case string:
+		return object(field("__type", "ItemId:#Exchange"), field("Id", typed))
+	case map[string]any:
+		if strings.TrimSpace(stringValue(typed, "__type")) == "ItemId:#Exchange" {
+			return calendarDeleteEventItemID(stringValue(typed, "Id"), stringValue(typed, "ChangeKey"))
+		}
+		return orderTypeFieldsFirst(typed)
+	default:
+		return value
+	}
+}
+
+func (client *Transport) buildCancelCalendarItemRequest(eventID string, changeKey string, comment string) any {
+	itemFields := []orderedField{
+		field("__type", "CancelCalendarItem:#Exchange"),
 		field("ReferenceItemId", calendarDeleteEventItemID(eventID, changeKey)),
 	}
 	if comment = strings.TrimSpace(comment); comment != "" {
-		bodyFields = append(bodyFields, field("NewBodyContent", object(
+		itemFields = append(itemFields, field("NewBodyContent", object(
 			field("__type", "BodyContentType:#Exchange"),
 			field("BodyType", "Text"),
 			field("Value", comment),
 		)))
 	}
 	return object(
-		field("__type", "CancelCalendarEventJsonRequest:#Exchange"),
+		field("__type", "CreateItemJsonRequest:#Exchange"),
 		field("Header", client.requestHeaderPayload("Exchange2013")),
-		field("Body", object(bodyFields...)),
+		field("Body", object(
+			field("__type", "CreateItemRequest:#Exchange"),
+			field("MessageDisposition", "SendAndSaveCopy"),
+			field("SendMeetingInvitations", "SendToAllAndSaveCopy"),
+			field("Items", []any{
+				object(itemFields...),
+			}),
+		)),
 	)
 }
 
 func (client *Transport) buildMoveToDeletedItemsRequest(ids []any) any {
 	itemIDs := make([]any, 0, len(ids))
 	for _, id := range ids {
-		switch typed := id.(type) {
-		case string:
-			itemIDs = append(itemIDs, object(field("__type", "ItemId:#Exchange"), field("Id", typed)))
-		case map[string]any:
-			itemIDs = append(itemIDs, typed)
+		itemID := orderedItemIDValue(id)
+		if itemID != nil {
+			itemIDs = append(itemIDs, itemID)
 		}
 	}
 	return object(
@@ -1346,11 +1365,9 @@ func (client *Transport) buildMoveToDeletedItemsRequest(ids []any) any {
 func (client *Transport) buildMoveItemRequest(ids []any, folderID string) any {
 	itemIDs := make([]any, 0, len(ids))
 	for _, id := range ids {
-		switch typed := id.(type) {
-		case string:
-			itemIDs = append(itemIDs, object(field("__type", "ItemId:#Exchange"), field("Id", typed)))
-		case map[string]any:
-			itemIDs = append(itemIDs, typed)
+		itemID := orderedItemIDValue(id)
+		if itemID != nil {
+			itemIDs = append(itemIDs, itemID)
 		}
 	}
 	return object(

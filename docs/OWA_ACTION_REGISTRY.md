@@ -170,11 +170,13 @@ notes.
   Agents should use the typed calendar cleanup tool for accidental/local
   created event artifacts instead of constructing raw `DeleteItem` payloads.
 - `calendar.cancel_meeting` / `outlook.calendar_cancel_meeting` is the typed
-  cancellation path for one exact organizer-owned meeting. It sends the
+  cancellation path for one exact organizer-owned meeting. The OWA transport
+  sends a `CreateItem` request containing `CancelCalendarItem`, because the
+  tested deployment rejects `CancelCalendarEvent` with HTTP 500. It sends the
   cancellation after dry-run confirmation and required send-like approval.
   Agents should use it only for explicit cancellation/notification semantics
-  and should not construct raw OWA `CancelCalendarEvent` payloads for normal
-  meeting cancellation.
+  and should not construct raw OWA cancellation payloads for normal meeting
+  cancellation.
 - `SearchMailboxes` is classified as `unknown` because the raw action can
   express broad mailbox searches and does not have a narrow item-id target that
   the generic explicit-target policy can prove safe.
