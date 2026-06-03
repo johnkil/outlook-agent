@@ -139,7 +139,7 @@ func (client *Transport) executeHighLevel(ctx context.Context, request transport
 		if eventID == "" {
 			return transport.ActionResponse{OK: false, Error: "event_id is required"}, true
 		}
-		response := client.executeService(ctx, "CancelCalendarEvent", client.buildCancelCalendarEventRequest(eventID, stringValue(request.Payload, "change_key"), stringValue(request.Payload, "comment")), false)
+		response := client.executeService(ctx, "CreateItem", client.buildCancelCalendarItemRequest(eventID, stringValue(request.Payload, "change_key"), stringValue(request.Payload, "comment")), false)
 		if !response.OK {
 			return response, true
 		}
@@ -1316,22 +1316,29 @@ func orderedItemIDValue(value any) any {
 	}
 }
 
-func (client *Transport) buildCancelCalendarEventRequest(eventID string, changeKey string, comment string) any {
-	bodyFields := []orderedField{
-		field("__type", "CancelCalendarEventRequest:#Exchange"),
+func (client *Transport) buildCancelCalendarItemRequest(eventID string, changeKey string, comment string) any {
+	itemFields := []orderedField{
+		field("__type", "CancelCalendarItem:#Exchange"),
 		field("ReferenceItemId", calendarDeleteEventItemID(eventID, changeKey)),
 	}
 	if comment = strings.TrimSpace(comment); comment != "" {
-		bodyFields = append(bodyFields, field("NewBodyContent", object(
+		itemFields = append(itemFields, field("NewBodyContent", object(
 			field("__type", "BodyContentType:#Exchange"),
 			field("BodyType", "Text"),
 			field("Value", comment),
 		)))
 	}
 	return object(
-		field("__type", "CancelCalendarEventJsonRequest:#Exchange"),
+		field("__type", "CreateItemJsonRequest:#Exchange"),
 		field("Header", client.requestHeaderPayload("Exchange2013")),
-		field("Body", object(bodyFields...)),
+		field("Body", object(
+			field("__type", "CreateItemRequest:#Exchange"),
+			field("MessageDisposition", "SendAndSaveCopy"),
+			field("SendMeetingInvitations", "SendToAllAndSaveCopy"),
+			field("Items", []any{
+				object(itemFields...),
+			}),
+		)),
 	)
 }
 

@@ -36,8 +36,8 @@ phrases such as "tomorrow" into explicit date ranges before calling tools.
    exact confirmation, and required host approval when the user wants to
    cancel and notify attendees.
 11. Standard flow must not construct raw OWA `CreateCalendarEvent`,
-   `DeleteItem`, or `CancelCalendarEvent` payloads for normal
-   create/delete/cancel flows.
+   `DeleteItem`, or cancellation payloads for normal create/delete/cancel
+   flows.
 12. Surface conflicts before suggesting changes.
 13. Respond to one exact event with `outlook.calendar_respond` only after
    `outlook.action_dry_run`, exact confirmation, and required host approval.

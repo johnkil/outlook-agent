@@ -2883,22 +2883,33 @@ func TestHighLevelCalendarCancelMeetingSendsCancellation(t *testing.T) {
 	if len(calls) != 1 {
 		t.Fatalf("expected one service call, got %#v", calls)
 	}
-	if calls[0].Action != "CancelCalendarEvent" {
-		t.Fatalf("expected CancelCalendarEvent, got %q", calls[0].Action)
+	if calls[0].Action != "CreateItem" {
+		t.Fatalf("expected CreateItem, got %q", calls[0].Action)
 	}
 	if calls[0].Action == "DeleteItem" {
 		t.Fatalf("calendar.cancel_meeting must not call DeleteItem")
 	}
 	body := calls[0].Body["Body"].(map[string]any)
-	reference := body["ReferenceItemId"].(map[string]any)
+	if body["MessageDisposition"] != "SendAndSaveCopy" || body["SendMeetingInvitations"] != "SendToAllAndSaveCopy" {
+		t.Fatalf("expected send-and-save cancellation item, got %#v", body)
+	}
+	items := body["Items"].([]any)
+	if len(items) != 1 {
+		t.Fatalf("expected one cancellation item, got %#v", items)
+	}
+	item := items[0].(map[string]any)
+	if item["__type"] != "CancelCalendarItem:#Exchange" {
+		t.Fatalf("expected CancelCalendarItem payload, got %#v", item)
+	}
+	reference := item["ReferenceItemId"].(map[string]any)
 	if reference["Id"] != "event-1" || reference["ChangeKey"] != "ck-1" {
 		t.Fatalf("expected ReferenceItemId id/change key, got %#v", reference)
 	}
-	if !strings.Contains(calls[0].RawBody, `"ReferenceItemId":{"__type":"ItemId:#Exchange","Id":"event-1","ChangeKey":"ck-1"}`) {
+	if !strings.Contains(calls[0].RawBody, `"Items":[{"__type":"CancelCalendarItem:#Exchange","ReferenceItemId":{"__type":"ItemId:#Exchange","Id":"event-1","ChangeKey":"ck-1"}`) {
 		t.Fatalf("expected nested calendar cancel ReferenceItemId __type first, got raw body %s", calls[0].RawBody)
 	}
-	if !strings.Contains(fmt.Sprint(body), "Canceled because plans changed.") {
-		t.Fatalf("expected cancellation comment in request body, got %#v", body)
+	if !strings.Contains(fmt.Sprint(item), "Canceled because plans changed.") {
+		t.Fatalf("expected cancellation comment in request item, got %#v", item)
 	}
 	if response.Data["id"] != "event-1" || response.Data["status"] != "cancelled" {
 		t.Fatalf("expected typed cancel-meeting response, got %#v", response.Data)

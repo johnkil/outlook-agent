@@ -171,7 +171,7 @@ underlying action is `calendar.cancel_meeting`, is classified as `send_like`,
 and requires `outlook.action_dry_run`, exact confirmation, and host approval
 fields when approval mode requires them. Agents should use it only when the
 user explicitly wants cancellation and notification semantics instead of
-constructing raw OWA `CancelCalendarEvent` payloads.
+constructing raw OWA cancellation payloads.
 
 Compatibility version `0.1` also includes `outlook.mail_fetch_bodies`, an
 explicit-id batch helper capped at 50 ids per call. It is not a mailbox search,

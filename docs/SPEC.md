@@ -232,7 +232,7 @@ Key tool inputs:
   token plus host approval fields when approval mode requires them. Use it only
   when the user explicitly wants cancellation and notification semantics.
   Normal cancellation must not require clients to construct raw OWA
-  `CancelCalendarEvent` payloads.
+  cancellation payloads.
 - `outlook.calendar_respond`: `event_id`, `response` (`accept`, `decline`, or
   `tentative`), `send_response`, `confirm_token`, optional `comment`, optional
   `approval_challenge_id`, optional `approval_token`, and optional `mailbox`.
