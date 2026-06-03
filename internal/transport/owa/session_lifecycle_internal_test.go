@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -176,6 +177,35 @@ func TestTransportRetriesMissingCanaryLoginFailure(t *testing.T) {
 	}
 	if loginCount.Load() != 2 {
 		t.Fatalf("expected one retry after missing canary login failure, got %d logins", loginCount.Load())
+	}
+}
+
+func TestTransportDoesNotRetryNonTransientLoginFailure(t *testing.T) {
+	var loginCount atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		switch request.URL.Path {
+		case "/owa/auth.owa":
+			loginCount.Add(1)
+			response.WriteHeader(http.StatusUnauthorized)
+			_, _ = response.Write([]byte("wrong password body must not leak"))
+		default:
+			t.Fatalf("unexpected path: %s", request.URL.Path)
+		}
+	}))
+	defer server.Close()
+
+	client := NewTransport(Config{BaseURL: server.URL, Username: "DOMAIN\\user", SecretRef: secret.Ref("memory:owa")}, secret.NewMemoryStore(map[string]string{"memory:owa": "password"}), server.Client())
+	client.loginRetryBackoff = func(context.Context, time.Duration) error { return nil }
+
+	result := client.Authenticate(context.Background(), "default")
+	if result.OK {
+		t.Fatalf("expected auth failure")
+	}
+	if loginCount.Load() != 1 {
+		t.Fatalf("expected no retry for non-transient login failure, got %d logins", loginCount.Load())
+	}
+	if strings.Contains(result.Error, "wrong password body") || strings.Contains(result.Error, "password") {
+		t.Fatalf("login error leaked response body or secret-like text: %q", result.Error)
 	}
 }
 

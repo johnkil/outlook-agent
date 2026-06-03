@@ -85,7 +85,11 @@ func Login(ctx context.Context, client *http.Client, config Config, password sec
 
 	canary := canaryFromCookies(jar, authURL)
 	if canary == "" {
-		return Session{}, transientLoginError{err: fmt.Errorf("owa canary not received")}
+		err := fmt.Errorf("owa canary not received")
+		if response.StatusCode >= 200 && response.StatusCode < 300 {
+			return Session{}, transientLoginError{err: err}
+		}
+		return Session{}, err
 	}
 	return Session{Canary: canary, Principal: config.Username, Client: &sessionClient}, nil
 }
