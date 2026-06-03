@@ -34,6 +34,13 @@ output for `calendar.delete_event` or `calendar.cancel_meeting`; confirmed
 execution goes through MCP `outlook.calendar_delete_event`,
 `outlook.calendar_cancel_meeting`, or the exact `outlook.action_confirm` flow.
 
+Generic dry-run review examples:
+
+```bash
+outlook-agent calendar delete-event --event-id event-123 --change-key ck-123 --mailbox user@example.com --dry-run
+outlook-agent calendar cancel-meeting --event-id event-123 --change-key ck-123 --comment "Canceled by organizer" --mailbox user@example.com --dry-run
+```
+
 Exit codes:
 
 - `0`: success.
