@@ -335,6 +335,25 @@ type CalendarCreateMeetingInput struct {
 	Mailbox             string   `json:"mailbox,omitempty" jsonschema:"optional mailbox user id or user principal name"`
 }
 
+type CalendarDeleteEventInput struct {
+	EventID             string `json:"event_id" jsonschema:"calendar event id"`
+	ChangeKey           string `json:"change_key,omitempty" jsonschema:"optional Outlook event change key"`
+	ConfirmToken        string `json:"confirm_token" jsonschema:"confirmation token from outlook.action_dry_run"`
+	ApprovalChallengeID string `json:"approval_challenge_id,omitempty" jsonschema:"payload-bound external approval challenge id"`
+	ApprovalToken       string `json:"approval_token,omitempty" jsonschema:"external approval token supplied by the host after user approval"`
+	Mailbox             string `json:"mailbox,omitempty" jsonschema:"optional mailbox user id or user principal name"`
+}
+
+type CalendarCancelMeetingInput struct {
+	EventID             string `json:"event_id" jsonschema:"calendar event id"`
+	ChangeKey           string `json:"change_key,omitempty" jsonschema:"optional Outlook event change key"`
+	Comment             string `json:"comment,omitempty" jsonschema:"optional cancellation comment"`
+	ConfirmToken        string `json:"confirm_token" jsonschema:"confirmation token from outlook.action_dry_run"`
+	ApprovalChallengeID string `json:"approval_challenge_id,omitempty" jsonschema:"payload-bound external approval challenge id"`
+	ApprovalToken       string `json:"approval_token,omitempty" jsonschema:"external approval token supplied by the host after user approval"`
+	Mailbox             string `json:"mailbox,omitempty" jsonschema:"optional mailbox user id or user principal name"`
+}
+
 type CalendarFindTimeOutput struct {
 	Suggestions []any `json:"suggestions"`
 }
@@ -411,8 +430,9 @@ type pendingApproval struct {
 }
 
 type toolRegistration struct {
-	name string
-	add  func(*mcp.Server, *Runtime, string)
+	name           string
+	requiredAction string
+	add            func(*mcp.Server, *Runtime, string)
 }
 
 const ApprovalTokenEnv = approval.LegacyTokenEnv
@@ -512,6 +532,12 @@ var toolRegistrations = []toolRegistration{
 	{name: "outlook.calendar_create_meeting", add: func(server *mcp.Server, runtime *Runtime, name string) {
 		mcp.AddTool(server, mcpTool(name), calendarCreateMeetingHandler(runtime))
 	}},
+	{name: "outlook.calendar_delete_event", requiredAction: "calendar.delete_event", add: func(server *mcp.Server, runtime *Runtime, name string) {
+		mcp.AddTool(server, mcpTool(name), calendarDeleteEventHandler(runtime))
+	}},
+	{name: "outlook.calendar_cancel_meeting", requiredAction: "calendar.cancel_meeting", add: func(server *mcp.Server, runtime *Runtime, name string) {
+		mcp.AddTool(server, mcpTool(name), calendarCancelMeetingHandler(runtime))
+	}},
 	{name: "outlook.calendar_respond", add: func(server *mcp.Server, runtime *Runtime, name string) {
 		mcp.AddTool(server, mcpTool(name), calendarRespondHandler(runtime))
 	}},
@@ -557,6 +583,8 @@ var toolDescriptionByName = map[string]string{
 	"outlook.calendar_availability":       "List free/busy availability for a bounded time window.",
 	"outlook.calendar_find_time":          "Find mutual free time suggestions for attendees; planning-only and does not create or send meetings.",
 	"outlook.calendar_create_meeting":     "Create a calendar meeting only after dry-run review, exact confirmation, and required host approval.",
+	"outlook.calendar_delete_event":       "Move one Outlook calendar event to Deleted Items after dry-run confirmation; does not send cancellations.",
+	"outlook.calendar_cancel_meeting":     "Cancel one Outlook meeting and send cancellation after dry-run confirmation and required host approval.",
 	"outlook.calendar_respond":            "Respond to one exact event only after dry-run review, confirmation, and required approval.",
 	"outlook.action_dry_run":              "Required summary step for broad, mutating, send-like, destructive, or unknown actions.",
 	"outlook.action_confirm":              "Execute only the exact payload reviewed by outlook.action_dry_run.",
@@ -643,12 +671,24 @@ func NewWithTransportProfile(client transport.Transport, profile string) *mcp.Se
 
 func NewWithRuntime(runtime *Runtime) *mcp.Server {
 	server := mcp.NewServer(&mcp.Implementation{Name: "outlook-agent", Version: buildinfo.Current().Version}, nil)
+	supportedActions := supportedActionNames(runtime.client.Capabilities(context.Background()))
 
 	for _, registration := range toolRegistrations {
+		if registration.requiredAction != "" && !supportedActions[registration.requiredAction] {
+			continue
+		}
 		registration.add(server, runtime, registration.name)
 	}
 
 	return server
+}
+
+func supportedActionNames(capabilities transport.CapabilitySet) map[string]bool {
+	supported := make(map[string]bool, len(capabilities.Actions))
+	for _, definition := range capabilities.Actions {
+		supported[definition.Name] = true
+	}
+	return supported
 }
 
 func authCheckHandler(runtime *Runtime) func(context.Context, *mcp.CallToolRequest, AuthCheckInput) (*mcp.CallToolResult, AuthCheckOutput, error) {
@@ -1356,35 +1396,82 @@ func calendarCreateMeetingHandler(runtime *Runtime) func(context.Context, *mcp.C
 			return nil, ActionResultOutput{OK: false, Error: rejectReason}, nil
 		}
 		actionName := "calendar.create_meeting"
-		summary, class, review := dryRunReviewFor(ctx, runtime.client, actionName, payload, false)
-		if summary.Error != "" {
-			message := redact.String(summary.Error)
-			runtime.recordAudit(audit.TypeReject, actionName, payload, runtime.profile, class, review, "blocked", summary.Count, message)
-			return nil, ActionResultOutput{OK: false, Error: message}, nil
-		}
-		pendingApproval, err := runtime.validateExternalApproval(input.ApprovalChallengeID, input.ApprovalToken, actionName, payload, false, runtime.profile, review, class)
-		if err != nil {
-			runtime.recordAudit(audit.TypeReject, actionName, payload, runtime.profile, class, review, "blocked", summary.Count, err.Error())
-			return nil, ActionResultOutput{OK: false, Error: err.Error()}, nil
-		}
-		if !runtime.confirm.Consume(input.ConfirmToken, confirmationBindingFor(runtime.client, runtime.profile, actionName, payload, false, review, class)) {
-			runtime.recordAudit(audit.TypeReject, actionName, payload, runtime.profile, class, review, "blocked", summary.Count, "confirmation token is invalid")
-			return nil, ActionResultOutput{OK: false, Error: "confirmation token is invalid"}, nil
-		}
-		if err := runtime.consumeExternalApproval(pendingApproval); err != nil {
-			runtime.recordAudit(audit.TypeReject, actionName, payload, runtime.profile, class, review, "blocked", summary.Count, err.Error())
-			return nil, ActionResultOutput{OK: false, Error: err.Error()}, nil
-		}
-		decision := confirmedActionDecision(runtime.client, actionName, payload, false)
-		if !decision.Allowed {
-			runtime.recordAudit(audit.TypeReject, actionName, payload, runtime.profile, class, review, "blocked", summary.Count, decision.Reason)
-			return nil, ActionResultOutput{OK: false, Error: decision.Reason}, nil
-		}
-		runtime.recordAudit(audit.TypeConfirm, actionName, payload, runtime.profile, class, review, "accepted", summary.Count, "")
-		response := runtime.client.Execute(ctx, transport.ActionRequest{Name: actionName, Payload: payload})
-		runtime.recordAudit(audit.TypeExecute, actionName, payload, runtime.profile, class, review, auditDecisionForResponse(response), summary.Count, response.Error)
-		return nil, actionResultFromResponse(response), nil
+		return executeConfirmedCalendarAction(ctx, runtime, actionName, payload, input.ConfirmToken, input.ApprovalChallengeID, input.ApprovalToken)
 	}
+}
+
+func calendarDeleteEventHandler(runtime *Runtime) func(context.Context, *mcp.CallToolRequest, CalendarDeleteEventInput) (*mcp.CallToolResult, ActionResultOutput, error) {
+	return func(ctx context.Context, _ *mcp.CallToolRequest, input CalendarDeleteEventInput) (*mcp.CallToolResult, ActionResultOutput, error) {
+		eventID := strings.TrimSpace(input.EventID)
+		if eventID == "" {
+			return nil, ActionResultOutput{OK: false, Error: "event_id required"}, nil
+		}
+		if input.ConfirmToken == "" {
+			return nil, ActionResultOutput{OK: false, Error: "confirm_token required"}, nil
+		}
+		payload := withMailbox(map[string]any{
+			"event_id":   eventID,
+			"change_key": input.ChangeKey,
+		}, input.Mailbox)
+		payload, rejectReason := canonicalActionPayload("calendar.delete_event", payload)
+		if rejectReason != "" {
+			return nil, ActionResultOutput{OK: false, Error: rejectReason}, nil
+		}
+		return executeConfirmedCalendarAction(ctx, runtime, "calendar.delete_event", payload, input.ConfirmToken, input.ApprovalChallengeID, input.ApprovalToken)
+	}
+}
+
+func calendarCancelMeetingHandler(runtime *Runtime) func(context.Context, *mcp.CallToolRequest, CalendarCancelMeetingInput) (*mcp.CallToolResult, ActionResultOutput, error) {
+	return func(ctx context.Context, _ *mcp.CallToolRequest, input CalendarCancelMeetingInput) (*mcp.CallToolResult, ActionResultOutput, error) {
+		eventID := strings.TrimSpace(input.EventID)
+		if eventID == "" {
+			return nil, ActionResultOutput{OK: false, Error: "event_id required"}, nil
+		}
+		if input.ConfirmToken == "" {
+			return nil, ActionResultOutput{OK: false, Error: "confirm_token required"}, nil
+		}
+		payload := withMailbox(map[string]any{
+			"event_id":   eventID,
+			"change_key": input.ChangeKey,
+			"comment":    input.Comment,
+		}, input.Mailbox)
+		payload, rejectReason := canonicalActionPayload("calendar.cancel_meeting", payload)
+		if rejectReason != "" {
+			return nil, ActionResultOutput{OK: false, Error: rejectReason}, nil
+		}
+		return executeConfirmedCalendarAction(ctx, runtime, "calendar.cancel_meeting", payload, input.ConfirmToken, input.ApprovalChallengeID, input.ApprovalToken)
+	}
+}
+
+func executeConfirmedCalendarAction(ctx context.Context, runtime *Runtime, actionName string, payload map[string]any, confirmToken string, approvalChallengeID string, approvalToken string) (*mcp.CallToolResult, ActionResultOutput, error) {
+	summary, class, review := dryRunReviewFor(ctx, runtime.client, actionName, payload, false)
+	if summary.Error != "" {
+		message := redact.String(summary.Error)
+		runtime.recordAudit(audit.TypeReject, actionName, payload, runtime.profile, class, review, "blocked", summary.Count, message)
+		return nil, ActionResultOutput{OK: false, Error: message}, nil
+	}
+	pendingApproval, err := runtime.validateExternalApproval(approvalChallengeID, approvalToken, actionName, payload, false, runtime.profile, review, class)
+	if err != nil {
+		runtime.recordAudit(audit.TypeReject, actionName, payload, runtime.profile, class, review, "blocked", summary.Count, err.Error())
+		return nil, ActionResultOutput{OK: false, Error: err.Error()}, nil
+	}
+	if !runtime.confirm.Consume(confirmToken, confirmationBindingFor(runtime.client, runtime.profile, actionName, payload, false, review, class)) {
+		runtime.recordAudit(audit.TypeReject, actionName, payload, runtime.profile, class, review, "blocked", summary.Count, "confirmation token is invalid")
+		return nil, ActionResultOutput{OK: false, Error: "confirmation token is invalid"}, nil
+	}
+	if err := runtime.consumeExternalApproval(pendingApproval); err != nil {
+		runtime.recordAudit(audit.TypeReject, actionName, payload, runtime.profile, class, review, "blocked", summary.Count, err.Error())
+		return nil, ActionResultOutput{OK: false, Error: err.Error()}, nil
+	}
+	decision := confirmedActionDecision(runtime.client, actionName, payload, false)
+	if !decision.Allowed {
+		runtime.recordAudit(audit.TypeReject, actionName, payload, runtime.profile, class, review, "blocked", summary.Count, decision.Reason)
+		return nil, ActionResultOutput{OK: false, Error: decision.Reason}, nil
+	}
+	runtime.recordAudit(audit.TypeConfirm, actionName, payload, runtime.profile, class, review, "accepted", summary.Count, "")
+	response := runtime.client.Execute(ctx, transport.ActionRequest{Name: actionName, Payload: payload})
+	runtime.recordAudit(audit.TypeExecute, actionName, payload, runtime.profile, class, review, auditDecisionForResponse(response), summary.Count, response.Error)
+	return nil, actionResultFromResponse(response), nil
 }
 
 func calendarRespondHandler(runtime *Runtime) func(context.Context, *mcp.CallToolRequest, CalendarRespondInput) (*mcp.CallToolResult, ActionResultOutput, error) {
@@ -1707,9 +1794,19 @@ func rawActionHandler(runtime *Runtime) func(context.Context, *mcp.CallToolReque
 }
 
 func canonicalActionPayload(actionName string, payload map[string]any) (map[string]any, string) {
-	if actionName != "calendar.create_meeting" {
+	switch actionName {
+	case "calendar.create_meeting":
+		return canonicalCalendarCreateMeetingPayload(payload)
+	case "calendar.delete_event":
+		return canonicalCalendarEventMutationPayload(payload, false)
+	case "calendar.cancel_meeting":
+		return canonicalCalendarEventMutationPayload(payload, true)
+	default:
 		return payload, ""
 	}
+}
+
+func canonicalCalendarCreateMeetingPayload(payload map[string]any) (map[string]any, string) {
 	if payload == nil {
 		return nil, ""
 	}
@@ -1742,6 +1839,55 @@ func canonicalActionPayload(actionName string, payload map[string]any) (map[stri
 		canonical["attendees"] = nonEmptyStringValues(attendees)
 	}
 	return canonical, ""
+}
+
+func canonicalCalendarEventMutationPayload(payload map[string]any, includeComment bool) (map[string]any, string) {
+	if payload == nil {
+		return nil, "event_id required"
+	}
+	canonical := make(map[string]any, len(payload))
+	for key, value := range payload {
+		canonical[key] = value
+	}
+	eventID := strings.TrimSpace(stringMetadata(canonical, "event_id"))
+	if eventID == "" {
+		return canonical, "event_id required"
+	}
+	canonical["event_id"] = eventID
+	for _, key := range []string{"change_key", "mailbox"} {
+		trimmed := strings.TrimSpace(stringMetadata(canonical, key))
+		if trimmed == "" {
+			delete(canonical, key)
+			continue
+		}
+		canonical[key] = trimmed
+	}
+	if !includeComment {
+		if hasUnsupportedCalendarDeleteComment(canonical) {
+			return canonical, "comment is not supported for calendar.delete_event"
+		}
+		delete(canonical, "comment")
+		return canonical, ""
+	}
+	comment := strings.TrimSpace(stringMetadata(canonical, "comment"))
+	if comment == "" {
+		delete(canonical, "comment")
+	} else {
+		canonical["comment"] = comment
+	}
+	return canonical, ""
+}
+
+func hasUnsupportedCalendarDeleteComment(payload map[string]any) bool {
+	value, exists := payload["comment"]
+	if !exists {
+		return false
+	}
+	comment, ok := value.(string)
+	if !ok {
+		return true
+	}
+	return strings.TrimSpace(comment) != ""
 }
 
 func actionPreflightRejection(actionName string) string {

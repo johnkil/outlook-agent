@@ -1838,6 +1838,32 @@ func TestHighLevelCalendarCreateMeetingDryRunReview(t *testing.T) {
 	}
 }
 
+func TestHighLevelCalendarCreateMeetingDryRunRejectsUnresolvedAttendeeReview(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
+	defer server.Close()
+	client := newTestTransport(server)
+
+	summary := client.DryRun(context.Background(), transport.ActionRequest{
+		Name: "calendar.create_meeting",
+		Payload: map[string]any{
+			"subject":   "Planning",
+			"start":     "2026-06-02T15:00:00+03:00",
+			"end":       "2026-06-02T15:30:00+03:00",
+			"attendees": []any{"Alex"},
+		},
+	})
+
+	if summary.Error == "" {
+		t.Fatalf("expected dry-run to reject unresolved attendee before confirmation, got %#v", summary)
+	}
+	if !strings.Contains(summary.Error, "requires resolved attendee email addresses") {
+		t.Fatalf("expected unresolved attendee error, got %q", summary.Error)
+	}
+	if summary.Review == nil || summary.Review.Completeness == transport.ReviewCompletenessComplete {
+		t.Fatalf("unresolved attendee must not produce complete review: %#v", summary.Review)
+	}
+}
+
 func TestHighLevelCalendarCreateMeetingDryRunRejectsInvalidPayloadReview(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
 	defer server.Close()
@@ -1870,17 +1896,36 @@ func TestHighLevelCalendarCreateMeetingDryRunRejectsInvalidPayloadReview(t *test
 	}
 }
 
-func TestHighLevelCalendarCreateMeetingCallsCreateItem(t *testing.T) {
+func TestHighLevelCalendarCreateMeetingCallsCreateCalendarEvent(t *testing.T) {
 	var calls []recordedServiceCall
-	server := newOWAServiceServer(t, &calls, map[string]any{
-		"Body": map[string]any{
-			"Items": []any{
-				map[string]any{
-					"ItemId":   map[string]any{"Id": "event-1", "ChangeKey": "ck-1"},
-					"Subject":  "Planning",
-					"Start":    "2026-06-02T15:00:00",
-					"End":      "2026-06-02T15:30:00",
-					"Location": "Room 1",
+	server := newOWAServiceServerByAction(t, &calls, map[string]map[string]any{
+		"FindPeople": {
+			"Body": map[string]any{
+				"ResultSet": []any{
+					map[string]any{
+						"DisplayName": "Team Mate",
+						"EmailAddress": map[string]any{
+							"Name":                "Team Mate",
+							"EmailAddress":        "teammate@example.com",
+							"RoutingType":         "SMTP",
+							"MailboxType":         "Mailbox",
+							"OriginalDisplayName": "Team Mate",
+							"RelevanceScore":      7,
+						},
+					},
+				},
+			},
+		},
+		"CreateCalendarEvent": {
+			"Body": map[string]any{
+				"Items": []any{
+					map[string]any{
+						"ItemId":   map[string]any{"Id": "event-1", "ChangeKey": "ck-1"},
+						"Subject":  "Planning",
+						"Start":    "2026-06-02T15:00:00",
+						"End":      "2026-06-02T15:30:00",
+						"Location": "Room 1",
+					},
 				},
 			},
 		},
@@ -1904,27 +1949,582 @@ func TestHighLevelCalendarCreateMeetingCallsCreateItem(t *testing.T) {
 	if !response.OK {
 		t.Fatalf("expected calendar.create_meeting ok: %#v", response)
 	}
-	if len(calls) != 1 || calls[0].Action != "CreateItem" {
-		t.Fatalf("expected CreateItem call, got %#v", calls)
+	if len(calls) != 2 || calls[0].Action != "FindPeople" || calls[1].Action != "CreateCalendarEvent" {
+		t.Fatalf("expected FindPeople then CreateCalendarEvent calls, got %#v", calls)
 	}
-	body := calls[0].Body["Body"].(map[string]any)
-	if body["MessageDisposition"] != "SendAndSaveCopy" || body["SendMeetingInvitations"] != "SendToAllAndSaveCopy" {
-		t.Fatalf("expected send-and-save meeting create, got %#v", body)
+	if calls[1].URLPostData != "" || calls[1].RawBody == "" {
+		t.Fatalf("expected calendar create to use JSON body like the OWA web UI, got URLPostData=%q body=%q", calls[1].URLPostData, calls[1].RawBody)
+	}
+	header := calls[1].Body["Header"].(map[string]any)
+	if header["RequestServerVersion"] != "V2017_08_18" {
+		t.Fatalf("expected UI calendar create request server version, got %#v", header)
+	}
+	body := calls[1].Body["Body"].(map[string]any)
+	if _, exists := body["MessageDisposition"]; exists {
+		t.Fatalf("calendar create event must not include MessageDisposition, got %#v", body)
+	}
+	if _, exists := body["SendMeetingInvitations"]; exists {
+		t.Fatalf("calendar create event must not include SendMeetingInvitations, got %#v", body)
+	}
+	if body["ClientSupportsIrm"] != true {
+		t.Fatalf("expected UI calendar create body metadata, got %#v", body)
 	}
 	item := body["Items"].([]any)[0].(map[string]any)
 	if item["__type"] != "CalendarItem:#Exchange" || item["Subject"] != "Planning" {
 		t.Fatalf("expected calendar item payload, got %#v", item)
 	}
-	if item["Start"] != "2026-06-02T15:00:00+03:00" || item["End"] != "2026-06-02T15:30:00+03:00" || item["Location"] != "Room 1" {
+	if item["Start"] != "2026-06-02T15:00:00.000" || item["End"] != "2026-06-02T15:30:00.000" {
+		t.Fatalf("expected OWA local calendar timestamps, got %#v", item)
+	}
+	location := item["Location"].(map[string]any)
+	if location["__type"] != "EnhancedLocation:#Exchange" || location["DisplayName"] != "Room 1" {
 		t.Fatalf("expected trimmed calendar item payload, got %#v", item)
+	}
+	if item["Sensitivity"] != "Normal" || item["FreeBusyType"] != "Busy" || item["IsResponseRequested"] != true || item["IsAllDayEvent"] != false {
+		t.Fatalf("expected UI calendar item defaults, got %#v", item)
 	}
 	required := item["RequiredAttendees"].([]any)
 	if len(required) != 1 {
 		t.Fatalf("expected one required attendee, got %#v", required)
 	}
+	attendee := required[0].(map[string]any)
+	if _, exists := attendee["__type"]; exists {
+		t.Fatalf("CreateCalendarEvent attendee must not include an Attendee __type wrapper, got %#v", attendee)
+	}
+	mailbox := attendee["Mailbox"].(map[string]any)
+	if _, exists := mailbox["__type"]; exists {
+		t.Fatalf("CreateCalendarEvent attendee mailbox must not include EmailAddress __type, got %#v", mailbox)
+	}
+	if _, exists := mailbox["OriginalDisplayName"]; exists {
+		t.Fatalf("CreateCalendarEvent attendee mailbox must not include FindPeople-only metadata, got %#v", mailbox)
+	}
+	if _, exists := mailbox["RelevanceScore"]; exists {
+		t.Fatalf("CreateCalendarEvent attendee mailbox must not include FindPeople-only metadata, got %#v", mailbox)
+	}
+	if mailbox["Name"] != "Team Mate" || mailbox["EmailAddress"] != "teammate@example.com" || mailbox["RoutingType"] != "SMTP" || mailbox["MailboxType"] != "Mailbox" {
+		t.Fatalf("expected resolved-style attendee mailbox, got %#v", mailbox)
+	}
 	event := response.Data["event"].(map[string]any)
-	if event["id"] != "event-1" || event["title"] != "Planning" {
+	if event["id"] != "event-1" || event["title"] != "Planning" || event["verification_status"] != "returned" {
 		t.Fatalf("unexpected event metadata: %#v", event)
+	}
+}
+
+func TestHighLevelCalendarCreateMeetingRecoversMissingCreatedEventID(t *testing.T) {
+	var calls []recordedServiceCall
+	server := newOWAServiceServerByAction(t, &calls, map[string]map[string]any{
+		"FindPeople": {
+			"Body": map[string]any{
+				"ResultSet": []any{
+					map[string]any{
+						"DisplayName": "Team Mate",
+						"EmailAddress": map[string]any{
+							"Name":         "Team Mate",
+							"EmailAddress": "teammate@example.com",
+							"RoutingType":  "SMTP",
+							"MailboxType":  "Mailbox",
+						},
+					},
+				},
+			},
+		},
+		"CreateCalendarEvent": {
+			"Body": map[string]any{
+				"Items": []any{
+					map[string]any{
+						"Subject": "Planning",
+						"Start":   "2026-06-02T15:00:00",
+						"End":     "2026-06-02T15:30:00",
+					},
+				},
+			},
+		},
+		"GetCalendarView": {
+			"Body": map[string]any{
+				"Items": []any{
+					map[string]any{
+						"ItemId":  map[string]any{"Id": "recovered-event", "ChangeKey": "recovered-ck"},
+						"Subject": "Planning",
+						"Start":   "2026-06-02T15:00:00",
+						"End":     "2026-06-02T15:30:00",
+						"RequiredAttendees": []any{
+							map[string]any{
+								"Mailbox": map[string]any{
+									"Name":         "Team Mate",
+									"EmailAddress": "teammate@example.com",
+									"RoutingType":  "SMTP",
+									"MailboxType":  "Mailbox",
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+	})
+	defer server.Close()
+	client := newTestTransport(server)
+
+	response := client.Execute(context.Background(), transport.ActionRequest{
+		Name: "calendar.create_meeting",
+		Payload: map[string]any{
+			"mailbox":   " shared@example.com ",
+			"subject":   "Planning",
+			"start":     "2026-06-02T15:00:00+03:00",
+			"end":       "2026-06-02T15:30:00+03:00",
+			"attendees": []any{"teammate@example.com"},
+			"time_zone": "Russian Standard Time",
+		},
+	})
+
+	if !response.OK {
+		t.Fatalf("expected calendar.create_meeting recovery ok: %#v", response)
+	}
+	event := response.Data["event"].(map[string]any)
+	if event["id"] != "recovered-event" || event["change_key"] != "recovered-ck" {
+		t.Fatalf("expected recovered event id, got %#v", event)
+	}
+	if event["verification_status"] != "recovered" {
+		t.Fatalf("expected recovered verification marker, got %#v", event)
+	}
+	if len(calls) != 3 || calls[0].Action != "FindPeople" || calls[1].Action != "CreateCalendarEvent" || calls[2].Action != "GetCalendarView" {
+		t.Fatalf("expected FindPeople, CreateCalendarEvent, GetCalendarView calls, got %#v", calls)
+	}
+	calendarViewBody := calls[2].Body["Body"].(map[string]any)
+	base := calendarViewBody["CalendarId"].(map[string]any)["BaseFolderId"].(map[string]any)
+	if base["Id"] != "calendar" {
+		t.Fatalf("expected calendar recovery lookup folder, got %#v", base)
+	}
+	mailbox, ok := base["Mailbox"].(map[string]any)
+	if !ok || mailbox["EmailAddress"] != "shared@example.com" {
+		t.Fatalf("expected recovery lookup to target shared mailbox, got %#v", base)
+	}
+}
+
+func TestHighLevelCalendarCreateMeetingRecoveryFailureWhenCreatedIDNotReturned(t *testing.T) {
+	response, calls := executeCalendarCreateMeetingRecovery(t, []any{})
+
+	if response.OK || !strings.Contains(response.Error, "created event id was not returned") {
+		t.Fatalf("expected missing created id recovery failure, got %#v", response)
+	}
+	if len(calls) != 3 || calls[0].Action != "FindPeople" || calls[1].Action != "CreateCalendarEvent" || calls[2].Action != "GetCalendarView" {
+		t.Fatalf("expected FindPeople, CreateCalendarEvent, GetCalendarView calls, got %#v", calls)
+	}
+}
+
+func TestHighLevelCalendarCreateMeetingRecoveryRejectsMissingAttendees(t *testing.T) {
+	response, _ := executeCalendarCreateMeetingRecovery(t, []any{
+		calendarCreateRecoveryEvent("missing-attendees", nil),
+	})
+
+	if response.OK || !strings.Contains(response.Error, "created event id was not returned") || !strings.Contains(response.Error, "no matching calendar event") {
+		t.Fatalf("expected missing attendee recovery failure, got %#v", response)
+	}
+}
+
+func TestHighLevelCalendarCreateMeetingRecoveryRejectsWrongAttendee(t *testing.T) {
+	response, _ := executeCalendarCreateMeetingRecovery(t, []any{
+		calendarCreateRecoveryEvent("wrong-attendee", []any{calendarCreateRecoveryAttendee("other@example.com")}),
+	})
+
+	if response.OK || !strings.Contains(response.Error, "created event id was not returned") {
+		t.Fatalf("expected wrong attendee recovery failure, got %#v", response)
+	}
+}
+
+func TestHighLevelCalendarCreateMeetingRecoveryRejectsUnparseableAttendee(t *testing.T) {
+	response, _ := executeCalendarCreateMeetingRecovery(t, []any{
+		calendarCreateRecoveryEvent("unparseable-attendee", []any{
+			map[string]any{"Mailbox": map[string]any{"Name": "Team Mate"}},
+		}),
+	})
+
+	if response.OK || !strings.Contains(response.Error, "created event id was not returned") {
+		t.Fatalf("expected unparseable attendee recovery failure, got %#v", response)
+	}
+}
+
+func TestHighLevelCalendarCreateMeetingRecoveryRejectsExtraAttendee(t *testing.T) {
+	response, _ := executeCalendarCreateMeetingRecovery(t, []any{
+		calendarCreateRecoveryEvent("extra-attendee", []any{
+			calendarCreateRecoveryAttendee("teammate@example.com"),
+			calendarCreateRecoveryAttendee("other@example.com"),
+		}),
+	})
+
+	if response.OK || !strings.Contains(response.Error, "created event id was not returned") {
+		t.Fatalf("expected extra attendee recovery failure, got %#v", response)
+	}
+}
+
+func TestHighLevelCalendarCreateMeetingRecoveryMultipleExactMatchesAreAmbiguous(t *testing.T) {
+	response, _ := executeCalendarCreateMeetingRecovery(t, []any{
+		calendarCreateRecoveryEvent("exact-match-1", []any{calendarCreateRecoveryAttendee("teammate@example.com")}),
+		calendarCreateRecoveryEvent("exact-match-2", []any{calendarCreateRecoveryAttendee("teammate@example.com")}),
+	})
+
+	if response.OK || !strings.Contains(response.Error, "created event id was not returned") || !strings.Contains(response.Error, "ambiguous") {
+		t.Fatalf("expected ambiguous recovery failure, got %#v", response)
+	}
+}
+
+func executeCalendarCreateMeetingRecovery(t *testing.T, calendarItems []any) (transport.ActionResponse, []recordedServiceCall) {
+	t.Helper()
+	var calls []recordedServiceCall
+	server := newOWAServiceServerByAction(t, &calls, map[string]map[string]any{
+		"FindPeople": {
+			"Body": map[string]any{
+				"ResultSet": []any{
+					map[string]any{
+						"DisplayName": "Team Mate",
+						"EmailAddress": map[string]any{
+							"Name":         "Team Mate",
+							"EmailAddress": "teammate@example.com",
+							"RoutingType":  "SMTP",
+							"MailboxType":  "Mailbox",
+						},
+					},
+				},
+			},
+		},
+		"CreateCalendarEvent": {
+			"Body": map[string]any{
+				"Items": []any{
+					map[string]any{
+						"Subject": "Planning",
+						"Start":   "2026-06-02T15:00:00",
+						"End":     "2026-06-02T15:30:00",
+					},
+				},
+			},
+		},
+		"GetCalendarView": {
+			"Body": map[string]any{"Items": calendarItems},
+		},
+	})
+	defer server.Close()
+	client := newTestTransport(server)
+
+	response := client.Execute(context.Background(), transport.ActionRequest{
+		Name: "calendar.create_meeting",
+		Payload: map[string]any{
+			"subject":   "Planning",
+			"start":     "2026-06-02T15:00:00+03:00",
+			"end":       "2026-06-02T15:30:00+03:00",
+			"attendees": []any{"teammate@example.com"},
+			"time_zone": "Russian Standard Time",
+		},
+	})
+	return response, calls
+}
+
+func calendarCreateRecoveryEvent(id string, attendees []any) map[string]any {
+	event := map[string]any{
+		"ItemId":  map[string]any{"Id": id, "ChangeKey": "ck-" + id},
+		"Subject": "Planning",
+		"Start":   "2026-06-02T15:00:00",
+		"End":     "2026-06-02T15:30:00",
+	}
+	if attendees != nil {
+		event["RequiredAttendees"] = attendees
+	}
+	return event
+}
+
+func calendarCreateRecoveryAttendee(email string) map[string]any {
+	return map[string]any{
+		"Mailbox": map[string]any{
+			"Name":         email,
+			"EmailAddress": email,
+			"RoutingType":  "SMTP",
+			"MailboxType":  "Mailbox",
+		},
+	}
+}
+
+func TestHighLevelCalendarCreateMeetingResolvesDisplayNameAttendee(t *testing.T) {
+	var calls []recordedServiceCall
+	server := newOWAServiceServerByAction(t, &calls, map[string]map[string]any{
+		"FindPeople": {
+			"Body": map[string]any{
+				"ResultSet": []any{
+					map[string]any{
+						"DisplayName": "Generic Teammate",
+						"EmailAddress": map[string]any{
+							"Name":         "Generic Teammate",
+							"EmailAddress": "generic.teammate@example.com",
+							"RoutingType":  "SMTP",
+						},
+					},
+				},
+			},
+		},
+		"CreateCalendarEvent": {
+			"Body": map[string]any{
+				"Items": []any{
+					map[string]any{
+						"ItemId":  map[string]any{"Id": "event-1", "ChangeKey": "ck-1"},
+						"Subject": "Planning",
+					},
+				},
+			},
+		},
+	})
+	defer server.Close()
+	client := newTestTransport(server)
+
+	response := client.Execute(context.Background(), transport.ActionRequest{
+		Name: "calendar.create_meeting",
+		Payload: map[string]any{
+			"subject":   "Planning",
+			"start":     "2026-06-02T15:00:00+03:00",
+			"end":       "2026-06-02T15:30:00+03:00",
+			"attendees": []any{"Generic Teammate"},
+		},
+	})
+
+	if !response.OK {
+		t.Fatalf("expected calendar.create_meeting ok: %#v", response)
+	}
+	if len(calls) != 2 || calls[0].Action != "FindPeople" || calls[1].Action != "CreateCalendarEvent" {
+		t.Fatalf("expected FindPeople then CreateCalendarEvent calls, got %#v", calls)
+	}
+	item := calls[1].Body["Body"].(map[string]any)["Items"].([]any)[0].(map[string]any)
+	required := item["RequiredAttendees"].([]any)
+	if len(required) != 1 {
+		t.Fatalf("expected one required attendee, got %#v", required)
+	}
+	mailbox := required[0].(map[string]any)["Mailbox"].(map[string]any)
+	if mailbox["EmailAddress"] != "generic.teammate@example.com" {
+		t.Fatalf("expected resolved attendee email, got %#v", mailbox)
+	}
+	if mailbox["MailboxType"] != "Mailbox" {
+		t.Fatalf("expected resolved attendee mailbox type, got %#v", mailbox)
+	}
+}
+
+func TestHighLevelCalendarCreateMeetingRejectsAmbiguousDisplayNameAttendee(t *testing.T) {
+	var calls []recordedServiceCall
+	server := newOWAServiceServerByAction(t, &calls, map[string]map[string]any{
+		"FindPeople": {
+			"Body": map[string]any{
+				"ResultSet": []any{
+					map[string]any{
+						"DisplayName": "Alex One",
+						"EmailAddress": map[string]any{
+							"Name":         "Alex One",
+							"EmailAddress": "alex.one@example.com",
+							"RoutingType":  "SMTP",
+						},
+					},
+					map[string]any{
+						"DisplayName": "Alex Two",
+						"EmailAddress": map[string]any{
+							"Name":         "Alex Two",
+							"EmailAddress": "alex.two@example.com",
+							"RoutingType":  "SMTP",
+						},
+					},
+				},
+			},
+		},
+		"CreateCalendarEvent": {
+			"Body": map[string]any{
+				"Items": []any{
+					map[string]any{"ItemId": map[string]any{"Id": "event-1"}},
+				},
+			},
+		},
+	})
+	defer server.Close()
+	client := newTestTransport(server)
+
+	response := client.Execute(context.Background(), transport.ActionRequest{
+		Name: "calendar.create_meeting",
+		Payload: map[string]any{
+			"subject":   "Planning",
+			"start":     "2026-06-02T15:00:00+03:00",
+			"end":       "2026-06-02T15:30:00+03:00",
+			"attendees": []any{"Alex"},
+		},
+	})
+
+	if response.OK || !strings.Contains(response.Error, "ambiguous attendee") {
+		t.Fatalf("expected ambiguous attendee failure, got %#v", response)
+	}
+	if len(calls) != 1 || calls[0].Action != "FindPeople" {
+		t.Fatalf("expected only FindPeople call, got %#v", calls)
+	}
+}
+
+func TestHighLevelCalendarCreateMeetingReportsDisplayNameResolutionServiceFailure(t *testing.T) {
+	var calls []recordedServiceCall
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		switch request.URL.Path {
+		case "/owa/auth.owa":
+			http.SetCookie(response, &http.Cookie{Name: "X-OWA-CANARY", Value: "canary-secret"})
+			response.WriteHeader(http.StatusOK)
+		case "/owa/service.svc":
+			call := recordedServiceCall{Action: request.URL.Query().Get("action")}
+			var raw map[string]any
+			payload, err := io.ReadAll(request.Body)
+			if err != nil {
+				t.Fatalf("read body: %v", err)
+			}
+			call.RawBody = string(payload)
+			if err := json.Unmarshal([]byte(call.RawBody), &raw); err != nil {
+				t.Fatalf("decode body: %v", err)
+			}
+			call.Body = raw
+			calls = append(calls, call)
+			if call.Action != "FindPeople" {
+				t.Fatalf("unexpected service action: %s", call.Action)
+			}
+			response.Header().Set("Content-Type", "application/json")
+			response.WriteHeader(http.StatusInternalServerError)
+			_ = json.NewEncoder(response).Encode(map[string]any{"error": "find people backend unavailable"})
+		default:
+			t.Fatalf("unexpected path: %s", request.URL.Path)
+		}
+	}))
+	defer server.Close()
+	client := newTestTransport(server)
+
+	response := client.Execute(context.Background(), transport.ActionRequest{
+		Name: "calendar.create_meeting",
+		Payload: map[string]any{
+			"subject":   "Planning",
+			"start":     "2026-06-02T15:00:00+03:00",
+			"end":       "2026-06-02T15:30:00+03:00",
+			"attendees": []any{"Generic Teammate"},
+		},
+	})
+
+	if response.OK || !strings.Contains(response.Error, "attendee resolution failed") {
+		t.Fatalf("expected attendee resolution failure, got %#v", response)
+	}
+	if !strings.Contains(response.Error, "owa service returned HTTP 500") {
+		t.Fatalf("expected service error text, got %q", response.Error)
+	}
+	if strings.Contains(response.Error, "unresolved attendee") {
+		t.Fatalf("service failure must not be reported as unresolved: %q", response.Error)
+	}
+	if len(calls) != 1 || calls[0].Action != "FindPeople" {
+		t.Fatalf("expected only FindPeople call, got %#v", calls)
+	}
+}
+
+func TestHighLevelCalendarCreateMeetingKeepsEmailAttendeeWhenPeopleLookupFails(t *testing.T) {
+	var calls []recordedServiceCall
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		switch request.URL.Path {
+		case "/owa/auth.owa":
+			http.SetCookie(response, &http.Cookie{Name: "X-OWA-CANARY", Value: "canary-secret"})
+			response.WriteHeader(http.StatusOK)
+		case "/owa/service.svc":
+			call := recordedServiceCall{Action: request.URL.Query().Get("action")}
+			var raw map[string]any
+			payload, err := io.ReadAll(request.Body)
+			if err != nil {
+				t.Fatalf("read body: %v", err)
+			}
+			call.RawBody = string(payload)
+			if err := json.Unmarshal([]byte(call.RawBody), &raw); err != nil {
+				t.Fatalf("decode body: %v", err)
+			}
+			call.Body = raw
+			calls = append(calls, call)
+			response.Header().Set("Content-Type", "application/json")
+			switch call.Action {
+			case "FindPeople":
+				response.WriteHeader(http.StatusInternalServerError)
+				_ = json.NewEncoder(response).Encode(map[string]any{"error": "find people backend unavailable"})
+			case "CreateCalendarEvent":
+				_ = json.NewEncoder(response).Encode(map[string]any{
+					"Body": map[string]any{
+						"Items": []any{
+							map[string]any{
+								"ItemId":  map[string]any{"Id": "event-1", "ChangeKey": "ck-1"},
+								"Subject": "Planning",
+							},
+						},
+					},
+				})
+			default:
+				t.Fatalf("unexpected service action: %s", call.Action)
+			}
+		default:
+			t.Fatalf("unexpected path: %s", request.URL.Path)
+		}
+	}))
+	defer server.Close()
+	client := newTestTransport(server)
+
+	response := client.Execute(context.Background(), transport.ActionRequest{
+		Name: "calendar.create_meeting",
+		Payload: map[string]any{
+			"subject":   "Planning",
+			"start":     "2026-06-02T15:00:00+03:00",
+			"end":       "2026-06-02T15:30:00+03:00",
+			"attendees": []any{"teammate@example.com"},
+		},
+	})
+
+	if !response.OK {
+		t.Fatalf("expected calendar.create_meeting ok: %#v", response)
+	}
+	if len(calls) != 2 || calls[0].Action != "FindPeople" || calls[1].Action != "CreateCalendarEvent" {
+		t.Fatalf("expected FindPeople then CreateCalendarEvent calls, got %#v", calls)
+	}
+	item := calls[1].Body["Body"].(map[string]any)["Items"].([]any)[0].(map[string]any)
+	required := item["RequiredAttendees"].([]any)
+	if len(required) != 1 {
+		t.Fatalf("expected one required attendee, got %#v", required)
+	}
+	mailbox := required[0].(map[string]any)["Mailbox"].(map[string]any)
+	if mailbox["EmailAddress"] != "teammate@example.com" {
+		t.Fatalf("expected raw attendee email fallback, got %#v", mailbox)
+	}
+	if mailbox["MailboxType"] != "Mailbox" {
+		t.Fatalf("expected raw attendee mailbox type fallback, got %#v", mailbox)
+	}
+}
+
+func TestHighLevelCalendarCreateMeetingOmitsEmptyBodyHTML(t *testing.T) {
+	var calls []recordedServiceCall
+	server := newOWAServiceServer(t, &calls, map[string]any{
+		"Body": map[string]any{
+			"Items": []any{
+				map[string]any{
+					"ItemId":  map[string]any{"Id": "event-1", "ChangeKey": "ck-1"},
+					"Subject": "Planning",
+					"Start":   "2026-06-02T15:00:00",
+					"End":     "2026-06-02T15:30:00",
+				},
+			},
+		},
+	})
+	defer server.Close()
+	client := newTestTransport(server)
+
+	response := client.Execute(context.Background(), transport.ActionRequest{
+		Name: "calendar.create_meeting",
+		Payload: map[string]any{
+			"subject":   "Planning",
+			"start":     "2026-06-02T15:00:00+03:00",
+			"end":       "2026-06-02T15:30:00+03:00",
+			"attendees": []any{"teammate@example.com"},
+			"timezone":  "Russian Standard Time",
+		},
+	})
+
+	if !response.OK {
+		t.Fatalf("expected calendar.create_meeting ok: %#v", response)
+	}
+	item := calls[1].Body["Body"].(map[string]any)["Items"].([]any)[0].(map[string]any)
+	body := item["Body"].(map[string]any)
+	if body["BodyType"] != "HTML" || body["Value"] != "" {
+		t.Fatalf("expected empty OWA HTML body value for omitted body, got %#v", body)
 	}
 }
 
@@ -1957,7 +2557,7 @@ func TestHighLevelCalendarCreateMeetingTargetsMailboxFolder(t *testing.T) {
 	if !response.OK {
 		t.Fatalf("expected calendar.create_meeting ok: %#v", response)
 	}
-	body := calls[0].Body["Body"].(map[string]any)
+	body := calls[1].Body["Body"].(map[string]any)
 	folder := body["SavedItemFolderId"].(map[string]any)
 	base := folder["BaseFolderId"].(map[string]any)
 	if base["Id"] != "calendar" {
@@ -2073,11 +2673,11 @@ func TestHighLevelCalendarCreateMeetingRequiresCreatedEventID(t *testing.T) {
 		},
 	})
 
-	if response.OK || response.Error != "calendar.create_meeting missing created event id" {
+	if response.OK || !strings.Contains(response.Error, "created event id was not returned") {
 		t.Fatalf("expected missing created event id failure, got %#v", response)
 	}
-	if len(calls) != 1 || calls[0].Action != "CreateItem" {
-		t.Fatalf("expected one CreateItem call, got %#v", calls)
+	if len(calls) != 3 || calls[0].Action != "FindPeople" || calls[1].Action != "CreateCalendarEvent" || calls[2].Action != "GetCalendarView" {
+		t.Fatalf("expected FindPeople, CreateCalendarEvent, GetCalendarView calls, got %#v", calls)
 	}
 }
 
@@ -2187,6 +2787,134 @@ func TestHighLevelMailMoveToDeletedItemsReportsMapItemIDs(t *testing.T) {
 	itemIDs := body["ItemIds"].([]any)
 	if len(itemIDs) != 2 || itemIDs[0].(map[string]any)["ChangeKey"] != "ck-1" {
 		t.Fatalf("expected original map item ids to be sent, got %#v", itemIDs)
+	}
+}
+
+func TestHighLevelCalendarDeleteEventMovesSingleEventToDeletedItems(t *testing.T) {
+	var calls []recordedServiceCall
+	server := newOWAServiceServer(t, &calls, map[string]any{
+		"Body": map[string]any{"ResponseMessages": map[string]any{"Items": []any{map[string]any{"ResponseClass": "Success"}}}},
+	})
+	defer server.Close()
+	client := newTestTransport(server)
+
+	response := client.Execute(context.Background(), transport.ActionRequest{
+		Name: "calendar.delete_event",
+		Payload: map[string]any{
+			"event_id":   "event-1",
+			"change_key": "ck-1",
+		},
+	})
+
+	if !response.OK {
+		t.Fatalf("expected calendar.delete_event ok: %#v", response)
+	}
+	if calls[0].Action != "DeleteItem" {
+		t.Fatalf("expected DeleteItem, got %q", calls[0].Action)
+	}
+	body := calls[0].Body["Body"].(map[string]any)
+	if body["DeleteType"] != "MoveToDeletedItems" {
+		t.Fatalf("expected MoveToDeletedItems, got %#v", body["DeleteType"])
+	}
+	if body["SendMeetingCancellations"] != "SendToNone" {
+		t.Fatalf("expected SendToNone meeting cancellations, got %#v", body["SendMeetingCancellations"])
+	}
+	itemIDs := body["ItemIds"].([]any)
+	if len(itemIDs) != 1 {
+		t.Fatalf("expected exactly one item id, got %#v", itemIDs)
+	}
+	itemID := itemIDs[0].(map[string]any)
+	if itemID["Id"] != "event-1" || itemID["ChangeKey"] != "ck-1" {
+		t.Fatalf("expected event id/change key in ItemIds payload, got %#v", itemIDs)
+	}
+	if response.Data["id"] != "event-1" || response.Data["status"] != "moved_to_deleted_items" {
+		t.Fatalf("expected typed delete-event response, got %#v", response.Data)
+	}
+}
+
+func TestHighLevelCalendarDeleteEventRequiresEventID(t *testing.T) {
+	var calls []recordedServiceCall
+	server := newOWAServiceServer(t, &calls, map[string]any{"Body": map[string]any{"ResponseMessages": map[string]any{"Items": []any{}}}})
+	defer server.Close()
+	client := newTestTransport(server)
+
+	response := client.Execute(context.Background(), transport.ActionRequest{
+		Name:    "calendar.delete_event",
+		Payload: map[string]any{},
+	})
+
+	if response.OK {
+		t.Fatalf("expected calendar.delete_event without event_id to fail, got %#v", response)
+	}
+	if !strings.Contains(response.Error, "event_id is required") {
+		t.Fatalf("expected event_id validation error, got %q", response.Error)
+	}
+	if len(calls) != 0 {
+		t.Fatalf("expected missing event_id to fail before service call, got %#v", calls)
+	}
+}
+
+func TestHighLevelCalendarCancelMeetingSendsCancellation(t *testing.T) {
+	var calls []recordedServiceCall
+	server := newOWAServiceServer(t, &calls, map[string]any{
+		"Body": map[string]any{"ResponseMessages": map[string]any{"Items": []any{map[string]any{"ResponseClass": "Success"}}}},
+	})
+	defer server.Close()
+	client := newTestTransport(server)
+
+	response := client.Execute(context.Background(), transport.ActionRequest{
+		Name: "calendar.cancel_meeting",
+		Payload: map[string]any{
+			"event_id":   "event-1",
+			"change_key": "ck-1",
+			"comment":    "Canceled because plans changed.",
+		},
+	})
+
+	if !response.OK {
+		t.Fatalf("expected calendar.cancel_meeting ok: %#v", response)
+	}
+	if len(calls) != 1 {
+		t.Fatalf("expected one service call, got %#v", calls)
+	}
+	if calls[0].Action != "CancelCalendarEvent" {
+		t.Fatalf("expected CancelCalendarEvent, got %q", calls[0].Action)
+	}
+	if calls[0].Action == "DeleteItem" {
+		t.Fatalf("calendar.cancel_meeting must not call DeleteItem")
+	}
+	body := calls[0].Body["Body"].(map[string]any)
+	reference := body["ReferenceItemId"].(map[string]any)
+	if reference["Id"] != "event-1" || reference["ChangeKey"] != "ck-1" {
+		t.Fatalf("expected ReferenceItemId id/change key, got %#v", reference)
+	}
+	if !strings.Contains(fmt.Sprint(body), "Canceled because plans changed.") {
+		t.Fatalf("expected cancellation comment in request body, got %#v", body)
+	}
+	if response.Data["id"] != "event-1" || response.Data["status"] != "cancelled" {
+		t.Fatalf("expected typed cancel-meeting response, got %#v", response.Data)
+	}
+}
+
+func TestHighLevelCalendarCancelMeetingRequiresEventID(t *testing.T) {
+	var calls []recordedServiceCall
+	server := newOWAServiceServer(t, &calls, map[string]any{"Body": map[string]any{"ResponseMessages": map[string]any{"Items": []any{}}}})
+	defer server.Close()
+	client := newTestTransport(server)
+
+	response := client.Execute(context.Background(), transport.ActionRequest{
+		Name:    "calendar.cancel_meeting",
+		Payload: map[string]any{},
+	})
+
+	if response.OK {
+		t.Fatalf("expected calendar.cancel_meeting without event_id to fail, got %#v", response)
+	}
+	if !strings.Contains(response.Error, "event_id is required") {
+		t.Fatalf("expected event_id validation error, got %q", response.Error)
+	}
+	if len(calls) != 0 {
+		t.Fatalf("expected missing event_id to fail before service call, got %#v", calls)
 	}
 }
 

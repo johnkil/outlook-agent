@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"fmt"
+	"html"
 	"mime"
 	"net/http"
 	"strings"
@@ -102,16 +103,47 @@ func (client *Transport) executeHighLevel(ctx context.Context, request transport
 		if err != nil {
 			return transport.ActionResponse{OK: false, Error: err.Error()}, true
 		}
-		response := client.executeService(ctx, "CreateItem", client.buildCreateMeetingRequest(meeting), false)
+		meeting.attendees, err = client.resolveCreateMeetingAttendees(ctx, meeting.attendees)
+		if err != nil {
+			return transport.ActionResponse{OK: false, Error: err.Error()}, true
+		}
+		payload, err := client.buildCreateMeetingRequest(meeting)
+		if err != nil {
+			return transport.ActionResponse{OK: false, Error: err.Error()}, true
+		}
+		response := client.executeService(ctx, "CreateCalendarEvent", payload, false)
 		if !response.OK {
 			return response, true
 		}
 		events := normalizeCalendarItems(extractItems(response.Data))
-		event := firstMap(events)
+		event := firstMapWithID(events)
 		if strings.TrimSpace(stringValue(event, "id")) == "" {
-			return transport.ActionResponse{OK: false, Error: "calendar.create_meeting missing created event id"}, true
+			return client.recoverCreatedMeetingEvent(ctx, meeting), true
 		}
+		event["verification_status"] = "returned"
 		return transport.ActionResponse{OK: true, Data: map[string]any{"event": event}}, true
+	case "calendar.delete_event":
+		eventID := strings.TrimSpace(stringValue(request.Payload, "event_id"))
+		if eventID == "" {
+			return transport.ActionResponse{OK: false, Error: "event_id is required"}, true
+		}
+		response := client.executeService(ctx, "DeleteItem", client.buildMoveToDeletedItemsRequest([]any{
+			calendarDeleteEventItemID(eventID, stringValue(request.Payload, "change_key")),
+		}), false)
+		if !response.OK {
+			return response, true
+		}
+		return calendarDeleteEventResult(eventID, response.Data), true
+	case "calendar.cancel_meeting":
+		eventID := strings.TrimSpace(stringValue(request.Payload, "event_id"))
+		if eventID == "" {
+			return transport.ActionResponse{OK: false, Error: "event_id is required"}, true
+		}
+		response := client.executeService(ctx, "CancelCalendarEvent", client.buildCancelCalendarEventRequest(eventID, stringValue(request.Payload, "change_key"), stringValue(request.Payload, "comment")), false)
+		if !response.OK {
+			return response, true
+		}
+		return calendarCancelMeetingResult(eventID, response.Data), true
 	case "mail.fetch_metadata":
 		messageID := strings.TrimSpace(stringValue(request.Payload, "id"))
 		if messageID == "" {
@@ -267,6 +299,51 @@ func moveToDeletedResult(ids []any, payload map[string]any) transport.ActionResp
 		return transport.ActionResponse{OK: false, Error: "some messages failed to move to Deleted Items", Data: data}
 	}
 	return transport.ActionResponse{OK: true, Data: data}
+}
+
+func calendarDeleteEventResult(eventID string, payload map[string]any) transport.ActionResponse {
+	messages := responseMessages(payload)
+	if len(messages) > 0 {
+		message, _ := messages[0].(map[string]any)
+		responseClass := strings.TrimSpace(stringValue(message, "ResponseClass"))
+		if responseClass != "" && !strings.EqualFold(responseClass, "Success") {
+			return transport.ActionResponse{
+				OK:    false,
+				Error: "calendar.delete_event failed: " + responseMessageError(message),
+				Data: map[string]any{
+					"id":     eventID,
+					"status": "failed",
+				},
+			}
+		}
+	}
+	return transport.ActionResponse{OK: true, Data: map[string]any{
+		"id":         eventID,
+		"status":     "moved_to_deleted_items",
+		"reversible": true,
+	}}
+}
+
+func calendarCancelMeetingResult(eventID string, payload map[string]any) transport.ActionResponse {
+	messages := responseMessages(payload)
+	if len(messages) > 0 {
+		message, _ := messages[0].(map[string]any)
+		responseClass := strings.TrimSpace(stringValue(message, "ResponseClass"))
+		if responseClass != "" && !strings.EqualFold(responseClass, "Success") {
+			return transport.ActionResponse{
+				OK:    false,
+				Error: "calendar.cancel_meeting failed: " + responseMessageError(message),
+				Data: map[string]any{
+					"id":     eventID,
+					"status": "failed",
+				},
+			}
+		}
+	}
+	return transport.ActionResponse{OK: true, Data: map[string]any{
+		"id":     eventID,
+		"status": "cancelled",
+	}}
 }
 
 func moveItemResult(ids []any, payload map[string]any) transport.ActionResponse {
@@ -579,6 +656,10 @@ func (client *Transport) buildCalendarViewRequest(start string, end string) any 
 }
 
 func (client *Transport) buildCalendarViewRequestInTimeZone(start string, end string, timeZone string) any {
+	return client.buildCalendarViewRequestInTimeZoneForMailbox(start, end, timeZone, "")
+}
+
+func (client *Transport) buildCalendarViewRequestInTimeZoneForMailbox(start string, end string, timeZone string, mailbox string) any {
 	return object(
 		field("__type", "GetCalendarViewJsonRequest:#Exchange"),
 		field("Header", client.requestHeaderPayloadInTimeZone("V2017_08_18", timeZone)),
@@ -586,10 +667,7 @@ func (client *Transport) buildCalendarViewRequestInTimeZone(start string, end st
 			field("__type", "GetCalendarViewRequest:#Exchange"),
 			field("CalendarId", object(
 				field("__type", "TargetFolderId:#Exchange"),
-				field("BaseFolderId", object(
-					field("__type", "DistinguishedFolderId:#Exchange"),
-					field("Id", "calendar"),
-				)),
+				field("BaseFolderId", owaCalendarFolderID(mailbox)),
 			)),
 			field("RangeStart", start),
 			field("RangeEnd", end),
@@ -658,6 +736,32 @@ func (client *Transport) buildGetItemRequest(id string, includeBody bool) any {
 			field("ItemShape", object(itemShapeFields...)),
 			field("ItemIds", []any{
 				object(field("__type", "ItemId:#Exchange"), field("Id", id)),
+			}),
+		)),
+	)
+}
+
+func (client *Transport) buildGetCalendarEventReviewRequest(id string, changeKey string) any {
+	return object(
+		field("__type", "GetItemJsonRequest:#Exchange"),
+		field("Header", client.requestHeaderPayload("Exchange2013")),
+		field("Body", object(
+			field("__type", "GetItemRequest:#Exchange"),
+			field("ItemShape", object(
+				field("__type", "ItemResponseShape:#Exchange"),
+				field("BaseShape", "IdOnly"),
+				field("AdditionalProperties", []any{
+					propertyURI("item:Subject"),
+					propertyURI("calendar:Start"),
+					propertyURI("calendar:End"),
+					propertyURI("calendar:Location"),
+					propertyURI("calendar:Organizer"),
+					propertyURI("calendar:RequiredAttendees"),
+					propertyURI("calendar:MyResponseType"),
+				}),
+			)),
+			field("ItemIds", []any{
+				calendarDeleteEventItemID(id, changeKey),
 			}),
 		)),
 	)
@@ -739,7 +843,14 @@ type createMeetingPayload struct {
 	body      string
 	location  string
 	timeZone  string
-	attendees []string
+	attendees []createMeetingAttendee
+}
+
+type createMeetingAttendee struct {
+	email       string
+	name        string
+	routingType string
+	mailboxType string
 }
 
 func normalizeCreateMeetingPayload(payload map[string]any) (createMeetingPayload, error) {
@@ -765,18 +876,300 @@ func normalizeCreateMeetingPayload(payload map[string]any) (createMeetingPayload
 	return meeting, nil
 }
 
-func createMeetingAttendees(value any) []string {
-	attendees := make([]string, 0)
+func createMeetingAttendees(value any) []createMeetingAttendee {
+	attendees := make([]createMeetingAttendee, 0)
 	for _, attendee := range anySlice(value) {
-		address, ok := attendee.(string)
-		if !ok {
-			continue
-		}
-		if address = strings.TrimSpace(address); address != "" {
-			attendees = append(attendees, address)
+		switch typed := attendee.(type) {
+		case string:
+			if address := strings.TrimSpace(typed); address != "" {
+				attendees = append(attendees, createMeetingAttendee{email: address})
+			}
+		case map[string]any:
+			parsed := createMeetingAttendeeFromInput(typed)
+			if parsed.email != "" {
+				attendees = append(attendees, parsed)
+			}
 		}
 	}
 	return attendees
+}
+
+func createMeetingAttendeeFromInput(value map[string]any) createMeetingAttendee {
+	email := strings.TrimSpace(firstString(value, "email", "EmailAddress", "address"))
+	if emailAddress, ok := value["EmailAddress"].(map[string]any); ok {
+		if resolved := createMeetingAttendeeFromEmailAddress(emailAddress, email); resolved.email != "" {
+			return resolved
+		}
+	}
+	if email == "" {
+		return createMeetingAttendee{}
+	}
+	return createMeetingAttendee{
+		email:       email,
+		name:        strings.TrimSpace(firstString(value, "display_name", "name", "Name")),
+		routingType: strings.TrimSpace(firstString(value, "routing_type", "RoutingType")),
+		mailboxType: strings.TrimSpace(firstString(value, "mailbox_type", "MailboxType")),
+	}
+}
+
+func createMeetingAttendeeFromEmailAddress(value map[string]any, fallbackEmail string) createMeetingAttendee {
+	email := strings.TrimSpace(stringValue(value, "EmailAddress"))
+	if email == "" {
+		email = strings.TrimSpace(fallbackEmail)
+	}
+	if email == "" {
+		return createMeetingAttendee{}
+	}
+	return createMeetingAttendee{
+		email:       email,
+		name:        strings.TrimSpace(stringValue(value, "Name")),
+		routingType: strings.TrimSpace(stringValue(value, "RoutingType")),
+		mailboxType: strings.TrimSpace(stringValue(value, "MailboxType")),
+	}
+}
+
+func (client *Transport) resolveCreateMeetingAttendees(ctx context.Context, attendees []createMeetingAttendee) ([]createMeetingAttendee, error) {
+	resolved := make([]createMeetingAttendee, len(attendees))
+	copy(resolved, attendees)
+	for index, attendee := range resolved {
+		if attendee.email == "" || attendee.name != "" && looksLikeSMTPAddress(attendee.email) {
+			continue
+		}
+		response := client.executeService(ctx, "FindPeople", client.buildFindPeopleRequest(attendee.email), false)
+		if !response.OK {
+			if looksLikeSMTPAddress(attendee.email) {
+				continue
+			}
+			return nil, createMeetingAttendeeResolutionServiceError(attendee.email, response.Error)
+		}
+		candidates := createMeetingAttendeesFromPeople(response.Data)
+		if looksLikeSMTPAddress(attendee.email) {
+			if candidate := exactCreateMeetingAttendee(candidates, attendee.email); candidate.email != "" {
+				if candidate.mailboxType == "" {
+					candidate.mailboxType = "Mailbox"
+				}
+				resolved[index] = candidate
+			}
+			continue
+		}
+		if len(candidates) == 0 {
+			return nil, fmt.Errorf("unresolved attendee %q; use a full email address or a more specific display name", attendee.email)
+		}
+		if len(candidates) > 1 {
+			return nil, fmt.Errorf("ambiguous attendee %q; use a full email address or a more specific display name", attendee.email)
+		}
+		candidate := candidates[0]
+		if candidate.mailboxType == "" {
+			candidate.mailboxType = "Mailbox"
+		}
+		resolved[index] = candidate
+	}
+	return resolved, nil
+}
+
+func createMeetingAttendeeResolutionServiceError(attendee string, serviceError string) error {
+	detail := strings.Join(strings.Fields(serviceError), " ")
+	if detail == "" {
+		detail = "FindPeople service returned an error"
+	}
+	return fmt.Errorf("attendee resolution failed for %q: %s", attendee, detail)
+}
+
+func createMeetingAttendeesFromPeople(payload map[string]any) []createMeetingAttendee {
+	body, _ := payload["Body"].(map[string]any)
+	candidates := make([]createMeetingAttendee, 0)
+	for _, person := range peopleResponseItems(body) {
+		personMap, ok := person.(map[string]any)
+		if !ok {
+			continue
+		}
+		candidate := createMeetingAttendeeFromPerson(personMap)
+		if candidate.email != "" {
+			candidates = append(candidates, candidate)
+		}
+	}
+	return candidates
+}
+
+func createMeetingAttendeeFromPerson(person map[string]any) createMeetingAttendee {
+	candidateEmail := personEmail(person)
+	if candidateEmail == "" {
+		return createMeetingAttendee{}
+	}
+	if emailAddress, ok := person["EmailAddress"].(map[string]any); ok {
+		candidate := createMeetingAttendeeFromEmailAddress(emailAddress, candidateEmail)
+		if candidate.name == "" {
+			candidate.name = personDisplayName(person)
+		}
+		return candidate
+	}
+	return createMeetingAttendee{email: candidateEmail, name: personDisplayName(person)}
+}
+
+func exactCreateMeetingAttendee(candidates []createMeetingAttendee, email string) createMeetingAttendee {
+	fallback := strings.TrimSpace(email)
+	for _, candidate := range candidates {
+		if strings.EqualFold(candidate.email, fallback) {
+			return candidate
+		}
+	}
+	return createMeetingAttendee{}
+}
+
+func looksLikeSMTPAddress(value string) bool {
+	local, domain, ok := strings.Cut(strings.TrimSpace(value), "@")
+	if !ok {
+		return false
+	}
+	return local != "" && domain != "" && !strings.ContainsAny(local+domain, " \t\r\n")
+}
+
+func createMeetingAttendeeEmails(attendees []createMeetingAttendee) []string {
+	emails := make([]string, 0, len(attendees))
+	for _, attendee := range attendees {
+		if attendee.email != "" {
+			emails = append(emails, attendee.email)
+		}
+	}
+	return emails
+}
+
+func (client *Transport) recoverCreatedMeetingEvent(ctx context.Context, meeting createMeetingPayload) transport.ActionResponse {
+	timeZone := client.createMeetingTimeZone(meeting)
+	rangeStart, err := formatOWACalendarCreateTime(meeting.start, timeZone)
+	if err != nil {
+		return transport.ActionResponse{OK: false, Error: "calendar.create_meeting created event id was not returned; unable to verify created event start"}
+	}
+	rangeEnd, err := formatOWACalendarCreateTime(meeting.end, timeZone)
+	if err != nil {
+		return transport.ActionResponse{OK: false, Error: "calendar.create_meeting created event id was not returned; unable to verify created event end"}
+	}
+	response := client.executeService(ctx, "GetCalendarView", client.buildCalendarViewRequestInTimeZoneForMailbox(rangeStart, rangeEnd, timeZone, meeting.mailbox), true)
+	if !response.OK {
+		detail := strings.Join(strings.Fields(response.Error), " ")
+		if detail == "" {
+			detail = "GetCalendarView failed"
+		}
+		return transport.ActionResponse{OK: false, Error: "calendar.create_meeting created event id was not returned; verification lookup failed: " + detail}
+	}
+	matches := matchingCreatedMeetingEvents(extractItems(response.Data), meeting, timeZone)
+	if len(matches) == 0 {
+		return transport.ActionResponse{OK: false, Error: "calendar.create_meeting created event id was not returned; verification lookup found no matching calendar event"}
+	}
+	if len(matches) > 1 {
+		return transport.ActionResponse{OK: false, Error: "calendar.create_meeting created event id was not returned; verification lookup is ambiguous"}
+	}
+	event := matches[0]
+	event["verification_status"] = "recovered"
+	return transport.ActionResponse{OK: true, Data: map[string]any{"event": event}}
+}
+
+func (client *Transport) createMeetingTimeZone(meeting createMeetingPayload) string {
+	timeZone := strings.TrimSpace(meeting.timeZone)
+	if timeZone == "" {
+		timeZone = client.config.effectiveTimeZoneID()
+	}
+	return timeZone
+}
+
+func matchingCreatedMeetingEvents(items []any, meeting createMeetingPayload, timeZone string) []map[string]any {
+	expectedStart, err := parseOWATimeInZone(meeting.start, timeZone)
+	if err != nil {
+		return nil
+	}
+	expectedEnd, err := parseOWATimeInZone(meeting.end, timeZone)
+	if err != nil {
+		return nil
+	}
+	matches := make([]map[string]any, 0, 1)
+	for _, item := range items {
+		itemMap, ok := item.(map[string]any)
+		if !ok {
+			continue
+		}
+		event := firstMapWithID(normalizeCalendarItems([]any{itemMap}))
+		if strings.TrimSpace(stringValue(event, "id")) == "" {
+			continue
+		}
+		if strings.TrimSpace(stringValue(event, "title")) != meeting.subject {
+			continue
+		}
+		if !calendarEventTimeMatches(stringValue(event, "start"), expectedStart, timeZone) {
+			continue
+		}
+		if !calendarEventTimeMatches(stringValue(event, "end"), expectedEnd, timeZone) {
+			continue
+		}
+		if !calendarEventAttendeesMatch(itemMap, meeting.attendees) {
+			continue
+		}
+		matches = append(matches, event)
+	}
+	return matches
+}
+
+func calendarEventTimeMatches(value string, expected time.Time, timeZone string) bool {
+	actual, err := parseOWATimeInZone(value, timeZone)
+	return err == nil && actual.Equal(expected)
+}
+
+func calendarEventAttendeesMatch(item map[string]any, attendees []createMeetingAttendee) bool {
+	expected := createMeetingAttendeeEmailSet(attendees)
+	if len(expected) == 0 {
+		return true
+	}
+	actual, ok := calendarItemAttendeeEmailSet(item)
+	if !ok || len(actual) != len(expected) {
+		return false
+	}
+	return sameStringSet(actual, expected)
+}
+
+func createMeetingAttendeeEmailSet(attendees []createMeetingAttendee) map[string]bool {
+	emails := make(map[string]bool, len(attendees))
+	for _, attendee := range attendees {
+		email := strings.ToLower(strings.TrimSpace(attendee.email))
+		if email != "" {
+			emails[email] = true
+		}
+	}
+	return emails
+}
+
+func calendarItemAttendeeEmailSet(item map[string]any) (map[string]bool, bool) {
+	attendees := calendarItemAttendeeValues(item)
+	if len(attendees) == 0 {
+		return nil, false
+	}
+	emails := make(map[string]bool, len(attendees))
+	for _, attendee := range attendees {
+		email := strings.ToLower(strings.TrimSpace(calendarAttendeeEmail(attendee)))
+		if email == "" {
+			return nil, false
+		}
+		emails[email] = true
+	}
+	return emails, len(emails) > 0
+}
+
+func calendarItemAttendeeValues(item map[string]any) []map[string]any {
+	attendees := make([]map[string]any, 0)
+	for _, key := range []string{"RequiredAttendees", "OptionalAttendees", "Attendees"} {
+		attendees = append(attendees, calendarAttendeeValues(item[key])...)
+	}
+	return attendees
+}
+
+func sameStringSet(left map[string]bool, right map[string]bool) bool {
+	if len(left) != len(right) {
+		return false
+	}
+	for value := range left {
+		if !right[value] {
+			return false
+		}
+	}
+	return true
 }
 
 func owaCalendarFolderID(mailbox string) any {
@@ -793,44 +1186,138 @@ func owaCalendarFolderID(mailbox string) any {
 	return object(fields...)
 }
 
-func (client *Transport) buildCreateMeetingRequest(meeting createMeetingPayload) any {
+func (client *Transport) buildCreateMeetingRequest(meeting createMeetingPayload) (any, error) {
+	timeZone := strings.TrimSpace(meeting.timeZone)
+	if timeZone == "" {
+		timeZone = client.config.effectiveTimeZoneID()
+	}
+	start, err := formatOWACalendarCreateTime(meeting.start, timeZone)
+	if err != nil {
+		return nil, fmt.Errorf("calendar.create_meeting requires parseable start")
+	}
+	end, err := formatOWACalendarCreateTime(meeting.end, timeZone)
+	if err != nil {
+		return nil, fmt.Errorf("calendar.create_meeting requires parseable end")
+	}
 	attendees := make([]any, 0)
-	for _, address := range meeting.attendees {
+	for _, attendee := range meeting.attendees {
+		mailboxFields := []orderedField{
+			field("Name", attendee.name),
+			field("EmailAddress", attendee.email),
+			field("RoutingType", attendee.routingType),
+			field("MailboxType", attendee.mailboxType),
+		}
+		if attendee.name == "" {
+			mailboxFields[0] = field("Name", attendee.email)
+		}
+		if attendee.routingType == "" {
+			mailboxFields[2] = field("RoutingType", "SMTP")
+		}
+		if attendee.mailboxType == "" {
+			mailboxFields[3] = field("MailboxType", "Mailbox")
+		}
 		attendees = append(attendees, object(
-			field("__type", "Attendee:#Exchange"),
-			field("Mailbox", object(
-				field("__type", "EmailAddress:#Exchange"),
-				field("EmailAddress", address),
-			)),
+			field("Mailbox", object(mailboxFields...)),
 		))
 	}
 	return object(
 		field("__type", "CreateItemJsonRequest:#Exchange"),
-		field("Header", client.requestHeaderPayloadInTimeZone("Exchange2013", meeting.timeZone)),
+		field("Header", client.requestHeaderPayloadInTimeZone("V2017_08_18", timeZone)),
 		field("Body", object(
 			field("__type", "CreateItemRequest:#Exchange"),
-			field("MessageDisposition", "SendAndSaveCopy"),
-			field("SendMeetingInvitations", "SendToAllAndSaveCopy"),
+			field("Items", []any{
+				object(
+					field("__type", "CalendarItem:#Exchange"),
+					field("ClientSeriesId", calendarCreateClientSeriesID(meeting)),
+					field("Subject", meeting.subject),
+					field("Body", object(
+						field("__type", "BodyContentType:#Exchange"),
+						field("BodyType", "HTML"),
+						field("Value", calendarCreateBodyHTML(meeting.body)),
+					)),
+					field("Sensitivity", "Normal"),
+					field("ReminderIsSet", true),
+					field("ReminderMinutesBeforeStart", 15),
+					field("IsResponseRequested", true),
+					field("DoNotForwardMeeting", false),
+					field("IsAllDayEvent", false),
+					field("Start", start),
+					field("End", end),
+					field("FreeBusyType", "Busy"),
+					field("Location", object(
+						field("__type", "EnhancedLocation:#Exchange"),
+						field("Annotation", ""),
+						field("DisplayName", meeting.location),
+						field("PostalAddress", object(
+							field("__type", "PersonaPostalAddress:#Exchange"),
+							field("Type", "Business"),
+							field("LocationSource", "None"),
+						)),
+					)),
+					field("RequiredAttendees", attendees),
+					field("unfoldedIndex", 0),
+				),
+			}),
+			field("ClientSupportsIrm", true),
 			field("SavedItemFolderId", object(
 				field("__type", "TargetFolderId:#Exchange"),
 				field("BaseFolderId", owaCalendarFolderID(meeting.mailbox)),
 			)),
-			field("Items", []any{
-				object(
-					field("__type", "CalendarItem:#Exchange"),
-					field("Subject", meeting.subject),
-					field("Body", object(
-						field("__type", "BodyContentType:#Exchange"),
-						field("BodyType", "Text"),
-						field("Value", meeting.body),
-					)),
-					field("Start", meeting.start),
-					field("End", meeting.end),
-					field("Location", meeting.location),
-					field("RequiredAttendees", attendees),
-				),
-			}),
 		)),
+	), nil
+}
+
+func formatOWACalendarCreateTime(value string, timeZone string) (string, error) {
+	parsed, err := parseOWATimeInZone(value, timeZone)
+	if err != nil {
+		return "", err
+	}
+	location, err := owaTimeLocation(timeZone)
+	if err != nil {
+		return "", err
+	}
+	return parsed.In(location).Format("2006-01-02T15:04:05.000"), nil
+}
+
+func calendarCreateClientSeriesID(meeting createMeetingPayload) string {
+	return fmt.Sprintf("outlook-agent-%d", time.Now().UnixNano())
+}
+
+func calendarCreateBodyHTML(body string) string {
+	if strings.TrimSpace(body) == "" {
+		return ""
+	}
+	escaped := html.EscapeString(body)
+	return fmt.Sprintf(`<html><head><meta http-equiv="Content-Type" content="text/html; charset=UTF-8"></head><body dir="ltr"><div dir="ltr"><p>%s</p></div></body></html>`, escaped)
+}
+
+func calendarDeleteEventItemID(eventID string, changeKey string) map[string]any {
+	itemID := map[string]any{
+		"__type": "ItemId:#Exchange",
+		"Id":     eventID,
+	}
+	if changeKey = strings.TrimSpace(changeKey); changeKey != "" {
+		itemID["ChangeKey"] = changeKey
+	}
+	return itemID
+}
+
+func (client *Transport) buildCancelCalendarEventRequest(eventID string, changeKey string, comment string) any {
+	bodyFields := []orderedField{
+		field("__type", "CancelCalendarEventRequest:#Exchange"),
+		field("ReferenceItemId", calendarDeleteEventItemID(eventID, changeKey)),
+	}
+	if comment = strings.TrimSpace(comment); comment != "" {
+		bodyFields = append(bodyFields, field("NewBodyContent", object(
+			field("__type", "BodyContentType:#Exchange"),
+			field("BodyType", "Text"),
+			field("Value", comment),
+		)))
+	}
+	return object(
+		field("__type", "CancelCalendarEventJsonRequest:#Exchange"),
+		field("Header", client.requestHeaderPayload("Exchange2013")),
+		field("Body", object(bodyFields...)),
 	)
 }
 
@@ -964,6 +1451,19 @@ func firstMap(values []any) map[string]any {
 	return value
 }
 
+func firstMapWithID(values []any) map[string]any {
+	for _, value := range values {
+		valueMap, ok := value.(map[string]any)
+		if !ok {
+			continue
+		}
+		if strings.TrimSpace(stringValue(valueMap, "id")) != "" {
+			return valueMap
+		}
+	}
+	return map[string]any{}
+}
+
 func normalizeMailItems(items []any) []any {
 	output := make([]any, 0, len(items))
 	for _, item := range items {
@@ -1082,7 +1582,7 @@ func normalizeCalendarItems(items []any) []any {
 			continue
 		}
 		itemID := itemID(itemMap)
-		output = append(output, map[string]any{
+		event := map[string]any{
 			"id":             itemID["id"],
 			"change_key":     itemID["change_key"],
 			"title":          stringValue(itemMap, "Subject"),
@@ -1090,9 +1590,97 @@ func normalizeCalendarItems(items []any) []any {
 			"end":            stringValue(itemMap, "End"),
 			"location":       stringValue(itemMap, "Location"),
 			"free_busy_type": stringValue(itemMap, "FreeBusyType"),
+		}
+		if attendees := normalizeCalendarItemAttendees(itemMap); len(attendees) > 0 {
+			event["attendees"] = attendees
+		}
+		if _, exists := itemMap["IsMeeting"]; exists {
+			event["is_meeting"] = boolValue(itemMap, "IsMeeting")
+		}
+		if _, exists := itemMap["MeetingRequestWasSent"]; exists {
+			event["meeting_request_was_sent"] = boolValue(itemMap, "MeetingRequestWasSent")
+		}
+		output = append(output, event)
+	}
+	return output
+}
+
+func normalizeCalendarItemAttendees(item map[string]any) []any {
+	seen := map[string]bool{}
+	attendees := make([]any, 0)
+	for _, key := range []string{"RequiredAttendees", "OptionalAttendees", "Attendees"} {
+		attendees = appendCalendarItemAttendees(attendees, item[key], seen)
+	}
+	return attendees
+}
+
+func appendCalendarItemAttendees(output []any, value any, seen map[string]bool) []any {
+	for _, attendee := range calendarAttendeeValues(value) {
+		email := strings.TrimSpace(calendarAttendeeEmail(attendee))
+		if email == "" {
+			continue
+		}
+		normalized := strings.ToLower(email)
+		if seen[normalized] {
+			continue
+		}
+		seen[normalized] = true
+		output = append(output, map[string]any{
+			"email": email,
+			"name":  strings.TrimSpace(calendarAttendeeName(attendee)),
 		})
 	}
 	return output
+}
+
+func calendarAttendeeValues(value any) []map[string]any {
+	values := make([]map[string]any, 0)
+	switch typed := value.(type) {
+	case []any:
+		for _, item := range typed {
+			values = append(values, calendarAttendeeValues(item)...)
+		}
+	case map[string]any:
+		if items := anySlice(typed["Items"]); len(items) > 0 {
+			for _, item := range items {
+				values = append(values, calendarAttendeeValues(item)...)
+			}
+			return values
+		}
+		values = append(values, typed)
+	}
+	return values
+}
+
+func calendarAttendeeEmail(attendee map[string]any) string {
+	if mailbox, ok := attendee["Mailbox"].(map[string]any); ok {
+		if email := strings.TrimSpace(stringValue(mailbox, "EmailAddress")); email != "" {
+			return email
+		}
+	}
+	if emailAddress, ok := attendee["EmailAddress"].(map[string]any); ok {
+		if email := strings.TrimSpace(stringValue(emailAddress, "EmailAddress")); email != "" {
+			return email
+		}
+	}
+	if email := strings.TrimSpace(stringValue(attendee, "EmailAddress")); email != "" {
+		return email
+	}
+	return strings.TrimSpace(stringValue(attendee, "Email"))
+}
+
+func calendarAttendeeName(attendee map[string]any) string {
+	if mailbox, ok := attendee["Mailbox"].(map[string]any); ok {
+		if name := strings.TrimSpace(stringValue(mailbox, "Name")); name != "" {
+			return name
+		}
+	}
+	if emailAddress, ok := attendee["EmailAddress"].(map[string]any); ok {
+		if name := strings.TrimSpace(stringValue(emailAddress, "Name")); name != "" {
+			return name
+		}
+	}
+	return strings.TrimSpace(stringValue(attendee, "Name"))
 }
 
 func normalizeAvailabilityWindows(payload map[string]any) []any {
@@ -1383,12 +1971,16 @@ func floatValue(values map[string]any, key string, fallback float64) float64 {
 }
 
 func parseOWATimeInZone(value string, timeZone string) (time.Time, error) {
+	value = strings.TrimSpace(value)
 	if parsed, err := time.Parse(time.RFC3339, value); err == nil {
 		return parsed, nil
 	}
 	location, err := owaTimeLocation(timeZone)
 	if err != nil {
 		return time.Time{}, err
+	}
+	if parsed, err := time.ParseInLocation("2006-01-02T15:04:05.000", value, location); err == nil {
+		return parsed, nil
 	}
 	return time.ParseInLocation("2006-01-02T15:04:05", value, location)
 }

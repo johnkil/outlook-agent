@@ -239,7 +239,47 @@ func (client *Transport) executeRawServiceOnce(ctx context.Context, actionName s
 	return transport.ActionResponse{OK: true, Data: data}, false
 }
 
-func (client *Transport) DryRun(_ context.Context, request transport.ActionRequest) transport.DryRunSummary {
+func (client *Transport) DryRun(ctx context.Context, request transport.ActionRequest) transport.DryRunSummary {
+	if request.Name == "calendar.cancel_meeting" {
+		review, err := client.owaCalendarCancelMeetingReview(ctx, request.Name, request.Payload)
+		count := 1
+		if strings.TrimSpace(stringValue(request.Payload, "event_id")) == "" {
+			count = 0
+		}
+		summary := transport.DryRunSummary{
+			Action:               request.Name,
+			Count:                count,
+			Reversible:           false,
+			RequiresConfirmation: true,
+			SafetyClass:          string(policy.SendLike),
+			Review:               &review,
+			Warnings:             review.Limitations,
+		}
+		if err != nil {
+			summary.Error = err.Error()
+		}
+		return summary
+	}
+	if request.Name == "calendar.delete_event" {
+		review, err := client.owaCalendarDeleteEventReview(ctx, request.Name, request.Payload)
+		count := 1
+		if strings.TrimSpace(stringValue(request.Payload, "event_id")) == "" {
+			count = 0
+		}
+		summary := transport.DryRunSummary{
+			Action:               request.Name,
+			Count:                count,
+			Reversible:           true,
+			RequiresConfirmation: true,
+			SafetyClass:          string(policy.ReversibleBulk),
+			Review:               &review,
+			Warnings:             review.Limitations,
+		}
+		if err != nil {
+			summary.Error = err.Error()
+		}
+		return summary
+	}
 	if request.Name == "calendar.create_meeting" {
 		review, err := owaCalendarCreateMeetingReview(request.Name, request.Payload)
 		summary := transport.DryRunSummary{
@@ -339,6 +379,20 @@ func owaCalendarCreateMeetingReview(actionName string, payload map[string]any) (
 			Limitations:        []string{err.Error()},
 		}, err
 	}
+	for _, attendee := range meeting.attendees {
+		if !looksLikeSMTPAddress(attendee.email) {
+			err := fmt.Errorf("calendar.create_meeting dry-run requires resolved attendee email addresses; resolve %q before requesting confirmation", attendee.email)
+			return transport.ReviewPacket{
+				Version:            transport.ReviewPacketVersion,
+				Transport:          "owa",
+				Action:             actionName,
+				SafetyClass:        string(policy.SendLike),
+				Completeness:       transport.ReviewCompletenessMinimal,
+				PayloadFingerprint: transport.PayloadFingerprint(payload),
+				Limitations:        []string{err.Error()},
+			}, err
+		}
+	}
 	bodyPreview := transport.RedactedPreview(meeting.body, 500)
 	review := transport.ReviewPacket{
 		Version:      transport.ReviewPacketVersion,
@@ -352,7 +406,7 @@ func owaCalendarCreateMeetingReview(actionName string, payload map[string]any) (
 			Start:         meeting.start,
 			End:           meeting.end,
 			Location:      meeting.location,
-			Attendees:     meeting.attendees,
+			Attendees:     createMeetingAttendeeEmails(meeting.attendees),
 			SendsResponse: true,
 		},
 		PayloadFingerprint: transport.PayloadFingerprint(payload),
@@ -361,6 +415,145 @@ func owaCalendarCreateMeetingReview(actionName string, payload map[string]any) (
 		review.Mutation.NewState = map[string]any{"body_preview": bodyPreview}
 	}
 	return review, nil
+}
+
+func (client *Transport) owaCalendarDeleteEventReview(ctx context.Context, actionName string, payload map[string]any) (transport.ReviewPacket, error) {
+	eventID := strings.TrimSpace(stringValue(payload, "event_id"))
+	changeKey := strings.TrimSpace(stringValue(payload, "change_key"))
+	targets := []transport.TargetRef{}
+	if eventID != "" {
+		targets = append(targets, transport.TargetRef{Kind: "event", ID: eventID})
+	}
+	review := transport.ReviewPacket{
+		Version:      transport.ReviewPacketVersion,
+		Transport:    "owa",
+		Action:       actionName,
+		SafetyClass:  string(policy.ReversibleBulk),
+		Completeness: transport.ReviewCompletenessPartial,
+		Targets:      targets,
+		Mutation:     &transport.MutationReview{Operation: "delete", To: "Deleted Items"},
+		Calendar: &transport.CalendarReview{
+			EventID:       eventID,
+			SendsResponse: false,
+		},
+		PayloadFingerprint: transport.PayloadFingerprint(payload),
+	}
+	if eventID == "" {
+		review.Completeness = transport.ReviewCompletenessMinimal
+		review.Limitations = append(review.Limitations, "event_id is required")
+		return review, fmt.Errorf("event_id is required")
+	}
+
+	response := client.executeService(ctx, "GetItem", client.buildGetCalendarEventReviewRequest(eventID, changeKey), false)
+	if !response.OK {
+		review.WarningCodes = appendWarningCode(review.WarningCodes, transport.ReviewWarningRichReviewUnavailable)
+		review.Limitations = append(review.Limitations, "event metadata could not be reviewed: "+actionResponseDetail(response))
+		return review, nil
+	}
+	item := firstMap(extractItems(response.Data))
+	if len(item) == 0 {
+		review.WarningCodes = appendWarningCode(review.WarningCodes, transport.ReviewWarningRichReviewUnavailable)
+		review.Limitations = append(review.Limitations, "event metadata lookup returned no calendar event details")
+		return review, nil
+	}
+
+	calendar := owaCalendarDeleteEventCalendarReview(eventID, item)
+	review.Calendar = &calendar
+	if len(review.Targets) > 0 && calendar.Subject != "" {
+		review.Targets[0].Name = calendar.Subject
+	}
+	review.Completeness = transport.ReviewCompletenessComplete
+	return review, nil
+}
+
+func (client *Transport) owaCalendarCancelMeetingReview(ctx context.Context, actionName string, payload map[string]any) (transport.ReviewPacket, error) {
+	eventID := strings.TrimSpace(stringValue(payload, "event_id"))
+	changeKey := strings.TrimSpace(stringValue(payload, "change_key"))
+	targets := []transport.TargetRef{}
+	if eventID != "" {
+		targets = append(targets, transport.TargetRef{Kind: "event", ID: eventID})
+	}
+	mutation := &transport.MutationReview{Operation: "cancel"}
+	if commentPreview := transport.RedactedPreview(stringValue(payload, "comment"), 500); commentPreview != "" {
+		mutation.NewState = map[string]any{"comment_preview": commentPreview}
+	}
+	review := transport.ReviewPacket{
+		Version:      transport.ReviewPacketVersion,
+		Transport:    "owa",
+		Action:       actionName,
+		SafetyClass:  string(policy.SendLike),
+		Completeness: transport.ReviewCompletenessPartial,
+		Targets:      targets,
+		Mutation:     mutation,
+		Calendar: &transport.CalendarReview{
+			EventID:       eventID,
+			SendsResponse: true,
+		},
+		PayloadFingerprint: transport.PayloadFingerprint(payload),
+	}
+	if eventID == "" {
+		review.Completeness = transport.ReviewCompletenessMinimal
+		review.Limitations = append(review.Limitations, "event_id is required")
+		return review, fmt.Errorf("event_id is required")
+	}
+
+	response := client.executeService(ctx, "GetItem", client.buildGetCalendarEventReviewRequest(eventID, changeKey), false)
+	if !response.OK {
+		review.WarningCodes = appendWarningCode(review.WarningCodes, transport.ReviewWarningRichReviewUnavailable)
+		review.Limitations = append(review.Limitations, "event metadata could not be reviewed: "+actionResponseDetail(response))
+		return review, nil
+	}
+	item := firstMap(extractItems(response.Data))
+	if len(item) == 0 {
+		review.WarningCodes = appendWarningCode(review.WarningCodes, transport.ReviewWarningRichReviewUnavailable)
+		review.Limitations = append(review.Limitations, "event metadata lookup returned no calendar event details")
+		return review, nil
+	}
+
+	calendar := owaCalendarDeleteEventCalendarReview(eventID, item)
+	calendar.SendsResponse = true
+	review.Calendar = &calendar
+	if len(review.Targets) > 0 && calendar.Subject != "" {
+		review.Targets[0].Name = calendar.Subject
+	}
+	review.Completeness = transport.ReviewCompletenessComplete
+	return review, nil
+}
+
+func owaCalendarDeleteEventCalendarReview(fallbackEventID string, item map[string]any) transport.CalendarReview {
+	id := itemID(item)["id"]
+	if strings.TrimSpace(id) == "" {
+		id = fallbackEventID
+	}
+	return transport.CalendarReview{
+		EventID:       id,
+		Subject:       stringValue(item, "Subject"),
+		Start:         stringValue(item, "Start"),
+		End:           stringValue(item, "End"),
+		Location:      calendarDeleteEventLocation(item["Location"]),
+		Organizer:     senderName(item["Organizer"]),
+		Attendees:     owaRecipients(item, "RequiredAttendees"),
+		CurrentStatus: firstString(item, "MyResponseType", "ResponseType", "FreeBusyType"),
+		SendsResponse: false,
+	}
+}
+
+func calendarDeleteEventLocation(value any) string {
+	switch typed := value.(type) {
+	case string:
+		return strings.TrimSpace(typed)
+	case map[string]any:
+		return firstString(typed, "DisplayName", "Name", "Location")
+	default:
+		return ""
+	}
+}
+
+func actionResponseDetail(response transport.ActionResponse) string {
+	if response.Error != "" {
+		return response.Error
+	}
+	return "lookup failed"
 }
 
 func appendWarningCode(values []string, value string) []string {
@@ -502,6 +695,15 @@ func owaRecipients(item map[string]any, key string) []string {
 		recipient, _ := value.(map[string]any)
 		emailAddress, _ := recipient["EmailAddress"].(map[string]any)
 		if email := strings.TrimSpace(firstString(emailAddress, "EmailAddress", "Address", "Name")); email != "" {
+			recipients = append(recipients, email)
+			continue
+		}
+		mailbox, _ := recipient["Mailbox"].(map[string]any)
+		if email := strings.TrimSpace(firstString(mailbox, "EmailAddress", "Address", "Name")); email != "" {
+			recipients = append(recipients, email)
+			continue
+		}
+		if email := strings.TrimSpace(firstString(recipient, "EmailAddress", "Address", "Name")); email != "" {
 			recipients = append(recipients, email)
 		}
 	}

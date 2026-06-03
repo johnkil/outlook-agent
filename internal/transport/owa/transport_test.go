@@ -268,6 +268,8 @@ func TestTransportCapabilitiesIncludeClassifiedOWAServiceActions(t *testing.T) {
 	assertClass(t, byName, "CreateItem", policy.SendLike)
 	assertClass(t, byName, "SendItem", policy.SendLike)
 	assertClass(t, byName, "calendar.create_meeting", policy.SendLike)
+	assertClass(t, byName, "calendar.cancel_meeting", policy.SendLike)
+	assertClass(t, byName, "calendar.delete_event", policy.ReversibleBulk)
 	assertClass(t, byName, "DeleteItem", policy.Destructive)
 	assertClass(t, byName, "DeleteFolder", policy.Destructive)
 	assertClass(t, byName, "EmptyFolder", policy.Destructive)
@@ -282,6 +284,39 @@ func TestTransportCapabilitiesIncludeClassifiedOWAServiceActions(t *testing.T) {
 	assertClass(t, byName, "NotificationSubscribe", policy.SettingsOrRules)
 
 	assertMissing(t, capabilities.Actions, "UpdateInboxRules")
+}
+
+func TestTransportReportsExpectedActionClasses(t *testing.T) {
+	client := owa.NewTransport(owa.Config{
+		BaseURL:   "https://example.test",
+		Username:  "DOMAIN\\user",
+		SecretRef: secret.Ref("memory:owa"),
+	}, secret.NewMemoryStore(map[string]string{"memory:owa": "password"}), nil)
+
+	capabilities := client.Capabilities(context.Background())
+	byName := map[string]action.Definition{}
+	for _, definition := range capabilities.Actions {
+		byName[definition.Name] = definition
+	}
+
+	definition, ok := byName["calendar.delete_event"]
+	if !ok {
+		t.Fatalf("expected calendar.delete_event capability in %#v", capabilities.Actions)
+	}
+	if definition.Transport != "owa" ||
+		definition.Class != policy.ReversibleBulk ||
+		definition.Level != action.LevelHighLevelMCPTool {
+		t.Fatalf("expected reversible high-level calendar.delete_event, got %#v", definition)
+	}
+	definition, ok = byName["calendar.cancel_meeting"]
+	if !ok {
+		t.Fatalf("expected calendar.cancel_meeting capability in %#v", capabilities.Actions)
+	}
+	if definition.Transport != "owa" ||
+		definition.Class != policy.SendLike ||
+		definition.Level != action.LevelHighLevelMCPTool {
+		t.Fatalf("expected send-like high-level calendar.cancel_meeting, got %#v", definition)
+	}
 }
 
 func assertClass(t *testing.T, byName map[string]action.Definition, name string, class policy.SafetyClass) {
@@ -345,6 +380,198 @@ func TestTransportDryRunDoesNotCallNetwork(t *testing.T) {
 	}
 	if summary.Review.Mutation == nil || summary.Review.Mutation.Operation != "delete" || summary.Review.Mutation.To != "Deleted Items" {
 		t.Fatalf("expected DeleteItem mutation review, got %#v", summary.Review.Mutation)
+	}
+}
+
+func TestOWADryRunCalendarDeleteEventReview(t *testing.T) {
+	var calls []recordedServiceCall
+	server := newOWAServiceServerByAction(t, &calls, map[string]map[string]any{
+		"GetItem": {
+			"Body": map[string]any{
+				"Items": []any{
+					map[string]any{
+						"ItemId":   map[string]any{"Id": "event-1", "ChangeKey": "ck-1"},
+						"Subject":  "Planning",
+						"Start":    "2026-06-03T16:00:00.000",
+						"End":      "2026-06-03T16:30:00.000",
+						"Location": "Room 1",
+					},
+				},
+			},
+		},
+	})
+	defer server.Close()
+	client := newTestTransport(server)
+
+	summary := client.DryRun(context.Background(), transport.ActionRequest{
+		Name: "calendar.delete_event",
+		Payload: map[string]any{
+			"event_id":   "event-1",
+			"change_key": "ck-1",
+		},
+	})
+
+	if summary.Action != "calendar.delete_event" || summary.Count != 1 || !summary.RequiresConfirmation || !summary.Reversible {
+		t.Fatalf("unexpected calendar.delete_event dry-run summary: %#v", summary)
+	}
+	if summary.SafetyClass != string(policy.ReversibleBulk) {
+		t.Fatalf("expected reversible safety class, got %#v", summary)
+	}
+	if len(calls) != 1 || calls[0].Action != "GetItem" {
+		t.Fatalf("expected dry-run metadata lookup with GetItem, got %#v", calls)
+	}
+	if summary.Review == nil {
+		t.Fatalf("expected review packet: %#v", summary)
+	}
+	review := summary.Review
+	if review.Action != "calendar.delete_event" {
+		t.Fatalf("expected delete-event review action, got %#v", review)
+	}
+	if len(review.Targets) != 1 || review.Targets[0].ID != "event-1" {
+		t.Fatalf("expected event id target in review, got %#v", review.Targets)
+	}
+	if review.Calendar == nil || review.Calendar.EventID != "event-1" || review.Calendar.Subject != "Planning" {
+		t.Fatalf("expected calendar review with event metadata, got %#v", review.Calendar)
+	}
+}
+
+func TestOWADryRunCalendarDeleteEventReviewSurvivesMetadataLookupFailure(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		switch request.URL.Path {
+		case "/owa/auth.owa":
+			http.SetCookie(response, &http.Cookie{Name: "X-OWA-CANARY", Value: "canary-secret"})
+			response.WriteHeader(http.StatusOK)
+		case "/owa/service.svc":
+			if request.URL.Query().Get("action") != "GetItem" {
+				t.Fatalf("unexpected action: %s", request.URL.RawQuery)
+			}
+			response.Header().Set("Content-Type", "application/json")
+			response.WriteHeader(http.StatusInternalServerError)
+			_ = json.NewEncoder(response).Encode(map[string]any{"error": "metadata unavailable"})
+		default:
+			t.Fatalf("unexpected path: %s", request.URL.Path)
+		}
+	}))
+	defer server.Close()
+	client := newTestTransport(server)
+
+	summary := client.DryRun(context.Background(), transport.ActionRequest{
+		Name:    "calendar.delete_event",
+		Payload: map[string]any{"event_id": "event-1"},
+	})
+
+	if summary.Error != "" {
+		t.Fatalf("metadata lookup failure should not block delete-event dry-run, got %#v", summary)
+	}
+	if summary.Review == nil || len(summary.Review.Targets) != 1 || summary.Review.Targets[0].ID != "event-1" {
+		t.Fatalf("expected review with event target despite lookup failure, got %#v", summary.Review)
+	}
+	if summary.Review.Calendar == nil || summary.Review.Calendar.EventID != "event-1" {
+		t.Fatalf("expected calendar review with fallback event id, got %#v", summary.Review)
+	}
+	if len(summary.Warnings) == 0 || summary.Review.Completeness == transport.ReviewCompletenessComplete {
+		t.Fatalf("expected warning and incomplete review for failed lookup, got %#v", summary)
+	}
+}
+
+func TestOWADryRunCalendarCancelMeetingReview(t *testing.T) {
+	var calls []recordedServiceCall
+	server := newOWAServiceServerByAction(t, &calls, map[string]map[string]any{
+		"GetItem": {
+			"Body": map[string]any{
+				"Items": []any{
+					map[string]any{
+						"ItemId":   map[string]any{"Id": "event-1", "ChangeKey": "ck-1"},
+						"Subject":  "Planning",
+						"Start":    "2026-06-03T16:00:00.000",
+						"End":      "2026-06-03T16:30:00.000",
+						"Location": "Room 1",
+						"Organizer": map[string]any{
+							"Mailbox": map[string]any{"Name": "Organizer", "EmailAddress": "organizer@example.test"},
+						},
+						"RequiredAttendees": []any{
+							map[string]any{"Mailbox": map[string]any{"EmailAddress": "person@example.test"}},
+						},
+					},
+				},
+			},
+		},
+	})
+	defer server.Close()
+	client := newTestTransport(server)
+
+	summary := client.DryRun(context.Background(), transport.ActionRequest{
+		Name: "calendar.cancel_meeting",
+		Payload: map[string]any{
+			"event_id":   "event-1",
+			"change_key": "ck-1",
+			"comment":    "Canceled",
+		},
+	})
+
+	if summary.Action != "calendar.cancel_meeting" || summary.Count != 1 || !summary.RequiresConfirmation || summary.Reversible {
+		t.Fatalf("unexpected calendar.cancel_meeting dry-run summary: %#v", summary)
+	}
+	if summary.SafetyClass != string(policy.SendLike) {
+		t.Fatalf("expected send-like safety class, got %#v", summary)
+	}
+	if len(calls) != 1 || calls[0].Action != "GetItem" {
+		t.Fatalf("expected dry-run metadata lookup with GetItem, got %#v", calls)
+	}
+	if summary.Review == nil {
+		t.Fatalf("expected review packet: %#v", summary)
+	}
+	review := summary.Review
+	if review.Action != "calendar.cancel_meeting" || review.SafetyClass != string(policy.SendLike) {
+		t.Fatalf("unexpected cancel-meeting review identity: %#v", review)
+	}
+	if len(review.Targets) != 1 || review.Targets[0].Kind != "event" || review.Targets[0].ID != "event-1" {
+		t.Fatalf("expected event id target in review, got %#v", review.Targets)
+	}
+	if review.Calendar == nil || review.Calendar.EventID != "event-1" || review.Calendar.Subject != "Planning" || !review.Calendar.SendsResponse {
+		t.Fatalf("expected calendar review with cancel metadata, got %#v", review.Calendar)
+	}
+	if review.Calendar.Start == "" || review.Calendar.End == "" || review.Calendar.Organizer == "" || len(review.Calendar.Attendees) != 1 {
+		t.Fatalf("expected enriched calendar review fields, got %#v", review.Calendar)
+	}
+}
+
+func TestOWADryRunCalendarCancelMeetingReviewSurvivesMetadataLookupFailure(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		switch request.URL.Path {
+		case "/owa/auth.owa":
+			http.SetCookie(response, &http.Cookie{Name: "X-OWA-CANARY", Value: "canary-secret"})
+			response.WriteHeader(http.StatusOK)
+		case "/owa/service.svc":
+			if request.URL.Query().Get("action") != "GetItem" {
+				t.Fatalf("unexpected action: %s", request.URL.RawQuery)
+			}
+			response.Header().Set("Content-Type", "application/json")
+			response.WriteHeader(http.StatusInternalServerError)
+			_ = json.NewEncoder(response).Encode(map[string]any{"error": "metadata unavailable"})
+		default:
+			t.Fatalf("unexpected path: %s", request.URL.Path)
+		}
+	}))
+	defer server.Close()
+	client := newTestTransport(server)
+
+	summary := client.DryRun(context.Background(), transport.ActionRequest{
+		Name:    "calendar.cancel_meeting",
+		Payload: map[string]any{"event_id": "event-1"},
+	})
+
+	if summary.Error != "" {
+		t.Fatalf("metadata lookup failure should not block cancel-meeting dry-run, got %#v", summary)
+	}
+	if summary.Review == nil || len(summary.Review.Targets) != 1 || summary.Review.Targets[0].ID != "event-1" {
+		t.Fatalf("expected review with event target despite lookup failure, got %#v", summary.Review)
+	}
+	if summary.Review.Calendar == nil || summary.Review.Calendar.EventID != "event-1" || !summary.Review.Calendar.SendsResponse {
+		t.Fatalf("expected calendar review with fallback event id and send flag, got %#v", summary.Review)
+	}
+	if len(summary.Warnings) == 0 || summary.Review.Completeness == transport.ReviewCompletenessComplete {
+		t.Fatalf("expected warning and incomplete review for failed lookup, got %#v", summary)
 	}
 }
 

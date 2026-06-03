@@ -52,6 +52,8 @@ func TestCatalogContainsInitialTools(t *testing.T) {
 		"outlook.calendar_availability",
 		"outlook.calendar_find_time",
 		"outlook.calendar_create_meeting",
+		"outlook.calendar_delete_event",
+		"outlook.calendar_cancel_meeting",
 		"outlook.calendar_respond",
 		"outlook.action_dry_run",
 		"outlook.action_confirm",
@@ -162,6 +164,16 @@ func TestToolDescriptionsGuideAgentWorkflow(t *testing.T) {
 			"dry-run",
 			"approval",
 		},
+		"outlook.calendar_delete_event": {
+			"deleted items",
+			"dry-run",
+			"does not send",
+		},
+		"outlook.calendar_cancel_meeting": {
+			"cancel",
+			"dry-run",
+			"approval",
+		},
 		"outlook.action_dry_run": {
 			"required",
 			"mutating",
@@ -220,11 +232,54 @@ func TestServerListsExpectedTools(t *testing.T) {
 	for _, expected := range []string{
 		"outlook.calendar_find_time",
 		"outlook.calendar_create_meeting",
+		"outlook.calendar_delete_event",
+		"outlook.calendar_cancel_meeting",
 		"outlook.calendar_respond",
 	} {
 		if !slices.Contains(names, expected) {
 			t.Fatalf("expected tool %q in listed tools %#v", expected, names)
 		}
+	}
+}
+
+func TestServerHidesUnsupportedCalendarMutationTools(t *testing.T) {
+	ctx := context.Background()
+	capturing := &calendarMutationCapturingTransport{
+		definitions: []action.Definition{
+			{Name: "calendar.create_meeting", Transport: "test", Class: policy.SendLike, Level: action.LevelHighLevelMCPTool},
+		},
+	}
+	serverTransport, clientTransport := mcp.NewInMemoryTransports()
+
+	serverSession, err := mcpserver.NewWithTransport(capturing).Connect(ctx, serverTransport, nil)
+	if err != nil {
+		t.Fatalf("connect server: %v", err)
+	}
+	defer serverSession.Close()
+	defer serverSession.Wait()
+
+	client := mcp.NewClient(&mcp.Implementation{Name: "test-client", Version: "0.0.1"}, nil)
+	clientSession, err := client.Connect(ctx, clientTransport, nil)
+	if err != nil {
+		t.Fatalf("connect client: %v", err)
+	}
+	defer clientSession.Close()
+
+	listed, err := clientSession.ListTools(ctx, nil)
+	if err != nil {
+		t.Fatalf("list tools: %v", err)
+	}
+	names := make([]string, 0, len(listed.Tools))
+	for _, tool := range listed.Tools {
+		names = append(names, tool.Name)
+	}
+	for _, unsupported := range []string{"outlook.calendar_delete_event", "outlook.calendar_cancel_meeting"} {
+		if slices.Contains(names, unsupported) {
+			t.Fatalf("expected unsupported tool %q to be hidden, got %#v", unsupported, names)
+		}
+	}
+	if !slices.Contains(names, "outlook.calendar_create_meeting") {
+		t.Fatalf("expected supported create meeting tool in %#v", names)
 	}
 }
 
@@ -250,44 +305,98 @@ func TestToolSchemas(t *testing.T) {
 	if err != nil {
 		t.Fatalf("list tools: %v", err)
 	}
-	var createMeeting *mcp.Tool
+	toolsByName := map[string]*mcp.Tool{}
 	for _, tool := range listed.Tools {
-		if tool.Name == "outlook.calendar_create_meeting" {
-			createMeeting = tool
-			break
-		}
+		toolsByName[tool.Name] = tool
 	}
-	if createMeeting == nil {
-		t.Fatalf("expected outlook.calendar_create_meeting tool in %#v", listed.Tools)
+	requiredByTool := map[string][]string{
+		"outlook.calendar_delete_event": {
+			"event_id",
+			"confirm_token",
+		},
+		"outlook.calendar_cancel_meeting": {
+			"event_id",
+			"confirm_token",
+		},
 	}
-
-	var schema struct {
-		Properties map[string]any `json:"properties"`
+	optionalByTool := map[string][]string{
+		"outlook.calendar_delete_event": {
+			"change_key",
+			"approval_challenge_id",
+			"approval_token",
+			"mailbox",
+		},
+		"outlook.calendar_cancel_meeting": {
+			"change_key",
+			"comment",
+			"approval_challenge_id",
+			"approval_token",
+			"mailbox",
+		},
 	}
-	raw, err := json.Marshal(createMeeting.InputSchema)
-	if err != nil {
-		t.Fatalf("marshal create-meeting schema: %v", err)
-	}
-	if err := json.Unmarshal(raw, &schema); err != nil {
-		t.Fatalf("decode create-meeting schema: %v; raw=%s", err, string(raw))
-	}
-	for _, field := range []string{
-		"subject",
-		"start",
-		"end",
-		"attendees",
-		"timezone",
-		"body",
-		"location",
-		"is_online_meeting",
-		"reminder_minutes",
-		"confirm_token",
-		"approval_challenge_id",
-		"approval_token",
-		"mailbox",
+	for toolName, fields := range map[string][]string{
+		"outlook.calendar_create_meeting": {
+			"subject",
+			"start",
+			"end",
+			"attendees",
+			"timezone",
+			"body",
+			"location",
+			"is_online_meeting",
+			"reminder_minutes",
+			"confirm_token",
+			"approval_challenge_id",
+			"approval_token",
+			"mailbox",
+		},
+		"outlook.calendar_delete_event": {
+			"event_id",
+			"change_key",
+			"confirm_token",
+			"approval_challenge_id",
+			"approval_token",
+			"mailbox",
+		},
+		"outlook.calendar_cancel_meeting": {
+			"event_id",
+			"change_key",
+			"comment",
+			"confirm_token",
+			"approval_challenge_id",
+			"approval_token",
+			"mailbox",
+		},
 	} {
-		if _, ok := schema.Properties[field]; !ok {
-			t.Fatalf("expected create-meeting schema property %q in %#v", field, schema.Properties)
+		tool := toolsByName[toolName]
+		if tool == nil {
+			t.Fatalf("expected %s tool in %#v", toolName, listed.Tools)
+		}
+		var schema struct {
+			Properties map[string]any `json:"properties"`
+			Required   []string       `json:"required"`
+		}
+		raw, err := json.Marshal(tool.InputSchema)
+		if err != nil {
+			t.Fatalf("marshal %s schema: %v", toolName, err)
+		}
+		if err := json.Unmarshal(raw, &schema); err != nil {
+			t.Fatalf("decode %s schema: %v; raw=%s", toolName, err, string(raw))
+		}
+		for _, field := range fields {
+			if _, ok := schema.Properties[field]; !ok {
+				t.Fatalf("expected %s schema property %q in %#v", toolName, field, schema.Properties)
+			}
+		}
+		for _, field := range requiredByTool[toolName] {
+			if !slices.Contains(schema.Required, field) {
+				t.Fatalf("expected %s schema required field %q in %#v", toolName, field, schema.Required)
+			}
+		}
+		for _, field := range optionalByTool[toolName] {
+			if slices.Contains(schema.Required, field) {
+				t.Fatalf("expected %s schema field %q to remain optional, required=%#v", toolName, field, schema.Required)
+			}
 		}
 	}
 }
@@ -897,6 +1006,522 @@ func TestMCPToolCalendarCreateMeetingRejectsUnsupportedOptionsBeforeDryRun(t *te
 	}
 }
 
+func TestMCPToolCalendarDeleteEventExecutesConfirmedCanonicalPayload(t *testing.T) {
+	ctx := context.Background()
+	capturing := &calendarMutationCapturingTransport{
+		definitions: []action.Definition{
+			{Name: "calendar.delete_event", Transport: "test", Class: policy.ReversibleBulk, Level: action.LevelHighLevelMCPTool},
+		},
+	}
+	serverTransport, clientTransport := mcp.NewInMemoryTransports()
+
+	serverSession, err := mcpserver.NewWithTransport(capturing).Connect(ctx, serverTransport, nil)
+	if err != nil {
+		t.Fatalf("connect server: %v", err)
+	}
+	defer serverSession.Close()
+	defer serverSession.Wait()
+
+	client := mcp.NewClient(&mcp.Implementation{Name: "test-client", Version: "0.0.1"}, nil)
+	clientSession, err := client.Connect(ctx, clientTransport, nil)
+	if err != nil {
+		t.Fatalf("connect client: %v", err)
+	}
+	defer clientSession.Close()
+
+	dryRunResult, err := clientSession.CallTool(ctx, &mcp.CallToolParams{
+		Name: "outlook.action_dry_run",
+		Arguments: map[string]any{
+			"action": "calendar.delete_event",
+			"payload": map[string]any{
+				"event_id":   " evt-1 ",
+				"change_key": " ck-1 ",
+				"comment":    " ",
+				"mailbox":    " shared@example.com ",
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("call delete-event dry-run: %v", err)
+	}
+	dryRun := decodeStructured[mcpserver.DryRunOutput](t, dryRunResult)
+	if !dryRun.OK || dryRun.ConfirmationToken == "" || !dryRun.RequiresConfirmation {
+		t.Fatalf("expected dry-run confirmation token: %#v", dryRun)
+	}
+
+	result, err := clientSession.CallTool(ctx, &mcp.CallToolParams{
+		Name: "outlook.calendar_delete_event",
+		Arguments: map[string]any{
+			"event_id":      " evt-1 ",
+			"change_key":    " ck-1 ",
+			"mailbox":       " shared@example.com ",
+			"confirm_token": dryRun.ConfirmationToken,
+		},
+	})
+	if err != nil {
+		t.Fatalf("call calendar delete event: %v", err)
+	}
+	output := decodeStructured[mcpserver.ActionResultOutput](t, result)
+	if !output.OK {
+		t.Fatalf("expected confirmed delete-event to execute: %#v", output)
+	}
+	if len(capturing.executeRequests) != 1 {
+		t.Fatalf("expected one execution, got %#v", capturing.executeRequests)
+	}
+	request := capturing.executeRequests[0]
+	if request.Name != "calendar.delete_event" {
+		t.Fatalf("expected calendar.delete_event execution, got %#v", request)
+	}
+	if request.Payload["event_id"] != "evt-1" || request.Payload["change_key"] != "ck-1" || request.Payload["mailbox"] != "shared@example.com" {
+		t.Fatalf("expected trimmed delete-event payload, got %#v", request.Payload)
+	}
+	if _, exists := request.Payload["comment"]; exists {
+		t.Fatalf("expected blank delete-event comment to be omitted, got %#v", request.Payload)
+	}
+	for key, value := range request.Payload {
+		if text, ok := value.(string); ok && text == "" {
+			t.Fatalf("expected no blank string field %q in payload %#v", key, request.Payload)
+		}
+	}
+}
+
+func TestMCPToolCalendarDeleteEventDryRunRejectsUnsupportedComment(t *testing.T) {
+	ctx := context.Background()
+	capturing := &calendarMutationCapturingTransport{
+		definitions: []action.Definition{
+			{Name: "calendar.delete_event", Transport: "test", Class: policy.ReversibleBulk, Level: action.LevelHighLevelMCPTool},
+		},
+	}
+	serverTransport, clientTransport := mcp.NewInMemoryTransports()
+
+	serverSession, err := mcpserver.NewWithTransport(capturing).Connect(ctx, serverTransport, nil)
+	if err != nil {
+		t.Fatalf("connect server: %v", err)
+	}
+	defer serverSession.Close()
+	defer serverSession.Wait()
+
+	client := mcp.NewClient(&mcp.Implementation{Name: "test-client", Version: "0.0.1"}, nil)
+	clientSession, err := client.Connect(ctx, clientTransport, nil)
+	if err != nil {
+		t.Fatalf("connect client: %v", err)
+	}
+	defer clientSession.Close()
+
+	result, err := clientSession.CallTool(ctx, &mcp.CallToolParams{
+		Name: "outlook.action_dry_run",
+		Arguments: map[string]any{
+			"action": "calendar.delete_event",
+			"payload": map[string]any{
+				"event_id": "evt-1",
+				"comment":  "Cancel this",
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("call delete-event dry-run: %v", err)
+	}
+	output := decodeStructured[mcpserver.DryRunOutput](t, result)
+	if output.OK || !strings.Contains(output.Error, "comment is not supported for calendar.delete_event") {
+		t.Fatalf("expected unsupported comment error, got %#v", output)
+	}
+	if output.ConfirmationToken != "" {
+		t.Fatalf("expected no confirmation token for rejected dry-run, got %#v", output)
+	}
+	if len(capturing.dryRunRequests) != 0 || len(capturing.executeRequests) != 0 {
+		t.Fatalf("expected unsupported comment to block before transport, dry-runs=%#v executes=%#v", capturing.dryRunRequests, capturing.executeRequests)
+	}
+}
+
+func TestMCPToolCalendarDeleteEventDryRunRejectsNonStringComment(t *testing.T) {
+	ctx := context.Background()
+	capturing := &calendarMutationCapturingTransport{
+		definitions: []action.Definition{
+			{Name: "calendar.delete_event", Transport: "test", Class: policy.ReversibleBulk, Level: action.LevelHighLevelMCPTool},
+		},
+	}
+	serverTransport, clientTransport := mcp.NewInMemoryTransports()
+
+	serverSession, err := mcpserver.NewWithTransport(capturing).Connect(ctx, serverTransport, nil)
+	if err != nil {
+		t.Fatalf("connect server: %v", err)
+	}
+	defer serverSession.Close()
+	defer serverSession.Wait()
+
+	client := mcp.NewClient(&mcp.Implementation{Name: "test-client", Version: "0.0.1"}, nil)
+	clientSession, err := client.Connect(ctx, clientTransport, nil)
+	if err != nil {
+		t.Fatalf("connect client: %v", err)
+	}
+	defer clientSession.Close()
+
+	result, err := clientSession.CallTool(ctx, &mcp.CallToolParams{
+		Name: "outlook.action_dry_run",
+		Arguments: map[string]any{
+			"action": "calendar.delete_event",
+			"payload": map[string]any{
+				"event_id": "evt-1",
+				"comment":  map[string]any{"text": "x"},
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("call delete-event dry-run: %v", err)
+	}
+	output := decodeStructured[mcpserver.DryRunOutput](t, result)
+	if output.OK || !strings.Contains(output.Error, "comment is not supported for calendar.delete_event") {
+		t.Fatalf("expected unsupported comment error, got %#v", output)
+	}
+	if output.ConfirmationToken != "" {
+		t.Fatalf("expected no confirmation token for rejected dry-run, got %#v", output)
+	}
+	if len(capturing.dryRunRequests) != 0 || len(capturing.executeRequests) != 0 {
+		t.Fatalf("expected unsupported comment to block before transport, dry-runs=%#v executes=%#v", capturing.dryRunRequests, capturing.executeRequests)
+	}
+}
+
+func TestMCPToolCalendarDeleteEventConfirmRejectsNonStringComment(t *testing.T) {
+	ctx := context.Background()
+	capturing := &calendarMutationCapturingTransport{
+		definitions: []action.Definition{
+			{Name: "calendar.delete_event", Transport: "test", Class: policy.ReversibleBulk, Level: action.LevelHighLevelMCPTool},
+		},
+	}
+	serverTransport, clientTransport := mcp.NewInMemoryTransports()
+
+	serverSession, err := mcpserver.NewWithTransport(capturing).Connect(ctx, serverTransport, nil)
+	if err != nil {
+		t.Fatalf("connect server: %v", err)
+	}
+	defer serverSession.Close()
+	defer serverSession.Wait()
+
+	client := mcp.NewClient(&mcp.Implementation{Name: "test-client", Version: "0.0.1"}, nil)
+	clientSession, err := client.Connect(ctx, clientTransport, nil)
+	if err != nil {
+		t.Fatalf("connect client: %v", err)
+	}
+	defer clientSession.Close()
+
+	result, err := clientSession.CallTool(ctx, &mcp.CallToolParams{
+		Name: "outlook.action_confirm",
+		Arguments: map[string]any{
+			"action":        "calendar.delete_event",
+			"confirm_token": "any-token",
+			"payload": map[string]any{
+				"event_id": "evt-1",
+				"comment":  map[string]any{"text": "x"},
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("call delete-event confirm: %v", err)
+	}
+	output := decodeStructured[mcpserver.ActionResultOutput](t, result)
+	if output.OK || !strings.Contains(output.Error, "comment is not supported for calendar.delete_event") {
+		t.Fatalf("expected unsupported comment error, got %#v", output)
+	}
+	if len(capturing.executeRequests) != 0 {
+		t.Fatalf("expected unsupported comment to block execution, executes=%#v", capturing.executeRequests)
+	}
+}
+
+func TestMCPToolCalendarCancelMeetingExecutesConfirmedCanonicalPayload(t *testing.T) {
+	ctx := context.Background()
+	capturing := &calendarMutationCapturingTransport{
+		definitions: []action.Definition{
+			{Name: "calendar.cancel_meeting", Transport: "test", Class: policy.SendLike, Level: action.LevelHighLevelMCPTool},
+		},
+	}
+	serverTransport, clientTransport := mcp.NewInMemoryTransports()
+
+	serverSession, err := mcpserver.NewWithTransport(capturing).Connect(ctx, serverTransport, nil)
+	if err != nil {
+		t.Fatalf("connect server: %v", err)
+	}
+	defer serverSession.Close()
+	defer serverSession.Wait()
+
+	client := mcp.NewClient(&mcp.Implementation{Name: "test-client", Version: "0.0.1"}, nil)
+	clientSession, err := client.Connect(ctx, clientTransport, nil)
+	if err != nil {
+		t.Fatalf("connect client: %v", err)
+	}
+	defer clientSession.Close()
+
+	dryRunResult, err := clientSession.CallTool(ctx, &mcp.CallToolParams{
+		Name: "outlook.action_dry_run",
+		Arguments: map[string]any{
+			"action": "calendar.cancel_meeting",
+			"payload": map[string]any{
+				"event_id":   " evt-1 ",
+				"change_key": " ck-1 ",
+				"comment":    " Please cancel ",
+				"mailbox":    " shared@example.com ",
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("call cancel-meeting dry-run: %v", err)
+	}
+	dryRun := decodeStructured[mcpserver.DryRunOutput](t, dryRunResult)
+	if !dryRun.OK || dryRun.ConfirmationToken == "" || !dryRun.RequiresConfirmation {
+		t.Fatalf("expected dry-run confirmation token: %#v", dryRun)
+	}
+
+	result, err := clientSession.CallTool(ctx, &mcp.CallToolParams{
+		Name: "outlook.calendar_cancel_meeting",
+		Arguments: map[string]any{
+			"event_id":      " evt-1 ",
+			"change_key":    " ck-1 ",
+			"comment":       " Please cancel ",
+			"mailbox":       " shared@example.com ",
+			"confirm_token": dryRun.ConfirmationToken,
+		},
+	})
+	if err != nil {
+		t.Fatalf("call calendar cancel meeting: %v", err)
+	}
+	output := decodeStructured[mcpserver.ActionResultOutput](t, result)
+	if !output.OK {
+		t.Fatalf("expected confirmed cancel-meeting to execute: %#v", output)
+	}
+	if len(capturing.executeRequests) != 1 {
+		t.Fatalf("expected one execution, got %#v", capturing.executeRequests)
+	}
+	request := capturing.executeRequests[0]
+	if request.Name != "calendar.cancel_meeting" {
+		t.Fatalf("expected calendar.cancel_meeting execution, got %#v", request)
+	}
+	if request.Payload["event_id"] != "evt-1" || request.Payload["change_key"] != "ck-1" || request.Payload["comment"] != "Please cancel" || request.Payload["mailbox"] != "shared@example.com" {
+		t.Fatalf("expected trimmed cancel-meeting payload, got %#v", request.Payload)
+	}
+}
+
+func TestMCPToolCalendarDeleteEventRequiresConfirmToken(t *testing.T) {
+	ctx := context.Background()
+	capturing := &calendarMutationCapturingTransport{
+		definitions: []action.Definition{
+			{Name: "calendar.delete_event", Transport: "test", Class: policy.ReversibleBulk, Level: action.LevelHighLevelMCPTool},
+		},
+	}
+	serverTransport, clientTransport := mcp.NewInMemoryTransports()
+
+	serverSession, err := mcpserver.NewWithTransport(capturing).Connect(ctx, serverTransport, nil)
+	if err != nil {
+		t.Fatalf("connect server: %v", err)
+	}
+	defer serverSession.Close()
+	defer serverSession.Wait()
+
+	client := mcp.NewClient(&mcp.Implementation{Name: "test-client", Version: "0.0.1"}, nil)
+	clientSession, err := client.Connect(ctx, clientTransport, nil)
+	if err != nil {
+		t.Fatalf("connect client: %v", err)
+	}
+	defer clientSession.Close()
+
+	result, err := clientSession.CallTool(ctx, &mcp.CallToolParams{
+		Name: "outlook.calendar_delete_event",
+		Arguments: map[string]any{
+			"event_id":      "evt-1",
+			"confirm_token": "",
+		},
+	})
+	if err != nil {
+		t.Fatalf("call calendar delete event: %v", err)
+	}
+	output := decodeStructured[mcpserver.ActionResultOutput](t, result)
+	if output.OK || !strings.Contains(output.Error, "confirm_token") {
+		t.Fatalf("expected confirm token error, got %#v", output)
+	}
+	if len(capturing.dryRunRequests) != 0 || len(capturing.executeRequests) != 0 {
+		t.Fatalf("expected missing confirm token to block before transport, dry-runs=%#v executes=%#v", capturing.dryRunRequests, capturing.executeRequests)
+	}
+}
+
+func TestMCPToolCalendarCancelMeetingRequiresConfirmToken(t *testing.T) {
+	ctx := context.Background()
+	capturing := &calendarMutationCapturingTransport{
+		definitions: []action.Definition{
+			{Name: "calendar.cancel_meeting", Transport: "test", Class: policy.SendLike, Level: action.LevelHighLevelMCPTool},
+		},
+	}
+	serverTransport, clientTransport := mcp.NewInMemoryTransports()
+
+	serverSession, err := mcpserver.NewWithTransport(capturing).Connect(ctx, serverTransport, nil)
+	if err != nil {
+		t.Fatalf("connect server: %v", err)
+	}
+	defer serverSession.Close()
+	defer serverSession.Wait()
+
+	client := mcp.NewClient(&mcp.Implementation{Name: "test-client", Version: "0.0.1"}, nil)
+	clientSession, err := client.Connect(ctx, clientTransport, nil)
+	if err != nil {
+		t.Fatalf("connect client: %v", err)
+	}
+	defer clientSession.Close()
+
+	result, err := clientSession.CallTool(ctx, &mcp.CallToolParams{
+		Name: "outlook.calendar_cancel_meeting",
+		Arguments: map[string]any{
+			"event_id":      "evt-1",
+			"confirm_token": "",
+		},
+	})
+	if err != nil {
+		t.Fatalf("call calendar cancel meeting: %v", err)
+	}
+	output := decodeStructured[mcpserver.ActionResultOutput](t, result)
+	if output.OK || !strings.Contains(output.Error, "confirm_token") {
+		t.Fatalf("expected confirm token error, got %#v", output)
+	}
+	if len(capturing.dryRunRequests) != 0 || len(capturing.executeRequests) != 0 {
+		t.Fatalf("expected missing confirm token to block before transport, dry-runs=%#v executes=%#v", capturing.dryRunRequests, capturing.executeRequests)
+	}
+}
+
+func TestMCPToolCalendarDeleteEventRequiresEventID(t *testing.T) {
+	ctx := context.Background()
+	capturing := &calendarMutationCapturingTransport{
+		definitions: []action.Definition{
+			{Name: "calendar.delete_event", Transport: "test", Class: policy.ReversibleBulk, Level: action.LevelHighLevelMCPTool},
+		},
+	}
+	serverTransport, clientTransport := mcp.NewInMemoryTransports()
+
+	serverSession, err := mcpserver.NewWithTransport(capturing).Connect(ctx, serverTransport, nil)
+	if err != nil {
+		t.Fatalf("connect server: %v", err)
+	}
+	defer serverSession.Close()
+	defer serverSession.Wait()
+
+	client := mcp.NewClient(&mcp.Implementation{Name: "test-client", Version: "0.0.1"}, nil)
+	clientSession, err := client.Connect(ctx, clientTransport, nil)
+	if err != nil {
+		t.Fatalf("connect client: %v", err)
+	}
+	defer clientSession.Close()
+
+	result, err := clientSession.CallTool(ctx, &mcp.CallToolParams{
+		Name: "outlook.calendar_delete_event",
+		Arguments: map[string]any{
+			"event_id":      "   ",
+			"confirm_token": "unused",
+		},
+	})
+	if err != nil {
+		t.Fatalf("call calendar delete event: %v", err)
+	}
+	output := decodeStructured[mcpserver.ActionResultOutput](t, result)
+	if output.OK || !strings.Contains(output.Error, "event_id") {
+		t.Fatalf("expected event id error, got %#v", output)
+	}
+	if len(capturing.dryRunRequests) != 0 || len(capturing.executeRequests) != 0 {
+		t.Fatalf("expected missing event id to block before transport, dry-runs=%#v executes=%#v", capturing.dryRunRequests, capturing.executeRequests)
+	}
+}
+
+func TestMCPToolCalendarCancelMeetingRequiresEventID(t *testing.T) {
+	ctx := context.Background()
+	capturing := &calendarMutationCapturingTransport{
+		definitions: []action.Definition{
+			{Name: "calendar.cancel_meeting", Transport: "test", Class: policy.SendLike, Level: action.LevelHighLevelMCPTool},
+		},
+	}
+	serverTransport, clientTransport := mcp.NewInMemoryTransports()
+
+	serverSession, err := mcpserver.NewWithTransport(capturing).Connect(ctx, serverTransport, nil)
+	if err != nil {
+		t.Fatalf("connect server: %v", err)
+	}
+	defer serverSession.Close()
+	defer serverSession.Wait()
+
+	client := mcp.NewClient(&mcp.Implementation{Name: "test-client", Version: "0.0.1"}, nil)
+	clientSession, err := client.Connect(ctx, clientTransport, nil)
+	if err != nil {
+		t.Fatalf("connect client: %v", err)
+	}
+	defer clientSession.Close()
+
+	result, err := clientSession.CallTool(ctx, &mcp.CallToolParams{
+		Name: "outlook.calendar_cancel_meeting",
+		Arguments: map[string]any{
+			"event_id":      "   ",
+			"confirm_token": "unused",
+		},
+	})
+	if err != nil {
+		t.Fatalf("call calendar cancel meeting: %v", err)
+	}
+	output := decodeStructured[mcpserver.ActionResultOutput](t, result)
+	if output.OK || !strings.Contains(output.Error, "event_id") {
+		t.Fatalf("expected event id error, got %#v", output)
+	}
+	if len(capturing.dryRunRequests) != 0 || len(capturing.executeRequests) != 0 {
+		t.Fatalf("expected missing event id to block before transport, dry-runs=%#v executes=%#v", capturing.dryRunRequests, capturing.executeRequests)
+	}
+}
+
+func TestMCPToolCalendarDeleteEventDryRunErrorBlocksBeforeConfirmation(t *testing.T) {
+	ctx := context.Background()
+	blocking := &calendarMutationCapturingTransport{
+		definitions: []action.Definition{
+			{Name: "calendar.delete_event", Transport: "test", Class: policy.ReversibleBulk, Level: action.LevelHighLevelMCPTool},
+		},
+		dryRunError: "calendar.delete_event dry-run failed: https://example.test/callback?access_token=secret-token",
+	}
+	serverTransport, clientTransport := mcp.NewInMemoryTransports()
+
+	serverSession, err := mcpserver.NewWithTransport(blocking).Connect(ctx, serverTransport, nil)
+	if err != nil {
+		t.Fatalf("connect server: %v", err)
+	}
+	defer serverSession.Close()
+	defer serverSession.Wait()
+
+	client := mcp.NewClient(&mcp.Implementation{Name: "test-client", Version: "0.0.1"}, nil)
+	clientSession, err := client.Connect(ctx, clientTransport, nil)
+	if err != nil {
+		t.Fatalf("connect client: %v", err)
+	}
+	defer clientSession.Close()
+
+	result, err := clientSession.CallTool(ctx, &mcp.CallToolParams{
+		Name: "outlook.calendar_delete_event",
+		Arguments: map[string]any{
+			"event_id":      "evt-1",
+			"confirm_token": "invalid-token-that-would-fail-if-consumed",
+		},
+	})
+	if err != nil {
+		t.Fatalf("call calendar delete event: %v", err)
+	}
+	output := decodeStructured[mcpserver.ActionResultOutput](t, result)
+	if output.OK {
+		t.Fatalf("expected dry-run error to block, got %#v", output)
+	}
+	if !strings.Contains(output.Error, "calendar.delete_event dry-run failed") {
+		t.Fatalf("expected dry-run error, got %#v", output)
+	}
+	if strings.Contains(output.Error, "secret-token") || !strings.Contains(output.Error, "[REDACTED]") {
+		t.Fatalf("expected dry-run error to be redacted, got %q", output.Error)
+	}
+	if strings.Contains(output.Error, "confirmation token") {
+		t.Fatalf("expected rejection before confirmation token validation, got %q", output.Error)
+	}
+	if len(blocking.executeRequests) != 0 {
+		t.Fatalf("expected dry-run error to block execution, got %#v", blocking.executeRequests)
+	}
+	if len(blocking.dryRunRequests) != 1 {
+		t.Fatalf("expected one dry-run request, got %#v", blocking.dryRunRequests)
+	}
+}
+
 func TestMCPPeopleAndFindTimeToolsForwardInputs(t *testing.T) {
 	ctx := context.Background()
 	capturing := &capturingTransport{}
@@ -1452,6 +2077,13 @@ type meetingCapturingTransport struct {
 	executeRequests []transport.ActionRequest
 }
 
+type calendarMutationCapturingTransport struct {
+	definitions     []action.Definition
+	dryRunError     string
+	dryRunRequests  []transport.ActionRequest
+	executeRequests []transport.ActionRequest
+}
+
 func (blocking *dryRunErrorMeetingTransport) Name() string {
 	return "test"
 }
@@ -1503,6 +2135,34 @@ func (capturing *meetingCapturingTransport) Execute(_ context.Context, request t
 func (capturing *meetingCapturingTransport) DryRun(_ context.Context, request transport.ActionRequest) transport.DryRunSummary {
 	capturing.dryRunRequests = append(capturing.dryRunRequests, request)
 	return transport.DryRunSummary{Action: request.Name, Count: 1, RequiresConfirmation: true}
+}
+
+func (capturing *calendarMutationCapturingTransport) Name() string {
+	return "test"
+}
+
+func (capturing *calendarMutationCapturingTransport) Authenticate(context.Context, string) transport.AuthResult {
+	return transport.AuthResult{OK: true}
+}
+
+func (capturing *calendarMutationCapturingTransport) Capabilities(context.Context) transport.CapabilitySet {
+	return transport.CapabilitySet{Actions: capturing.definitions}
+}
+
+func (capturing *calendarMutationCapturingTransport) Execute(_ context.Context, request transport.ActionRequest) transport.ActionResponse {
+	capturing.executeRequests = append(capturing.executeRequests, request)
+	return transport.ActionResponse{OK: true, Data: map[string]any{"event": map[string]any{"id": "evt-1"}}}
+}
+
+func (capturing *calendarMutationCapturingTransport) DryRun(_ context.Context, request transport.ActionRequest) transport.DryRunSummary {
+	capturing.dryRunRequests = append(capturing.dryRunRequests, request)
+	return transport.DryRunSummary{
+		Action:               request.Name,
+		Count:                1,
+		Reversible:           request.Name == "calendar.delete_event",
+		RequiresConfirmation: true,
+		Error:                capturing.dryRunError,
+	}
 }
 
 func (capturing *capturingTransport) Name() string {

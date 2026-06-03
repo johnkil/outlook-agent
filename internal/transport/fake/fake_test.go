@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/johnkil/outlook-agent/internal/action"
 	"github.com/johnkil/outlook-agent/internal/policy"
 	"github.com/johnkil/outlook-agent/internal/transport"
 	"github.com/johnkil/outlook-agent/internal/transport/fake"
@@ -35,6 +36,27 @@ func TestFakeTransportReportsCapabilities(t *testing.T) {
 	}
 	if capabilities.Actions[0].Name != "mail.search" {
 		t.Fatalf("expected first action mail.search, got %q", capabilities.Actions[0].Name)
+	}
+	for _, tt := range []struct {
+		name  string
+		class policy.SafetyClass
+	}{
+		{name: "calendar.delete_event", class: policy.ReversibleBulk},
+		{name: "calendar.cancel_meeting", class: policy.SendLike},
+	} {
+		var found bool
+		for _, definition := range capabilities.Actions {
+			if definition.Name != tt.name {
+				continue
+			}
+			found = true
+			if definition.Transport != "fake" || definition.Class != tt.class || definition.Level != action.LevelHighLevelMCPTool {
+				t.Fatalf("unexpected fake capability for %q: %#v", tt.name, definition)
+			}
+		}
+		if !found {
+			t.Fatalf("expected fake capability %q in %#v", tt.name, capabilities.Actions)
+		}
 	}
 }
 
@@ -99,6 +121,8 @@ func TestFakeTransportExecutesInitialHighLevelActions(t *testing.T) {
 		{name: "calendar.availability", key: "windows"},
 		{name: "calendar.find_time", key: "suggestions"},
 		{name: "calendar.respond", key: "response"},
+		{name: "calendar.delete_event", key: "status"},
+		{name: "calendar.cancel_meeting", key: "status"},
 	}
 
 	for _, tt := range tests {
@@ -113,6 +137,7 @@ func TestFakeTransportExecutesInitialHighLevelActions(t *testing.T) {
 					"attendees":     []any{"teammate@example.com"},
 					"start":         "2026-05-28T09:00:00+00:00",
 					"end":           "2026-05-28T12:00:00+00:00",
+					"event_id":      "evt-1",
 				},
 			})
 			if !response.OK {
@@ -339,6 +364,116 @@ func TestFakeTransportDryRunCalendarRespondReview(t *testing.T) {
 	}
 	if summary.Review.PayloadFingerprint == "" {
 		t.Fatalf("expected payload fingerprint in review: %#v", summary.Review)
+	}
+}
+
+func TestFakeCalendarDeleteEvent(t *testing.T) {
+	client := fake.New()
+
+	response := client.Execute(context.Background(), transport.ActionRequest{
+		Name:    "calendar.delete_event",
+		Payload: map[string]any{"event_id": "evt-1"},
+	})
+
+	if !response.OK {
+		t.Fatalf("expected delete event to succeed: %#v", response)
+	}
+	if response.Data["id"] != "evt-1" || response.Data["status"] != "moved_to_deleted_items" {
+		t.Fatalf("unexpected delete event response: %#v", response.Data)
+	}
+
+	missingID := client.Execute(context.Background(), transport.ActionRequest{
+		Name:    "calendar.delete_event",
+		Payload: map[string]any{},
+	})
+	if missingID.OK || !strings.Contains(missingID.Error, "event_id is required") {
+		t.Fatalf("expected missing event_id error, got %#v", missingID)
+	}
+
+	summary := client.DryRun(context.Background(), transport.ActionRequest{
+		Name:    "calendar.delete_event",
+		Payload: map[string]any{"event_id": "evt-1"},
+	})
+	if summary.Action != "calendar.delete_event" || summary.Count != 1 || !summary.Reversible || !summary.RequiresConfirmation {
+		t.Fatalf("unexpected delete event dry-run summary: %#v", summary)
+	}
+	if summary.SafetyClass != string(policy.ReversibleBulk) {
+		t.Fatalf("expected reversible_bulk safety class, got %q", summary.SafetyClass)
+	}
+	if summary.Review == nil || summary.Review.Calendar == nil || summary.Review.Mutation == nil {
+		t.Fatalf("expected delete event review packet: %#v", summary)
+	}
+	if len(summary.Review.Targets) != 1 || summary.Review.Targets[0].Kind != "event" || summary.Review.Targets[0].ID != "evt-1" {
+		t.Fatalf("expected event target in review, got %#v", summary.Review.Targets)
+	}
+	if summary.Review.Calendar.EventID != "evt-1" || summary.Review.Calendar.SendsResponse {
+		t.Fatalf("unexpected delete event calendar review: %#v", summary.Review.Calendar)
+	}
+	if summary.Review.SafetyClass != string(policy.ReversibleBulk) || summary.Review.PayloadFingerprint == "" {
+		t.Fatalf("unexpected delete event review metadata: %#v", summary.Review)
+	}
+
+	missingDryRun := client.DryRun(context.Background(), transport.ActionRequest{
+		Name:    "calendar.delete_event",
+		Payload: map[string]any{},
+	})
+	if missingDryRun.Count != 0 || !strings.Contains(missingDryRun.Error, "event_id is required") {
+		t.Fatalf("expected missing event_id dry-run error, got %#v", missingDryRun)
+	}
+}
+
+func TestFakeCalendarCancelMeeting(t *testing.T) {
+	client := fake.New()
+
+	response := client.Execute(context.Background(), transport.ActionRequest{
+		Name:    "calendar.cancel_meeting",
+		Payload: map[string]any{"event_id": "evt-1"},
+	})
+
+	if !response.OK {
+		t.Fatalf("expected cancel meeting to succeed: %#v", response)
+	}
+	if response.Data["id"] != "evt-1" || response.Data["status"] != "cancelled" {
+		t.Fatalf("unexpected cancel meeting response: %#v", response.Data)
+	}
+
+	missingID := client.Execute(context.Background(), transport.ActionRequest{
+		Name:    "calendar.cancel_meeting",
+		Payload: map[string]any{},
+	})
+	if missingID.OK || !strings.Contains(missingID.Error, "event_id is required") {
+		t.Fatalf("expected missing event_id error, got %#v", missingID)
+	}
+
+	summary := client.DryRun(context.Background(), transport.ActionRequest{
+		Name:    "calendar.cancel_meeting",
+		Payload: map[string]any{"event_id": "evt-1"},
+	})
+	if summary.Action != "calendar.cancel_meeting" || summary.Count != 1 || summary.Reversible || !summary.RequiresConfirmation {
+		t.Fatalf("unexpected cancel meeting dry-run summary: %#v", summary)
+	}
+	if summary.SafetyClass != string(policy.SendLike) {
+		t.Fatalf("expected send_like safety class, got %q", summary.SafetyClass)
+	}
+	if summary.Review == nil || summary.Review.Calendar == nil || summary.Review.Mutation == nil {
+		t.Fatalf("expected cancel meeting review packet: %#v", summary)
+	}
+	if len(summary.Review.Targets) != 1 || summary.Review.Targets[0].Kind != "event" || summary.Review.Targets[0].ID != "evt-1" {
+		t.Fatalf("expected event target in review, got %#v", summary.Review.Targets)
+	}
+	if summary.Review.Calendar.EventID != "evt-1" || !summary.Review.Calendar.SendsResponse {
+		t.Fatalf("unexpected cancel meeting calendar review: %#v", summary.Review.Calendar)
+	}
+	if summary.Review.SafetyClass != string(policy.SendLike) || summary.Review.PayloadFingerprint == "" {
+		t.Fatalf("unexpected cancel meeting review metadata: %#v", summary.Review)
+	}
+
+	missingDryRun := client.DryRun(context.Background(), transport.ActionRequest{
+		Name:    "calendar.cancel_meeting",
+		Payload: map[string]any{},
+	})
+	if missingDryRun.Count != 0 || !strings.Contains(missingDryRun.Error, "event_id is required") {
+		t.Fatalf("expected missing event_id dry-run error, got %#v", missingDryRun)
 	}
 }
 

@@ -41,6 +41,8 @@ Compatibility version `0.1` includes these tool names:
 - `outlook.calendar_availability`
 - `outlook.calendar_find_time`
 - `outlook.calendar_create_meeting`
+- `outlook.calendar_delete_event`
+- `outlook.calendar_cancel_meeting`
 - `outlook.calendar_respond`
 - `outlook.action_dry_run`
 - `outlook.action_confirm`
@@ -144,10 +146,32 @@ as `send_like`, and requires clients to first call `outlook.action_dry_run`,
 review the packet, present the exact subject, attendees, start, end, timezone,
 and optional body/location, and then call
 `outlook.calendar_create_meeting` with the exact confirmation token plus host
-approval fields when approval mode requires them.
+approval fields when approval mode requires them. The typed create path
+resolves attendees before create, rejects ambiguous or unresolved
+display-name attendees instead of guessing, and returns created event metadata
+with `verification_status` set to `returned` when the create response includes
+the event id or `recovered` when conservative post-create lookup recovers an
+event after OWA omits the id.
 `outlook.calendar_create_meeting` must not require clients to construct raw
-OWA `CreateItem` payloads. It complements `outlook.calendar_find_time`, which
-is planning-only and never creates or sends meeting items.
+OWA `CreateCalendarEvent` payloads, and no raw fallback is expected for normal
+meeting creation. It complements `outlook.calendar_find_time`, which is
+planning-only and never creates or sends meeting items.
+
+Compatibility version `0.1` also includes `outlook.calendar_delete_event` for
+moving one exact calendar event to Deleted Items through typed cleanup. The
+underlying action is `calendar.delete_event`, is classified as reversible, and
+requires `outlook.action_dry_run` plus an exact confirmation token before
+execution. It does not send cancellations or attendee notifications. Agents
+should use it to remove accidental or local created event artifacts instead of
+constructing raw OWA `DeleteItem` payloads.
+
+Compatibility version `0.1` also includes `outlook.calendar_cancel_meeting` for
+canceling one exact organizer-owned meeting and sending the cancellation. The
+underlying action is `calendar.cancel_meeting`, is classified as `send_like`,
+and requires `outlook.action_dry_run`, exact confirmation, and host approval
+fields when approval mode requires them. Agents should use it only when the
+user explicitly wants cancellation and notification semantics instead of
+constructing raw OWA `CancelCalendarEvent` payloads.
 
 Compatibility version `0.1` also includes `outlook.mail_fetch_bodies`, an
 explicit-id batch helper capped at 50 ids per call. It is not a mailbox search,

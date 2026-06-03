@@ -142,21 +142,39 @@ notes.
 | `read_attachment_explicit` | `GetAttachment` |
 | `unknown` | `SearchMailboxes` |
 | `reversible_bulk` | `ArchiveItem`, `CopyFolder`, `CopyItem`, `CreateAttachment`, `MarkAllItemsAsRead`, `MarkAsJunk`, `MoveFolder`, `MoveItem`, `PerformReminderAction` |
-| `send_like` | `CreateItem`, `SendItem` |
+| `send_like` | `CreateCalendarEvent`, `CreateItem`, `SendItem` |
 | `destructive` | `ApplyBulkItemAction`, `ApplyConversationAction`, `ApplyMessageAction`, `DeleteAttachment`, `DeleteFolder`, `DeleteItem`, `EmptyFolder` |
 | `settings_or_rules` | `CreateFolder`, `CreateFolderPath`, `CreateSweepRuleForSender`, `GetInboxRules`, `GetUserOofSettings`, `NotificationSubscribe`, `UpdateFolder`, `UpdateItem`, `UpdateUserConfiguration` |
 
 ## Promotion Notes
 
-- `CreateItem` is classified as `send_like` at the raw action layer because raw
-  payloads can send or invite recipients. The safe draft path is the high-level
-  `mail.create_draft` tool, which builds `MessageDisposition=SaveOnly`.
+- `CreateCalendarEvent` and `CreateItem` are classified as `send_like` at the
+  raw action layer because raw payloads can send or invite recipients. The safe
+  draft path is the high-level `mail.create_draft` tool, which builds
+  `MessageDisposition=SaveOnly`. The safe meeting path is the high-level
+  `calendar.create_meeting` / `outlook.calendar_create_meeting` tool, which
+  resolves attendees before create, rejects ambiguous or unresolved display
+  names, returns created event metadata with `verification_status`, and uses
+  conservative post-create recovery when OWA creates an event but omits the id.
+  Agents should not construct raw OWA `CreateCalendarEvent` payloads for
+  normal meeting creation.
 - `DeleteItem` and `DeleteFolder` are classified as `destructive` at the raw
   action layer because raw payloads can hard-delete. The safe move-to-trash path
-  is the high-level `mail.move_to_deleted_items` tool. Raw `DeleteItem` and
-  `DeleteFolder` payloads with `DeleteType=MoveToDeletedItems` are treated as
-  payload-sensitive reversible bulk operations by the MCP dry-run/confirm
+  for mail is the high-level `mail.move_to_deleted_items` tool. The safe
+  calendar cleanup path is `calendar.delete_event` /
+  `outlook.calendar_delete_event`, which moves one exact event to Deleted Items
+  after dry-run confirmation and does not send cancellations. Raw `DeleteItem`
+  and `DeleteFolder` payloads with `DeleteType=MoveToDeletedItems` are treated
+  as payload-sensitive reversible bulk operations by the MCP dry-run/confirm
   policy; hard-delete and soft-delete payloads still require unsafe mode.
+  Agents should use the typed calendar cleanup tool for accidental/local
+  created event artifacts instead of constructing raw `DeleteItem` payloads.
+- `calendar.cancel_meeting` / `outlook.calendar_cancel_meeting` is the typed
+  cancellation path for one exact organizer-owned meeting. It sends the
+  cancellation after dry-run confirmation and required send-like approval.
+  Agents should use it only for explicit cancellation/notification semantics
+  and should not construct raw OWA `CancelCalendarEvent` payloads for normal
+  meeting cancellation.
 - `SearchMailboxes` is classified as `unknown` because the raw action can
   express broad mailbox searches and does not have a narrow item-id target that
   the generic explicit-target policy can prove safe.

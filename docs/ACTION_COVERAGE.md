@@ -52,6 +52,8 @@ level 5: workflow skill guidance
 | Calendar | `outlook.calendar_availability` | 4 |
 | Calendar | `outlook.calendar_find_time` | 4 |
 | Calendar | `outlook.calendar_create_meeting` | 4 |
+| Calendar | `outlook.calendar_delete_event` | 4 |
+| Calendar | `outlook.calendar_cancel_meeting` | 4 |
 | Calendar | `outlook.calendar_respond` | 4 |
 | Raw | `outlook.action_dry_run` | 4 |
 | Raw | `outlook.action_confirm` | 4 |
@@ -154,13 +156,15 @@ Implemented high-level OWA mappings:
 | `calendar.list` | `GetCalendarView` | implemented and live smoke-tested for a one-day range |
 | `calendar.availability` | `GetUserAvailabilityInternal` | implemented and live smoke-tested; MCP tool accepts optional mailbox email |
 | `calendar.find_time` | `GetCalendarView` / `GetUserAvailabilityInternal` | implemented as typed mutual planning only; it returns suggestions and never creates or sends meetings |
-| `calendar.create_meeting` | `CreateItem` | implemented as a typed send-like meeting creation action requiring dry-run review, exact confirmation, and host approval where required; live write execution remains deferred to controlled fixtures |
+| `calendar.create_meeting` | `CreateCalendarEvent` via JSON body | implemented as a typed send-like meeting creation action requiring dry-run review, exact confirmation, and host approval where required; resolves attendees before create; rejects ambiguous or unresolved display-name attendees; returns created event metadata with `verification_status` `returned` or `recovered` after conservative post-create recovery when OWA omits the id; no raw fallback is expected for normal meeting creation |
+| `calendar.delete_event` | `DeleteItem` with `DeleteType=MoveToDeletedItems` | implemented as a typed exact-event cleanup action requiring dry-run confirmation; moves one calendar event to Deleted Items; does not send cancellations or attendee notifications; use for accidental/local created event artifacts instead of raw `DeleteItem` payloads |
+| `calendar.cancel_meeting` | `CancelCalendarEvent` | implemented as a typed send-like organizer-owned meeting cancellation requiring dry-run confirmation and host approval where required; sends the cancellation; use only when the user explicitly wants cancellation/notification semantics instead of raw `CancelCalendarEvent` payloads |
 | raw read-only people search | `FindPeople` | raw guarded execution live smoke-tested with opt-in env; request maps are normalized so `__type` is emitted first |
 | raw read-only metadata suite | `GetServerTimeZones`, `GetRoomLists`, `GetFolder`, `ResolveNames` | raw guarded execution live smoke-tested with opt-in env; metadata-only payloads and sanitized assertions |
 | raw reversible confirm fixture | `DeleteItem` with `DeleteType=MoveToDeletedItems` | live MCP smoke-tested through `outlook.action_dry_run` and `outlook.action_confirm` against a controlled draft fixture; no unsafe mode required |
 | dry-run reversible gate | `MoveItem` | stdio MCP dry-run live smoke-tested after auth; token issued without unsafe and without execution |
 | dry-run destructive gate | `DeleteItem` | stdio MCP dry-run live smoke-tested after auth; unsafe required before token issuance and no confirmation executed |
-| dry-run send-like gate | `CreateItem` | stdio MCP dry-run live smoke-tested after auth; token issued without unsafe and without execution |
+| dry-run send-like gate | `CreateItem`, `CreateCalendarEvent` | stdio MCP dry-run live smoke-tested after auth; token issued without unsafe and without execution |
 | dry-run settings/rules gate | `UpdateUserConfiguration` | stdio MCP dry-run live smoke-tested after auth; token issued without unsafe and without execution |
 | dry-run mutating summaries | attachment/folder/rule/config payload shapes | unit-tested for plural and singular OWA body keys; stdio MCP dry-run live smoke-tested for representative variants; no confirmation executed |
 | dry-run payload catalog | 26 mutating raw OWA actions | sanitized example payload exists for every raw `reversible_bulk`, `destructive`, `send_like`, and `settings_or_rules` action; each example produces a non-zero dry-run count without network calls and is live stdio MCP smoke-tested after auth without confirmation |

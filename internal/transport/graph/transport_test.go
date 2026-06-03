@@ -123,6 +123,20 @@ func TestTransportGraphCapabilitiesIncludeBodyDraftMove(t *testing.T) {
 	}
 }
 
+func TestGraphCapabilitiesExcludeUnsupportedCalendarMutations(t *testing.T) {
+	client := graph.NewTransport(graph.Config{
+		BaseURL:   "https://graph.example.test/v1.0",
+		SecretRef: secret.Ref("memory:graph"),
+	}, secret.NewMemoryStore(map[string]string{"memory:graph": "token-secret"}), nil)
+
+	capabilities := client.Capabilities(context.Background())
+	for _, actionName := range []string{"calendar.delete_event", "calendar.cancel_meeting"} {
+		if definition, ok := findGraphCapability(capabilities.Actions, actionName); ok {
+			t.Fatalf("Graph must not advertise unsupported calendar mutation %q: %#v", actionName, definition)
+		}
+	}
+}
+
 func TestTransportExecutesGetMailFolder(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
 		response.Header().Set("Content-Type", "application/json")

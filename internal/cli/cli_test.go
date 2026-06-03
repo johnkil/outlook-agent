@@ -1508,8 +1508,37 @@ func TestCalendarCommandWithoutSubcommandListsSupportedSubcommands(t *testing.T)
 	if stdout.Len() != 0 {
 		t.Fatalf("expected no stdout for calendar validation error, got %s", stdout.String())
 	}
-	if !strings.Contains(stderr.String(), "list, availability, find-time, mutual-free, or create-meeting") {
+	if !strings.Contains(stderr.String(), "list, availability, find-time, mutual-free, create-meeting, delete-event, or cancel-meeting") {
 		t.Fatalf("expected supported calendar subcommands, got %s", stderr.String())
+	}
+}
+
+func TestCalendarCommandRequiresKnownSubcommand(t *testing.T) {
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+
+	code := Run([]string{"calendar"}, &stdout, &stderr)
+
+	if code != 1 {
+		t.Fatalf("expected exit code 1, got %d", code)
+	}
+	for _, required := range []string{"delete-event", "cancel-meeting"} {
+		if !strings.Contains(stderr.String(), required) {
+			t.Fatalf("expected calendar validation error to mention %q, got %s", required, stderr.String())
+		}
+	}
+
+	stdout.Reset()
+	stderr.Reset()
+	code = Run([]string{"help"}, &stdout, &stderr)
+
+	if code != 0 {
+		t.Fatalf("expected help exit code 0, got %d", code)
+	}
+	for _, required := range []string{"calendar delete-event", "calendar cancel-meeting"} {
+		if !strings.Contains(stdout.String(), required) {
+			t.Fatalf("expected calendar usage to mention %q, got %s", required, stdout.String())
+		}
 	}
 }
 
@@ -1658,6 +1687,180 @@ func TestCalendarCreateMeetingDryRunCommandBuildsPayload(t *testing.T) {
 	attendees := client.lastDryRun.Payload["attendees"].([]string)
 	if len(attendees) != 1 || attendees[0] != "teammate@example.com" {
 		t.Fatalf("expected direct attendees to be trimmed and filtered, got %#v", attendees)
+	}
+}
+
+func TestCalendarDeleteEventDryRun(t *testing.T) {
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	client := &cliCapturingTransport{}
+
+	code := RunWithRuntime([]string{
+		"calendar", "delete-event",
+		"--event-id", "event-1",
+		"--change-key", "ck-1",
+		"--mailbox", "shared@example.com",
+		"--dry-run",
+	}, &stdout, &stderr, Runtime{
+		BuildTransport: func(context.Context, Options) (transport.Transport, string, error) {
+			return client, "work", nil
+		},
+	})
+
+	if code != 0 {
+		t.Fatalf("expected exit code 0, got %d, stderr=%s", code, stderr.String())
+	}
+	if client.lastDryRun.Name != "calendar.delete_event" {
+		t.Fatalf("expected calendar.delete_event dry-run, got %#v", client.lastDryRun)
+	}
+	if client.lastDryRun.Payload["event_id"] != "event-1" || client.lastDryRun.Payload["change_key"] != "ck-1" || client.lastDryRun.Payload["mailbox"] != "shared@example.com" {
+		t.Fatalf("unexpected delete-event payload: %#v", client.lastDryRun.Payload)
+	}
+	output := stdout.String()
+	if !strings.Contains(output, "calendar.delete_event") || !strings.Contains(output, "requires_confirmation") {
+		t.Fatalf("expected dry-run action and confirmation summary in output, got %s", output)
+	}
+}
+
+func TestCalendarCancelMeetingDryRun(t *testing.T) {
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	client := &cliCapturingTransport{}
+
+	code := RunWithRuntime([]string{
+		"calendar", "cancel-meeting",
+		"--event-id", "event-1",
+		"--change-key", "ck-1",
+		"--comment", "Canceled",
+		"--mailbox", "shared@example.com",
+		"--dry-run",
+	}, &stdout, &stderr, Runtime{
+		BuildTransport: func(context.Context, Options) (transport.Transport, string, error) {
+			return client, "work", nil
+		},
+	})
+
+	if code != 0 {
+		t.Fatalf("expected exit code 0, got %d, stderr=%s", code, stderr.String())
+	}
+	if client.lastDryRun.Name != "calendar.cancel_meeting" {
+		t.Fatalf("expected calendar.cancel_meeting dry-run, got %#v", client.lastDryRun)
+	}
+	if client.lastDryRun.Payload["event_id"] != "event-1" || client.lastDryRun.Payload["change_key"] != "ck-1" || client.lastDryRun.Payload["comment"] != "Canceled" || client.lastDryRun.Payload["mailbox"] != "shared@example.com" {
+		t.Fatalf("unexpected cancel-meeting payload: %#v", client.lastDryRun.Payload)
+	}
+	output := stdout.String()
+	if !strings.Contains(output, "calendar.cancel_meeting") || !strings.Contains(output, "requires_confirmation") {
+		t.Fatalf("expected dry-run action and confirmation summary in output, got %s", output)
+	}
+}
+
+func TestCalendarDeleteEventAndCancelMeetingRequireDryRun(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		args []string
+	}{
+		{
+			name: "delete-event",
+			args: []string{"calendar", "delete-event", "--event-id", "event-1"},
+		},
+		{
+			name: "cancel-meeting",
+			args: []string{"calendar", "cancel-meeting", "--event-id", "event-1"},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var stdout bytes.Buffer
+			var stderr bytes.Buffer
+			client := &cliCapturingTransport{}
+
+			code := RunWithRuntime(tc.args, &stdout, &stderr, Runtime{
+				BuildTransport: func(context.Context, Options) (transport.Transport, string, error) {
+					return client, "work", nil
+				},
+			})
+
+			if code == 0 {
+				t.Fatalf("expected missing --dry-run to fail")
+			}
+			if len(client.requests) != 0 {
+				t.Fatalf("expected no Execute calls, got %#v", client.requests)
+			}
+			if !strings.Contains(stderr.String(), "--dry-run") {
+				t.Fatalf("expected --dry-run error, got stderr=%q stdout=%q", stderr.String(), stdout.String())
+			}
+		})
+	}
+}
+
+func TestCalendarDeleteEventAndCancelMeetingRequireEventID(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		args []string
+	}{
+		{
+			name: "delete-event missing",
+			args: []string{"calendar", "delete-event", "--dry-run"},
+		},
+		{
+			name: "delete-event blank",
+			args: []string{"calendar", "delete-event", "--event-id", " ", "--dry-run"},
+		},
+		{
+			name: "cancel-meeting missing",
+			args: []string{"calendar", "cancel-meeting", "--dry-run"},
+		},
+		{
+			name: "cancel-meeting blank",
+			args: []string{"calendar", "cancel-meeting", "--event-id", " ", "--dry-run"},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var stdout bytes.Buffer
+			var stderr bytes.Buffer
+
+			code := Run(tc.args, &stdout, &stderr)
+
+			if code == 0 {
+				t.Fatalf("expected missing or blank --event-id to fail")
+			}
+			if !strings.Contains(stderr.String(), "--event-id") {
+				t.Fatalf("expected --event-id error, got stderr=%q stdout=%q", stderr.String(), stdout.String())
+			}
+		})
+	}
+}
+
+func TestCalendarDeleteEventAndCancelMeetingRejectUnknownOption(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		args  []string
+		error string
+	}{
+		{
+			name:  "delete-event",
+			args:  []string{"calendar", "delete-event", "--event-id", "event-1", "--bogus", "--dry-run"},
+			error: "unknown calendar delete-event option: --bogus",
+		},
+		{
+			name:  "cancel-meeting",
+			args:  []string{"calendar", "cancel-meeting", "--event-id", "event-1", "--bogus", "--dry-run"},
+			error: "unknown calendar cancel-meeting option: --bogus",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var stdout bytes.Buffer
+			var stderr bytes.Buffer
+
+			code := Run(tc.args, &stdout, &stderr)
+
+			if code == 0 {
+				t.Fatalf("expected unknown option to fail")
+			}
+			if !strings.Contains(stderr.String(), tc.error) {
+				t.Fatalf("expected %q, got stderr=%q stdout=%q", tc.error, stderr.String(), stdout.String())
+			}
+		})
 	}
 }
 

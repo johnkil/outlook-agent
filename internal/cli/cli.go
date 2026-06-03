@@ -670,7 +670,7 @@ func runPeopleCommand(args []string, options Options, runtime Runtime, stdout io
 
 func runCalendarCommand(args []string, options Options, runtime Runtime, stdout io.Writer, stderr io.Writer) int {
 	if len(args) < 1 {
-		fmt.Fprintln(stderr, "calendar command requires list, availability, find-time, mutual-free, or create-meeting")
+		fmt.Fprintln(stderr, "calendar command requires list, availability, find-time, mutual-free, create-meeting, delete-event, or cancel-meeting")
 		return 1
 	}
 	switch args[0] {
@@ -702,6 +702,20 @@ func runCalendarCommand(args []string, options Options, runtime Runtime, stdout 
 			return 1
 		}
 		return runCalendarCreateMeeting(stdout, options, runtime, payload, dryRunOnly, confirmToken)
+	case "delete-event":
+		payload, err := parseCalendarDeleteEventArgs(args[1:])
+		if err != nil {
+			fmt.Fprintln(stderr, err)
+			return 1
+		}
+		return runCalendarMutationDryRun(stdout, options, runtime, "calendar delete-event dry-run", "calendar.delete_event", payload)
+	case "cancel-meeting":
+		payload, err := parseCalendarCancelMeetingArgs(args[1:])
+		if err != nil {
+			fmt.Fprintln(stderr, err)
+			return 1
+		}
+		return runCalendarMutationDryRun(stdout, options, runtime, "calendar cancel-meeting dry-run", "calendar.cancel_meeting", payload)
 	default:
 		fmt.Fprintf(stderr, "unknown calendar command: %s\n", args[0])
 		return 1
@@ -782,6 +796,19 @@ func runCalendarCreateMeeting(stdout io.Writer, options Options, runtime Runtime
 		"error":   "confirmed calendar create-meeting execution is available through MCP outlook.calendar_create_meeting or outlook.action_confirm",
 	})
 	return 1
+}
+
+func runCalendarMutationDryRun(stdout io.Writer, options Options, runtime Runtime, command string, actionName string, payload map[string]any) int {
+	client, errCode, err := buildCLITransport(stdout, options, runtime, command)
+	if err != nil {
+		return errCode
+	}
+	summary := client.DryRun(context.Background(), transport.ActionRequest{Name: actionName, Payload: payload})
+	return writeJSON(stdout, map[string]any{
+		"ok":      summary.Error == "",
+		"command": command,
+		"dry_run": summary,
+	})
 }
 
 func resolveErrorOutput(command string, err error, data map[string]any) map[string]any {
@@ -1176,6 +1203,65 @@ func parseCalendarCreateMeetingArgs(args []string) (map[string]any, bool, string
 	payload["attendees"] = attendees
 	payload["with"] = withPeople
 	return payload, dryRunOnly, confirmToken, nil
+}
+
+func parseCalendarDeleteEventArgs(args []string) (map[string]any, error) {
+	return parseCalendarEventMutationArgs(args, "delete-event", false, "outlook.calendar_delete_event")
+}
+
+func parseCalendarCancelMeetingArgs(args []string) (map[string]any, error) {
+	return parseCalendarEventMutationArgs(args, "cancel-meeting", true, "outlook.calendar_cancel_meeting")
+}
+
+func parseCalendarEventMutationArgs(args []string, command string, allowComment bool, mcpCommand string) (map[string]any, error) {
+	payload := map[string]any{}
+	var dryRunOnly bool
+	for index := 0; index < len(args); index++ {
+		switch args[index] {
+		case "--event-id":
+			value, next, err := valueArg(args, index, "--event-id")
+			if err != nil {
+				return nil, err
+			}
+			payload["event_id"] = strings.TrimSpace(value)
+			index = next
+		case "--change-key":
+			value, next, err := valueArg(args, index, "--change-key")
+			if err != nil {
+				return nil, err
+			}
+			payload["change_key"] = strings.TrimSpace(value)
+			index = next
+		case "--mailbox":
+			value, next, err := valueArg(args, index, "--mailbox")
+			if err != nil {
+				return nil, err
+			}
+			payload["mailbox"] = strings.TrimSpace(value)
+			index = next
+		case "--comment":
+			if !allowComment {
+				return nil, fmt.Errorf("unknown calendar %s option: %s", command, args[index])
+			}
+			value, next, err := valueArg(args, index, "--comment")
+			if err != nil {
+				return nil, err
+			}
+			payload["comment"] = strings.TrimSpace(value)
+			index = next
+		case "--dry-run":
+			dryRunOnly = true
+		default:
+			return nil, fmt.Errorf("unknown calendar %s option: %s", command, args[index])
+		}
+	}
+	if strings.TrimSpace(stringAny(payload["event_id"])) == "" {
+		return nil, fmt.Errorf("calendar %s requires --event-id", command)
+	}
+	if !dryRunOnly {
+		return nil, fmt.Errorf("calendar %s requires --dry-run; confirmed execution must go through MCP %s or outlook.action_confirm", command, mcpCommand)
+	}
+	return payload, nil
 }
 
 func valueArg(args []string, index int, flag string) (string, int, error) {
@@ -1613,6 +1699,8 @@ Usage:
   outlook-agent calendar availability (--email <addr>|--with <query>) (--date <date>|--start <ts> --end <ts>) [--timezone <tz>]
   outlook-agent calendar find-time (--attendee <addr>|--with <query>) (--date <date>|--start <ts> --end <ts>) [--duration <minutes|30m>] [--timezone <tz>] [--tentative busy|free]
   outlook-agent calendar create-meeting --subject <text> (--attendee <addr>|--with <query>) --start <ts> --end <ts> [--timezone <tz>] [--location <text>] [--body <text>] --dry-run
+  outlook-agent calendar delete-event --event-id <id> [--change-key <ck>] [--mailbox <mb>] --dry-run
+  outlook-agent calendar cancel-meeting --event-id <id> [--change-key <ck>] [--comment <text>] [--mailbox <mb>] --dry-run
   outlook-agent policy explain [--action <name>]
   outlook-agent setup opencode --print [--binary <path>] [--config <path>]
   outlook-agent setup opencode print [--binary <path>] [--config <path>]
