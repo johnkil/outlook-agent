@@ -14,7 +14,10 @@ outlook-agent setup agent diff  --client codex       --scope project --config .l
 outlook-agent setup agent apply --client claude-code --scope user    --config ~/.config/outlook-agent/config.json [--use-approval-wrapper] --yes --backup
 ```
 
-Use `--binary <path-or-command>` when `outlook-agent` is not on `PATH`.
+Use `--binary <path-or-command>` for direct `setup agent` wiring when
+`outlook-agent` is not on `PATH`. In wrapper mode, configure the child binary
+with `outlook-agent setup approval --binary`; `setup agent --use-approval-wrapper`
+only points the MCP client at the generated wrapper.
 
 For live write-capable profiles, configure host approval before broad mailbox
 mutations:

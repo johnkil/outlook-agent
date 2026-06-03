@@ -1974,8 +1974,8 @@ func runSetupAgent(args []string, options Options, stdout io.Writer, stderr io.W
 			"mcp":     plan.MCP,
 			"skills":  plan.Skills,
 		}
-		if len(plan.Warnings) > 0 {
-			response["warnings"] = plan.Warnings
+		if warnings := setupcore.ApprovalWrapperWarnings(plan.Warnings); len(warnings) > 0 {
+			response["warnings"] = warnings
 		}
 		return writeJSON(stdout, response)
 	default:

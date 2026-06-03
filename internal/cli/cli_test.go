@@ -675,6 +675,28 @@ func TestSetupAgentDiffPrintsApprovalWrapperWarning(t *testing.T) {
 	}
 }
 
+func TestSetupAgentDiffDoesNotPrintNonWrapperProjectConfigWarnings(t *testing.T) {
+	projectDir := t.TempDir()
+	homeDir := t.TempDir()
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+
+	code := Run([]string{
+		"setup", "agent", "diff",
+		"--client", "codex",
+		"--scope", "project",
+		"--home-dir", homeDir,
+		"--project-dir", projectDir,
+		"--config", "outlook-agent.json",
+	}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("expected setup agent diff success, code=%d stderr=%s", code, stderr.String())
+	}
+	if strings.Contains(stdout.String(), "project-scope config paths") || strings.Contains(stdout.String(), "Warnings:") {
+		t.Fatalf("expected non-wrapper project config warning to stay out of diff, got %s", stdout.String())
+	}
+}
+
 func TestSetupAgentApplyReturnsApprovalWrapperWarnings(t *testing.T) {
 	homeDir := t.TempDir()
 	projectDir := t.TempDir()
@@ -703,6 +725,55 @@ func TestSetupAgentApplyReturnsApprovalWrapperWarnings(t *testing.T) {
 	}
 	if !strings.Contains(strings.Join(payload.Warnings, "\n"), "setup approval apply") {
 		t.Fatalf("expected setup approval guidance warning in apply response, got %s", stdout.String())
+	}
+}
+
+func TestSetupAgentApplyDoesNotReturnNonWrapperProjectConfigWarnings(t *testing.T) {
+	projectDir := t.TempDir()
+	homeDir := t.TempDir()
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+
+	code := Run([]string{
+		"setup", "agent", "apply",
+		"--client", "codex",
+		"--scope", "project",
+		"--home-dir", homeDir,
+		"--project-dir", projectDir,
+		"--config", "outlook-agent.json",
+		"--yes",
+	}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("expected setup agent apply success, code=%d stderr=%s", code, stderr.String())
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(stdout.Bytes(), &payload); err != nil {
+		t.Fatalf("apply output is not JSON: %v; output=%s", err, stdout.String())
+	}
+	if _, ok := payload["warnings"]; ok {
+		t.Fatalf("expected non-wrapper project config warning to stay out of apply response, got %s", stdout.String())
+	}
+}
+
+func TestSetupAgentRejectsApprovalWrapperWithCustomBinary(t *testing.T) {
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+
+	code := Run([]string{
+		"setup", "agent", "plan",
+		"--client", "codex",
+		"--scope", "user",
+		"--home-dir", t.TempDir(),
+		"--project-dir", t.TempDir(),
+		"--config", filepath.Join(t.TempDir(), ".local", "outlook-agent.json"),
+		"--use-approval-wrapper",
+		"--binary", "custom-outlook-agent",
+	}, &stdout, &stderr)
+	if code == 0 {
+		t.Fatalf("expected setup agent plan to reject wrapper with custom binary, stdout=%s", stdout.String())
+	}
+	if !strings.Contains(stderr.String(), "setup approval --binary") {
+		t.Fatalf("expected setup approval --binary guidance, got %s", stderr.String())
 	}
 }
 

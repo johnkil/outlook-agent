@@ -61,6 +61,9 @@ func BuildAgentPlan(fsys fs.FS, options AgentOptions) (AgentPlan, error) {
 	if options.Binary == "" {
 		options.Binary = "outlook-agent"
 	}
+	if options.UseApprovalWrapper && options.Binary != "outlook-agent" {
+		return AgentPlan{}, errors.New("setup agent --use-approval-wrapper does not accept --binary; configure the child binary with outlook-agent setup approval --binary")
+	}
 	projectDir, err := resolveDir(options.ProjectDir, ".")
 	if err != nil {
 		return AgentPlan{}, fmt.Errorf("resolve project dir: %w", err)
@@ -112,7 +115,7 @@ func BuildAgentPlan(fsys fs.FS, options AgentOptions) (AgentPlan, error) {
 		Scope:                       options.Scope,
 		Binary:                      binary,
 		ConfigPath:                  options.ConfigPath,
-		PrivatePathReferenceWritten: options.ConfigPath != "",
+		PrivatePathReferenceWritten: options.ConfigPath != "" && !useApprovalWrapper,
 		MCP:                         mcp,
 		Skills:                      skillsPlan,
 	}
@@ -134,9 +137,9 @@ func DiffAgentPlan(plan AgentPlan) string {
 		writePlanContent(&builder, plan.MCP.content)
 		builder.WriteByte('\n')
 	}
-	if len(plan.Warnings) > 0 {
+	if warnings := ApprovalWrapperWarnings(plan.Warnings); len(warnings) > 0 {
 		builder.WriteString("Warnings:\n")
-		for _, warning := range plan.Warnings {
+		for _, warning := range warnings {
 			builder.WriteString("- ")
 			builder.WriteString(warning)
 			builder.WriteByte('\n')
@@ -144,6 +147,16 @@ func DiffAgentPlan(plan AgentPlan) string {
 	}
 	builder.WriteString(DiffSkillsPlan(plan.Skills))
 	return builder.String()
+}
+
+func ApprovalWrapperWarnings(warnings []string) []string {
+	filtered := make([]string, 0, len(warnings))
+	for _, warning := range warnings {
+		if strings.Contains(warning, "approval wrapper mode requires") {
+			filtered = append(filtered, warning)
+		}
+	}
+	return filtered
 }
 
 func ApplyAgentPlan(plan AgentPlan, options ApplyOptions) error {
