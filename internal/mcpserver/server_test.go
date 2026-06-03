@@ -1092,6 +1092,100 @@ func TestMCPToolCalendarDeleteEventDryRunRejectsUnsupportedComment(t *testing.T)
 	}
 }
 
+func TestMCPToolCalendarDeleteEventDryRunRejectsNonStringComment(t *testing.T) {
+	ctx := context.Background()
+	capturing := &calendarMutationCapturingTransport{
+		definitions: []action.Definition{
+			{Name: "calendar.delete_event", Transport: "test", Class: policy.ReversibleBulk, Level: action.LevelHighLevelMCPTool},
+		},
+	}
+	serverTransport, clientTransport := mcp.NewInMemoryTransports()
+
+	serverSession, err := mcpserver.NewWithTransport(capturing).Connect(ctx, serverTransport, nil)
+	if err != nil {
+		t.Fatalf("connect server: %v", err)
+	}
+	defer serverSession.Close()
+	defer serverSession.Wait()
+
+	client := mcp.NewClient(&mcp.Implementation{Name: "test-client", Version: "0.0.1"}, nil)
+	clientSession, err := client.Connect(ctx, clientTransport, nil)
+	if err != nil {
+		t.Fatalf("connect client: %v", err)
+	}
+	defer clientSession.Close()
+
+	result, err := clientSession.CallTool(ctx, &mcp.CallToolParams{
+		Name: "outlook.action_dry_run",
+		Arguments: map[string]any{
+			"action": "calendar.delete_event",
+			"payload": map[string]any{
+				"event_id": "evt-1",
+				"comment":  map[string]any{"text": "x"},
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("call delete-event dry-run: %v", err)
+	}
+	output := decodeStructured[mcpserver.DryRunOutput](t, result)
+	if output.OK || !strings.Contains(output.Error, "comment is not supported for calendar.delete_event") {
+		t.Fatalf("expected unsupported comment error, got %#v", output)
+	}
+	if output.ConfirmationToken != "" {
+		t.Fatalf("expected no confirmation token for rejected dry-run, got %#v", output)
+	}
+	if len(capturing.dryRunRequests) != 0 || len(capturing.executeRequests) != 0 {
+		t.Fatalf("expected unsupported comment to block before transport, dry-runs=%#v executes=%#v", capturing.dryRunRequests, capturing.executeRequests)
+	}
+}
+
+func TestMCPToolCalendarDeleteEventConfirmRejectsNonStringComment(t *testing.T) {
+	ctx := context.Background()
+	capturing := &calendarMutationCapturingTransport{
+		definitions: []action.Definition{
+			{Name: "calendar.delete_event", Transport: "test", Class: policy.ReversibleBulk, Level: action.LevelHighLevelMCPTool},
+		},
+	}
+	serverTransport, clientTransport := mcp.NewInMemoryTransports()
+
+	serverSession, err := mcpserver.NewWithTransport(capturing).Connect(ctx, serverTransport, nil)
+	if err != nil {
+		t.Fatalf("connect server: %v", err)
+	}
+	defer serverSession.Close()
+	defer serverSession.Wait()
+
+	client := mcp.NewClient(&mcp.Implementation{Name: "test-client", Version: "0.0.1"}, nil)
+	clientSession, err := client.Connect(ctx, clientTransport, nil)
+	if err != nil {
+		t.Fatalf("connect client: %v", err)
+	}
+	defer clientSession.Close()
+
+	result, err := clientSession.CallTool(ctx, &mcp.CallToolParams{
+		Name: "outlook.action_confirm",
+		Arguments: map[string]any{
+			"action":        "calendar.delete_event",
+			"confirm_token": "any-token",
+			"payload": map[string]any{
+				"event_id": "evt-1",
+				"comment":  map[string]any{"text": "x"},
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("call delete-event confirm: %v", err)
+	}
+	output := decodeStructured[mcpserver.ActionResultOutput](t, result)
+	if output.OK || !strings.Contains(output.Error, "comment is not supported for calendar.delete_event") {
+		t.Fatalf("expected unsupported comment error, got %#v", output)
+	}
+	if len(capturing.executeRequests) != 0 {
+		t.Fatalf("expected unsupported comment to block execution, executes=%#v", capturing.executeRequests)
+	}
+}
+
 func TestMCPToolCalendarCancelMeetingExecutesConfirmedCanonicalPayload(t *testing.T) {
 	ctx := context.Background()
 	capturing := &calendarMutationCapturingTransport{

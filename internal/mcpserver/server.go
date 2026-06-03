@@ -1849,20 +1849,32 @@ func canonicalCalendarEventMutationPayload(payload map[string]any, includeCommen
 		}
 		canonical[key] = trimmed
 	}
-	comment := strings.TrimSpace(stringMetadata(canonical, "comment"))
 	if !includeComment {
-		if comment != "" {
+		if hasUnsupportedCalendarDeleteComment(canonical) {
 			return canonical, "comment is not supported for calendar.delete_event"
 		}
 		delete(canonical, "comment")
 		return canonical, ""
 	}
+	comment := strings.TrimSpace(stringMetadata(canonical, "comment"))
 	if comment == "" {
 		delete(canonical, "comment")
 	} else {
 		canonical["comment"] = comment
 	}
 	return canonical, ""
+}
+
+func hasUnsupportedCalendarDeleteComment(payload map[string]any) bool {
+	value, exists := payload["comment"]
+	if !exists {
+		return false
+	}
+	comment, ok := value.(string)
+	if !ok {
+		return true
+	}
+	return strings.TrimSpace(comment) != ""
 }
 
 func actionPreflightRejection(actionName string) string {
