@@ -2,6 +2,7 @@ package owa
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/cookiejar"
@@ -15,6 +16,23 @@ type Session struct {
 	Canary    string
 	Principal string
 	Client    *http.Client
+}
+
+type transientLoginError struct {
+	err error
+}
+
+func (err transientLoginError) Error() string {
+	return err.err.Error()
+}
+
+func (err transientLoginError) Unwrap() error {
+	return err.err
+}
+
+func isTransientLoginError(err error) bool {
+	var transient transientLoginError
+	return errors.As(err, &transient)
 }
 
 func Login(ctx context.Context, client *http.Client, config Config, password secret.Value) (Session, error) {
@@ -61,6 +79,9 @@ func Login(ctx context.Context, client *http.Client, config Config, password sec
 		return Session{}, err
 	}
 	defer response.Body.Close()
+	if response.StatusCode >= 500 {
+		return Session{}, transientLoginError{err: fmt.Errorf("owa login returned HTTP %d", response.StatusCode)}
+	}
 
 	canary := canaryFromCookies(jar, authURL)
 	if canary == "" {
