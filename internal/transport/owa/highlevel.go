@@ -656,6 +656,10 @@ func (client *Transport) buildCalendarViewRequest(start string, end string) any 
 }
 
 func (client *Transport) buildCalendarViewRequestInTimeZone(start string, end string, timeZone string) any {
+	return client.buildCalendarViewRequestInTimeZoneForMailbox(start, end, timeZone, "")
+}
+
+func (client *Transport) buildCalendarViewRequestInTimeZoneForMailbox(start string, end string, timeZone string, mailbox string) any {
 	return object(
 		field("__type", "GetCalendarViewJsonRequest:#Exchange"),
 		field("Header", client.requestHeaderPayloadInTimeZone("V2017_08_18", timeZone)),
@@ -663,10 +667,7 @@ func (client *Transport) buildCalendarViewRequestInTimeZone(start string, end st
 			field("__type", "GetCalendarViewRequest:#Exchange"),
 			field("CalendarId", object(
 				field("__type", "TargetFolderId:#Exchange"),
-				field("BaseFolderId", object(
-					field("__type", "DistinguishedFolderId:#Exchange"),
-					field("Id", "calendar"),
-				)),
+				field("BaseFolderId", owaCalendarFolderID(mailbox)),
 			)),
 			field("RangeStart", start),
 			field("RangeEnd", end),
@@ -1043,7 +1044,7 @@ func (client *Transport) recoverCreatedMeetingEvent(ctx context.Context, meeting
 	if err != nil {
 		return transport.ActionResponse{OK: false, Error: "calendar.create_meeting created event id was not returned; unable to verify created event end"}
 	}
-	response := client.executeService(ctx, "GetCalendarView", client.buildCalendarViewRequestInTimeZone(rangeStart, rangeEnd, timeZone), true)
+	response := client.executeService(ctx, "GetCalendarView", client.buildCalendarViewRequestInTimeZoneForMailbox(rangeStart, rangeEnd, timeZone, meeting.mailbox), true)
 	if !response.OK {
 		detail := strings.Join(strings.Fields(response.Error), " ")
 		if detail == "" {

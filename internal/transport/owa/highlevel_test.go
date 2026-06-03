@@ -2042,6 +2042,7 @@ func TestHighLevelCalendarCreateMeetingRecoversMissingCreatedEventID(t *testing.
 	response := client.Execute(context.Background(), transport.ActionRequest{
 		Name: "calendar.create_meeting",
 		Payload: map[string]any{
+			"mailbox":   " shared@example.com ",
 			"subject":   "Planning",
 			"start":     "2026-06-02T15:00:00+03:00",
 			"end":       "2026-06-02T15:30:00+03:00",
@@ -2062,6 +2063,15 @@ func TestHighLevelCalendarCreateMeetingRecoversMissingCreatedEventID(t *testing.
 	}
 	if len(calls) != 3 || calls[0].Action != "FindPeople" || calls[1].Action != "CreateCalendarEvent" || calls[2].Action != "GetCalendarView" {
 		t.Fatalf("expected FindPeople, CreateCalendarEvent, GetCalendarView calls, got %#v", calls)
+	}
+	calendarViewBody := calls[2].Body["Body"].(map[string]any)
+	base := calendarViewBody["CalendarId"].(map[string]any)["BaseFolderId"].(map[string]any)
+	if base["Id"] != "calendar" {
+		t.Fatalf("expected calendar recovery lookup folder, got %#v", base)
+	}
+	mailbox, ok := base["Mailbox"].(map[string]any)
+	if !ok || mailbox["EmailAddress"] != "shared@example.com" {
+		t.Fatalf("expected recovery lookup to target shared mailbox, got %#v", base)
 	}
 }
 
