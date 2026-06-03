@@ -856,10 +856,10 @@ Expected:
 Use a generic attendee fixture:
 
 ```bash
-OUTLOOK_AGENT_LIVE_CONFIG=/Users/evgenii/Workspaces/alfa-bank/projects/outlook-agent/.local/outlook-agent.json \
+OUTLOOK_AGENT_LIVE_CONFIG=/path/to/outlook-agent.json \
 OUTLOOK_AGENT_LIVE_CALENDAR_ATTENDEE=teammate@example.com \
 OUTLOOK_AGENT_LIVE_MUTATION_SMOKE=1 \
-OUTLOOK_AGENT_APPROVAL_SECRET="$(cat /Users/evgenii/Workspaces/alfa-bank/projects/outlook-agent/.local/outlook-agent-approval-secret)" \
+OUTLOOK_AGENT_APPROVAL_SECRET="$(cat /path/to/approval-secret)" \
 go test ./cmd/outlook-agent -run TestLiveBinaryMCPStdioCalendarCreateDeleteSmoke -count=1
 ```
 

@@ -284,11 +284,12 @@ type ActionResultOutput struct {
 }
 
 type CalendarWindowInput struct {
-	Start    string `json:"start" jsonschema:"inclusive start timestamp"`
-	End      string `json:"end" jsonschema:"exclusive end timestamp"`
-	Email    string `json:"email,omitempty" jsonschema:"optional mailbox email for availability queries"`
-	TimeZone string `json:"timezone,omitempty" jsonschema:"display and interpretation timezone"`
-	Mailbox  string `json:"mailbox,omitempty" jsonschema:"optional mailbox user id or user principal name"`
+	Start         string `json:"start" jsonschema:"inclusive start timestamp"`
+	End           string `json:"end" jsonschema:"exclusive end timestamp"`
+	Email         string `json:"email,omitempty" jsonschema:"optional mailbox email for availability queries"`
+	TimeZone      string `json:"timezone,omitempty" jsonschema:"display and interpretation timezone"`
+	TimeZoneAlias string `json:"time_zone,omitempty" jsonschema:"transport alias for display and interpretation timezone"`
+	Mailbox       string `json:"mailbox,omitempty" jsonschema:"optional mailbox user id or user principal name"`
 }
 
 type CalendarRespondInput struct {
@@ -1302,7 +1303,11 @@ func peopleResolveHandler(client transport.Transport) func(context.Context, *mcp
 
 func calendarListHandler(client transport.Transport) func(context.Context, *mcp.CallToolRequest, CalendarWindowInput) (*mcp.CallToolResult, CalendarListOutput, error) {
 	return func(ctx context.Context, _ *mcp.CallToolRequest, input CalendarWindowInput) (*mcp.CallToolResult, CalendarListOutput, error) {
-		response := client.Execute(ctx, transport.ActionRequest{Name: "calendar.list", Payload: withMailbox(map[string]any{"start": input.Start, "end": input.End}, input.Mailbox)})
+		payload := withMailbox(map[string]any{"start": input.Start, "end": input.End}, input.Mailbox)
+		if timeZone := input.effectiveTimeZone(); strings.TrimSpace(timeZone) != "" {
+			payload["time_zone"] = timeZone
+		}
+		response := client.Execute(ctx, transport.ActionRequest{Name: "calendar.list", Payload: payload})
 		if err := transportResponseError(response); err != nil {
 			return nil, CalendarListOutput{}, err
 		}
@@ -1318,8 +1323,8 @@ func calendarAvailabilityHandler(client transport.Transport) func(context.Contex
 		if strings.TrimSpace(input.Email) != "" {
 			payload["email"] = input.Email
 		}
-		if strings.TrimSpace(input.TimeZone) != "" {
-			payload["time_zone"] = input.TimeZone
+		if timeZone := input.effectiveTimeZone(); strings.TrimSpace(timeZone) != "" {
+			payload["time_zone"] = timeZone
 		}
 		response := client.Execute(ctx, transport.ActionRequest{Name: "calendar.availability", Payload: payload})
 		if err := transportResponseError(response); err != nil {
@@ -1328,6 +1333,13 @@ func calendarAvailabilityHandler(client transport.Transport) func(context.Contex
 		windows, _ := response.Data["windows"].([]any)
 		return nil, CalendarAvailabilityOutput{Windows: windows}, nil
 	}
+}
+
+func (input CalendarWindowInput) effectiveTimeZone() string {
+	if strings.TrimSpace(input.TimeZone) != "" {
+		return input.TimeZone
+	}
+	return input.TimeZoneAlias
 }
 
 func calendarFindTimeHandler(client transport.Transport) func(context.Context, *mcp.CallToolRequest, CalendarFindTimeInput) (*mcp.CallToolResult, CalendarFindTimeOutput, error) {
