@@ -423,6 +423,26 @@ func TestCreateTextAttachmentPayloadTargetsDraftAndContent(t *testing.T) {
 	}
 }
 
+func TestCalendarSmokeEventMatchesIDOrTitle(t *testing.T) {
+	event := map[string]any{
+		"id":    "event-1",
+		"title": "outlook-agent live smoke calendar 20260603T120000.000000000Z",
+	}
+
+	if !calendarSmokeEventMatches(event, "event-1", "different subject") {
+		t.Fatal("expected event id match")
+	}
+	if !calendarSmokeEventMatches(event, "different-id", "outlook-agent live smoke calendar 20260603T120000.000000000Z") {
+		t.Fatal("expected event title match")
+	}
+	if calendarSmokeEventMatches(event, "different-id", "different subject") {
+		t.Fatal("expected mismatched id and title to be ignored")
+	}
+	if calendarSmokeEventMatches("not an event", "event-1", "outlook-agent live smoke calendar 20260603T120000.000000000Z") {
+		t.Fatal("expected non-event values to be ignored")
+	}
+}
+
 func TestLiveBinaryMCPStdioMutatingCatalogDryRunSmoke(t *testing.T) {
 	configPath := os.Getenv("OUTLOOK_AGENT_LIVE_CONFIG")
 	if configPath == "" {
@@ -561,12 +581,13 @@ func TestLiveBinaryMCPStdioCalendarCreateDeleteSmoke(t *testing.T) {
 	configPath := os.Getenv("OUTLOOK_AGENT_LIVE_CONFIG")
 	attendee := os.Getenv("OUTLOOK_AGENT_LIVE_CALENDAR_ATTENDEE")
 	if configPath == "" || attendee == "" {
-		t.Skip("OUTLOOK_AGENT_LIVE_CONFIG and OUTLOOK_AGENT_LIVE_CALENDAR_ATTENDEE are not set")
+		t.Skip("OUTLOOK_AGENT_LIVE_CONFIG and OUTLOOK_AGENT_LIVE_CALENDAR_ATTENDEE (dedicated disposable fixture mailbox, not a human mailbox) are not set")
 	}
 	if os.Getenv("OUTLOOK_AGENT_LIVE_MUTATION_SMOKE") != "1" {
 		t.Skip("OUTLOOK_AGENT_LIVE_MUTATION_SMOKE=1 is not set")
 	}
 	requireLiveApprovalSecret(t)
+	t.Log("OUTLOOK_AGENT_LIVE_CALENDAR_ATTENDEE must be a dedicated disposable fixture mailbox; calendar.delete_event does not send attendee cancellations")
 
 	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
 	defer cancel()
@@ -635,7 +656,7 @@ func TestLiveBinaryMCPStdioCalendarCreateDeleteSmoke(t *testing.T) {
 	cleanupDone := false
 	defer func() {
 		if !cleanupDone {
-			cleanupCalendarEventFixture(t, ctx, session, eventID)
+			cleanupCalendarEventFixtureWithFreshSession(t, args, eventID)
 		}
 	}()
 
@@ -688,9 +709,8 @@ func TestLiveBinaryMCPStdioCalendarCreateDeleteSmoke(t *testing.T) {
 	}
 	decodeStructuredContent(t, listEvents, &listOutput)
 	for _, value := range listOutput.Events {
-		event, _ := value.(map[string]any)
-		if event != nil && event["title"] == subject {
-			t.Fatalf("expected smoke event to be absent after delete, found %#v", event)
+		if calendarSmokeEventMatches(value, eventID, subject) {
+			t.Fatalf("expected smoke event to be absent after delete, found %#v", value)
 		}
 	}
 	cleanupDone = true
@@ -1238,6 +1258,20 @@ func calendarEventIDFromToolValue(value any) string {
 	return id
 }
 
+func calendarSmokeEventMatches(value any, eventID string, subject string) bool {
+	event, _ := value.(map[string]any)
+	if event == nil {
+		return false
+	}
+	if id, _ := event["id"].(string); strings.TrimSpace(id) != "" && strings.TrimSpace(id) == strings.TrimSpace(eventID) {
+		return true
+	}
+	if title, _ := event["title"].(string); strings.TrimSpace(title) != "" && strings.TrimSpace(title) == strings.TrimSpace(subject) {
+		return true
+	}
+	return false
+}
+
 func toolResultText(result *mcp.CallToolResult) string {
 	if result == nil {
 		return ""
@@ -1324,6 +1358,17 @@ func cleanupDraftFixture(t *testing.T, ctx context.Context, session *mcp.ClientS
 	if !moveOutput.OK || moveOutput.Data["moved_count"] != float64(1) {
 		t.Errorf("expected fixture to be moved to Deleted Items, got %#v", moveOutput)
 	}
+}
+
+func cleanupCalendarEventFixtureWithFreshSession(t *testing.T, args []string, eventID string) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+	defer cancel()
+
+	session := connectLiveMCPSession(t, ctx, args, "stdio-live-calendar-cleanup-smoke-test")
+	defer session.Close()
+	authLiveMCPSession(t, ctx, session)
+	cleanupCalendarEventFixture(t, ctx, session, eventID)
 }
 
 func cleanupCalendarEventFixture(t *testing.T, ctx context.Context, session *mcp.ClientSession, eventID string) {

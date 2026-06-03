@@ -127,8 +127,16 @@ file, and prints only the approval token plus safe metadata.
 
 ## Live Calendar Mutation Smoke
 
-The live create/delete calendar smoke is opt-in and requires a generic attendee
-fixture from the environment:
+The live create/delete calendar smoke is opt-in and creates a real meeting
+request for `OUTLOOK_AGENT_LIVE_CALENDAR_ATTENDEE`. The cleanup path uses
+`outlook.calendar_delete_event`, which moves the organizer event to Deleted
+Items and intentionally does not send attendee cancellations.
+
+Only run this smoke with a dedicated, disposable, controlled fixture mailbox as
+the attendee. Do not use a human teammate, customer, shared production, or
+personal mailbox. In the command below, `teammate@example.com` is a placeholder;
+operators must replace it with the controlled fixture mailbox address before
+running the test.
 
 ```bash
 OUTLOOK_AGENT_LIVE_CONFIG=/path/to/outlook-agent.json \
