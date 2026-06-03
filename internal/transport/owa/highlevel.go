@@ -958,7 +958,7 @@ func (client *Transport) recoverCreatedMeetingEvent(ctx context.Context, meeting
 		}
 		return transport.ActionResponse{OK: false, Error: "calendar.create_meeting created event id was not returned; verification lookup failed: " + detail}
 	}
-	matches := matchingCreatedMeetingEvents(normalizeCalendarItems(extractItems(response.Data)), meeting, timeZone)
+	matches := matchingCreatedMeetingEvents(extractItems(response.Data), meeting, timeZone)
 	if len(matches) == 0 {
 		return transport.ActionResponse{OK: false, Error: "calendar.create_meeting created event id was not returned; verification lookup found no matching calendar event"}
 	}
@@ -978,7 +978,7 @@ func (client *Transport) createMeetingTimeZone(meeting createMeetingPayload) str
 	return timeZone
 }
 
-func matchingCreatedMeetingEvents(events []any, meeting createMeetingPayload, timeZone string) []map[string]any {
+func matchingCreatedMeetingEvents(items []any, meeting createMeetingPayload, timeZone string) []map[string]any {
 	expectedStart, err := parseOWATimeInZone(meeting.start, timeZone)
 	if err != nil {
 		return nil
@@ -988,11 +988,12 @@ func matchingCreatedMeetingEvents(events []any, meeting createMeetingPayload, ti
 		return nil
 	}
 	matches := make([]map[string]any, 0, 1)
-	for _, item := range events {
-		event, ok := item.(map[string]any)
+	for _, item := range items {
+		itemMap, ok := item.(map[string]any)
 		if !ok {
 			continue
 		}
+		event := firstMapWithID(normalizeCalendarItems([]any{itemMap}))
 		if strings.TrimSpace(stringValue(event, "id")) == "" {
 			continue
 		}
@@ -1005,7 +1006,7 @@ func matchingCreatedMeetingEvents(events []any, meeting createMeetingPayload, ti
 		if !calendarEventTimeMatches(stringValue(event, "end"), expectedEnd, timeZone) {
 			continue
 		}
-		if !calendarEventAttendeesMatch(event, meeting.attendees) {
+		if !calendarEventAttendeesMatch(itemMap, meeting.attendees) {
 			continue
 		}
 		matches = append(matches, event)
@@ -1018,28 +1019,59 @@ func calendarEventTimeMatches(value string, expected time.Time, timeZone string)
 	return err == nil && actual.Equal(expected)
 }
 
-func calendarEventAttendeesMatch(event map[string]any, attendees []createMeetingAttendee) bool {
-	eventAttendees := anySlice(event["attendees"])
-	if len(eventAttendees) == 0 {
+func calendarEventAttendeesMatch(item map[string]any, attendees []createMeetingAttendee) bool {
+	expected := createMeetingAttendeeEmailSet(attendees)
+	if len(expected) == 0 {
 		return true
 	}
-	emails := make(map[string]bool, len(eventAttendees))
-	for _, attendee := range eventAttendees {
-		attendeeMap, ok := attendee.(map[string]any)
-		if !ok {
-			continue
-		}
-		email := strings.ToLower(strings.TrimSpace(stringValue(attendeeMap, "email")))
+	actual, ok := calendarItemAttendeeEmailSet(item)
+	if !ok || len(actual) != len(expected) {
+		return false
+	}
+	return sameStringSet(actual, expected)
+}
+
+func createMeetingAttendeeEmailSet(attendees []createMeetingAttendee) map[string]bool {
+	emails := make(map[string]bool, len(attendees))
+	for _, attendee := range attendees {
+		email := strings.ToLower(strings.TrimSpace(attendee.email))
 		if email != "" {
 			emails[email] = true
 		}
 	}
-	if len(emails) == 0 {
-		return true
+	return emails
+}
+
+func calendarItemAttendeeEmailSet(item map[string]any) (map[string]bool, bool) {
+	attendees := calendarItemAttendeeValues(item)
+	if len(attendees) == 0 {
+		return nil, false
 	}
+	emails := make(map[string]bool, len(attendees))
 	for _, attendee := range attendees {
-		email := strings.ToLower(strings.TrimSpace(attendee.email))
-		if email != "" && !emails[email] {
+		email := strings.ToLower(strings.TrimSpace(calendarAttendeeEmail(attendee)))
+		if email == "" {
+			return nil, false
+		}
+		emails[email] = true
+	}
+	return emails, len(emails) > 0
+}
+
+func calendarItemAttendeeValues(item map[string]any) []map[string]any {
+	attendees := make([]map[string]any, 0)
+	for _, key := range []string{"RequiredAttendees", "OptionalAttendees", "Attendees"} {
+		attendees = append(attendees, calendarAttendeeValues(item[key])...)
+	}
+	return attendees
+}
+
+func sameStringSet(left map[string]bool, right map[string]bool) bool {
+	if len(left) != len(right) {
+		return false
+	}
+	for value := range left {
+		if !right[value] {
 			return false
 		}
 	}

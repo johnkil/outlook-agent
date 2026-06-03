@@ -2066,6 +2066,74 @@ func TestHighLevelCalendarCreateMeetingRecoversMissingCreatedEventID(t *testing.
 }
 
 func TestHighLevelCalendarCreateMeetingRecoveryFailureWhenCreatedIDNotReturned(t *testing.T) {
+	response, calls := executeCalendarCreateMeetingRecovery(t, []any{})
+
+	if response.OK || !strings.Contains(response.Error, "created event id was not returned") {
+		t.Fatalf("expected missing created id recovery failure, got %#v", response)
+	}
+	if len(calls) != 3 || calls[0].Action != "FindPeople" || calls[1].Action != "CreateCalendarEvent" || calls[2].Action != "GetCalendarView" {
+		t.Fatalf("expected FindPeople, CreateCalendarEvent, GetCalendarView calls, got %#v", calls)
+	}
+}
+
+func TestHighLevelCalendarCreateMeetingRecoveryRejectsMissingAttendees(t *testing.T) {
+	response, _ := executeCalendarCreateMeetingRecovery(t, []any{
+		calendarCreateRecoveryEvent("missing-attendees", nil),
+	})
+
+	if response.OK || !strings.Contains(response.Error, "created event id was not returned") || !strings.Contains(response.Error, "no matching calendar event") {
+		t.Fatalf("expected missing attendee recovery failure, got %#v", response)
+	}
+}
+
+func TestHighLevelCalendarCreateMeetingRecoveryRejectsWrongAttendee(t *testing.T) {
+	response, _ := executeCalendarCreateMeetingRecovery(t, []any{
+		calendarCreateRecoveryEvent("wrong-attendee", []any{calendarCreateRecoveryAttendee("other@example.com")}),
+	})
+
+	if response.OK || !strings.Contains(response.Error, "created event id was not returned") {
+		t.Fatalf("expected wrong attendee recovery failure, got %#v", response)
+	}
+}
+
+func TestHighLevelCalendarCreateMeetingRecoveryRejectsUnparseableAttendee(t *testing.T) {
+	response, _ := executeCalendarCreateMeetingRecovery(t, []any{
+		calendarCreateRecoveryEvent("unparseable-attendee", []any{
+			map[string]any{"Mailbox": map[string]any{"Name": "Team Mate"}},
+		}),
+	})
+
+	if response.OK || !strings.Contains(response.Error, "created event id was not returned") {
+		t.Fatalf("expected unparseable attendee recovery failure, got %#v", response)
+	}
+}
+
+func TestHighLevelCalendarCreateMeetingRecoveryRejectsExtraAttendee(t *testing.T) {
+	response, _ := executeCalendarCreateMeetingRecovery(t, []any{
+		calendarCreateRecoveryEvent("extra-attendee", []any{
+			calendarCreateRecoveryAttendee("teammate@example.com"),
+			calendarCreateRecoveryAttendee("other@example.com"),
+		}),
+	})
+
+	if response.OK || !strings.Contains(response.Error, "created event id was not returned") {
+		t.Fatalf("expected extra attendee recovery failure, got %#v", response)
+	}
+}
+
+func TestHighLevelCalendarCreateMeetingRecoveryMultipleExactMatchesAreAmbiguous(t *testing.T) {
+	response, _ := executeCalendarCreateMeetingRecovery(t, []any{
+		calendarCreateRecoveryEvent("exact-match-1", []any{calendarCreateRecoveryAttendee("teammate@example.com")}),
+		calendarCreateRecoveryEvent("exact-match-2", []any{calendarCreateRecoveryAttendee("teammate@example.com")}),
+	})
+
+	if response.OK || !strings.Contains(response.Error, "created event id was not returned") || !strings.Contains(response.Error, "ambiguous") {
+		t.Fatalf("expected ambiguous recovery failure, got %#v", response)
+	}
+}
+
+func executeCalendarCreateMeetingRecovery(t *testing.T, calendarItems []any) (transport.ActionResponse, []recordedServiceCall) {
+	t.Helper()
 	var calls []recordedServiceCall
 	server := newOWAServiceServerByAction(t, &calls, map[string]map[string]any{
 		"FindPeople": {
@@ -2095,7 +2163,7 @@ func TestHighLevelCalendarCreateMeetingRecoveryFailureWhenCreatedIDNotReturned(t
 			},
 		},
 		"GetCalendarView": {
-			"Body": map[string]any{"Items": []any{}},
+			"Body": map[string]any{"Items": calendarItems},
 		},
 	})
 	defer server.Close()
@@ -2111,12 +2179,30 @@ func TestHighLevelCalendarCreateMeetingRecoveryFailureWhenCreatedIDNotReturned(t
 			"time_zone": "Russian Standard Time",
 		},
 	})
+	return response, calls
+}
 
-	if response.OK || !strings.Contains(response.Error, "created event id was not returned") {
-		t.Fatalf("expected missing created id recovery failure, got %#v", response)
+func calendarCreateRecoveryEvent(id string, attendees []any) map[string]any {
+	event := map[string]any{
+		"ItemId":  map[string]any{"Id": id, "ChangeKey": "ck-" + id},
+		"Subject": "Planning",
+		"Start":   "2026-06-02T15:00:00",
+		"End":     "2026-06-02T15:30:00",
 	}
-	if len(calls) != 3 || calls[0].Action != "FindPeople" || calls[1].Action != "CreateCalendarEvent" || calls[2].Action != "GetCalendarView" {
-		t.Fatalf("expected FindPeople, CreateCalendarEvent, GetCalendarView calls, got %#v", calls)
+	if attendees != nil {
+		event["RequiredAttendees"] = attendees
+	}
+	return event
+}
+
+func calendarCreateRecoveryAttendee(email string) map[string]any {
+	return map[string]any{
+		"Mailbox": map[string]any{
+			"Name":         email,
+			"EmailAddress": email,
+			"RoutingType":  "SMTP",
+			"MailboxType":  "Mailbox",
+		},
 	}
 }
 
