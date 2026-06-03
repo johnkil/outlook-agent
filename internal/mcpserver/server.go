@@ -336,19 +336,19 @@ type CalendarCreateMeetingInput struct {
 }
 
 type CalendarDeleteEventInput struct {
-	EventID             string `json:"event_id,omitempty" jsonschema:"calendar event id"`
+	EventID             string `json:"event_id" jsonschema:"calendar event id"`
 	ChangeKey           string `json:"change_key,omitempty" jsonschema:"optional Outlook event change key"`
-	ConfirmToken        string `json:"confirm_token,omitempty" jsonschema:"confirmation token from outlook.action_dry_run"`
+	ConfirmToken        string `json:"confirm_token" jsonschema:"confirmation token from outlook.action_dry_run"`
 	ApprovalChallengeID string `json:"approval_challenge_id,omitempty" jsonschema:"payload-bound external approval challenge id"`
 	ApprovalToken       string `json:"approval_token,omitempty" jsonschema:"external approval token supplied by the host after user approval"`
 	Mailbox             string `json:"mailbox,omitempty" jsonschema:"optional mailbox user id or user principal name"`
 }
 
 type CalendarCancelMeetingInput struct {
-	EventID             string `json:"event_id,omitempty" jsonschema:"calendar event id"`
+	EventID             string `json:"event_id" jsonschema:"calendar event id"`
 	ChangeKey           string `json:"change_key,omitempty" jsonschema:"optional Outlook event change key"`
 	Comment             string `json:"comment,omitempty" jsonschema:"optional cancellation comment"`
-	ConfirmToken        string `json:"confirm_token,omitempty" jsonschema:"confirmation token from outlook.action_dry_run"`
+	ConfirmToken        string `json:"confirm_token" jsonschema:"confirmation token from outlook.action_dry_run"`
 	ApprovalChallengeID string `json:"approval_challenge_id,omitempty" jsonschema:"payload-bound external approval challenge id"`
 	ApprovalToken       string `json:"approval_token,omitempty" jsonschema:"external approval token supplied by the host after user approval"`
 	Mailbox             string `json:"mailbox,omitempty" jsonschema:"optional mailbox user id or user principal name"`
@@ -1849,13 +1849,18 @@ func canonicalCalendarEventMutationPayload(payload map[string]any, includeCommen
 		}
 		canonical[key] = trimmed
 	}
-	if _, exists := canonical["comment"]; includeComment || exists {
-		comment := strings.TrimSpace(stringMetadata(canonical, "comment"))
-		if comment == "" {
-			delete(canonical, "comment")
-		} else {
-			canonical["comment"] = comment
+	comment := strings.TrimSpace(stringMetadata(canonical, "comment"))
+	if !includeComment {
+		if comment != "" {
+			return canonical, "comment is not supported for calendar.delete_event"
 		}
+		delete(canonical, "comment")
+		return canonical, ""
+	}
+	if comment == "" {
+		delete(canonical, "comment")
+	} else {
+		canonical["comment"] = comment
 	}
 	return canonical, ""
 }

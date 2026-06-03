@@ -268,6 +268,31 @@ func TestToolSchemas(t *testing.T) {
 	for _, tool := range listed.Tools {
 		toolsByName[tool.Name] = tool
 	}
+	requiredByTool := map[string][]string{
+		"outlook.calendar_delete_event": {
+			"event_id",
+			"confirm_token",
+		},
+		"outlook.calendar_cancel_meeting": {
+			"event_id",
+			"confirm_token",
+		},
+	}
+	optionalByTool := map[string][]string{
+		"outlook.calendar_delete_event": {
+			"change_key",
+			"approval_challenge_id",
+			"approval_token",
+			"mailbox",
+		},
+		"outlook.calendar_cancel_meeting": {
+			"change_key",
+			"comment",
+			"approval_challenge_id",
+			"approval_token",
+			"mailbox",
+		},
+	}
 	for toolName, fields := range map[string][]string{
 		"outlook.calendar_create_meeting": {
 			"subject",
@@ -308,6 +333,7 @@ func TestToolSchemas(t *testing.T) {
 		}
 		var schema struct {
 			Properties map[string]any `json:"properties"`
+			Required   []string       `json:"required"`
 		}
 		raw, err := json.Marshal(tool.InputSchema)
 		if err != nil {
@@ -319,6 +345,16 @@ func TestToolSchemas(t *testing.T) {
 		for _, field := range fields {
 			if _, ok := schema.Properties[field]; !ok {
 				t.Fatalf("expected %s schema property %q in %#v", toolName, field, schema.Properties)
+			}
+		}
+		for _, field := range requiredByTool[toolName] {
+			if !slices.Contains(schema.Required, field) {
+				t.Fatalf("expected %s schema required field %q in %#v", toolName, field, schema.Required)
+			}
+		}
+		for _, field := range optionalByTool[toolName] {
+			if slices.Contains(schema.Required, field) {
+				t.Fatalf("expected %s schema field %q to remain optional, required=%#v", toolName, field, schema.Required)
 			}
 		}
 	}
@@ -959,6 +995,7 @@ func TestMCPToolCalendarDeleteEventExecutesConfirmedCanonicalPayload(t *testing.
 			"payload": map[string]any{
 				"event_id":   " evt-1 ",
 				"change_key": " ck-1 ",
+				"comment":    " ",
 				"mailbox":    " shared@example.com ",
 			},
 		},
@@ -997,10 +1034,61 @@ func TestMCPToolCalendarDeleteEventExecutesConfirmedCanonicalPayload(t *testing.
 	if request.Payload["event_id"] != "evt-1" || request.Payload["change_key"] != "ck-1" || request.Payload["mailbox"] != "shared@example.com" {
 		t.Fatalf("expected trimmed delete-event payload, got %#v", request.Payload)
 	}
+	if _, exists := request.Payload["comment"]; exists {
+		t.Fatalf("expected blank delete-event comment to be omitted, got %#v", request.Payload)
+	}
 	for key, value := range request.Payload {
 		if text, ok := value.(string); ok && text == "" {
 			t.Fatalf("expected no blank string field %q in payload %#v", key, request.Payload)
 		}
+	}
+}
+
+func TestMCPToolCalendarDeleteEventDryRunRejectsUnsupportedComment(t *testing.T) {
+	ctx := context.Background()
+	capturing := &calendarMutationCapturingTransport{
+		definitions: []action.Definition{
+			{Name: "calendar.delete_event", Transport: "test", Class: policy.ReversibleBulk, Level: action.LevelHighLevelMCPTool},
+		},
+	}
+	serverTransport, clientTransport := mcp.NewInMemoryTransports()
+
+	serverSession, err := mcpserver.NewWithTransport(capturing).Connect(ctx, serverTransport, nil)
+	if err != nil {
+		t.Fatalf("connect server: %v", err)
+	}
+	defer serverSession.Close()
+	defer serverSession.Wait()
+
+	client := mcp.NewClient(&mcp.Implementation{Name: "test-client", Version: "0.0.1"}, nil)
+	clientSession, err := client.Connect(ctx, clientTransport, nil)
+	if err != nil {
+		t.Fatalf("connect client: %v", err)
+	}
+	defer clientSession.Close()
+
+	result, err := clientSession.CallTool(ctx, &mcp.CallToolParams{
+		Name: "outlook.action_dry_run",
+		Arguments: map[string]any{
+			"action": "calendar.delete_event",
+			"payload": map[string]any{
+				"event_id": "evt-1",
+				"comment":  "Cancel this",
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("call delete-event dry-run: %v", err)
+	}
+	output := decodeStructured[mcpserver.DryRunOutput](t, result)
+	if output.OK || !strings.Contains(output.Error, "comment is not supported for calendar.delete_event") {
+		t.Fatalf("expected unsupported comment error, got %#v", output)
+	}
+	if output.ConfirmationToken != "" {
+		t.Fatalf("expected no confirmation token for rejected dry-run, got %#v", output)
+	}
+	if len(capturing.dryRunRequests) != 0 || len(capturing.executeRequests) != 0 {
+		t.Fatalf("expected unsupported comment to block before transport, dry-runs=%#v executes=%#v", capturing.dryRunRequests, capturing.executeRequests)
 	}
 }
 
@@ -1102,7 +1190,8 @@ func TestMCPToolCalendarDeleteEventRequiresConfirmToken(t *testing.T) {
 	result, err := clientSession.CallTool(ctx, &mcp.CallToolParams{
 		Name: "outlook.calendar_delete_event",
 		Arguments: map[string]any{
-			"event_id": "evt-1",
+			"event_id":      "evt-1",
+			"confirm_token": "",
 		},
 	})
 	if err != nil {
@@ -1143,7 +1232,8 @@ func TestMCPToolCalendarCancelMeetingRequiresConfirmToken(t *testing.T) {
 	result, err := clientSession.CallTool(ctx, &mcp.CallToolParams{
 		Name: "outlook.calendar_cancel_meeting",
 		Arguments: map[string]any{
-			"event_id": "evt-1",
+			"event_id":      "evt-1",
+			"confirm_token": "",
 		},
 	})
 	if err != nil {
