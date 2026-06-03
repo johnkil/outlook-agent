@@ -1713,9 +1713,9 @@ Usage:
   outlook-agent setup agent plan --client <opencode|codex|claude-code> --scope <project|user> --config <path> [--use-approval-wrapper]
   outlook-agent setup agent diff --client <opencode|codex|claude-code> --scope <project|user> --config <path> [--use-approval-wrapper]
   outlook-agent setup agent apply --client <opencode|codex|claude-code> --scope <project|user> --config <path> [--use-approval-wrapper] --yes [--backup] [--allow-duplicates]
-  outlook-agent setup approval plan --client <opencode|codex|claude-code> --scope <project|user> --config <path> [--secret-file <path>]
-  outlook-agent setup approval diff --client <opencode|codex|claude-code> --scope <project|user> --config <path> [--secret-file <path>]
-  outlook-agent setup approval apply --client <opencode|codex|claude-code> --scope <project|user> --config <path> --yes [--secret-file <path>]
+  outlook-agent setup approval plan --client <opencode|codex|claude-code> --scope <project|user> --config <path> [--secret-file <path>] [--binary <path>]
+  outlook-agent setup approval diff --client <opencode|codex|claude-code> --scope <project|user> --config <path> [--secret-file <path>] [--binary <path>]
+  outlook-agent setup approval apply --client <opencode|codex|claude-code> --scope <project|user> --config <path> --yes [--secret-file <path>] [--binary <path>]
   outlook-agent setup plugin export --client <codex|claude-code> --output <path> [--local --config <path>] [--binary <path>] [--force]
   outlook-agent mcp --config <path>
 

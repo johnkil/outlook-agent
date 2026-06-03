@@ -248,6 +248,24 @@ func TestBuildAgentPlanRejectsApprovalWrapperWithCustomBinary(t *testing.T) {
 	}
 }
 
+func TestBuildAgentPlanRejectsApprovalWrapperWithExplicitDefaultBinary(t *testing.T) {
+	_, err := BuildAgentPlan(testSkillFS(), AgentOptions{
+		Client:             ClientCodex,
+		Scope:              ScopeUser,
+		ProjectDir:         t.TempDir(),
+		HomeDir:            t.TempDir(),
+		ConfigPath:         filepath.Join(t.TempDir(), ".local", "outlook-agent.json"),
+		Binary:             "outlook-agent",
+		UseApprovalWrapper: true,
+	})
+	if err == nil {
+		t.Fatal("expected BuildAgentPlan to reject explicit default binary with approval wrapper")
+	}
+	if !strings.Contains(err.Error(), "setup approval --binary") {
+		t.Fatalf("expected setup approval --binary guidance, got %v", err)
+	}
+}
+
 func TestBuildAgentPlanApprovalWrapperShapeForAllClients(t *testing.T) {
 	for _, client := range []Client{ClientOpenCode, ClientCodex, ClientClaudeCode} {
 		t.Run(string(client), func(t *testing.T) {

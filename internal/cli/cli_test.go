@@ -651,6 +651,23 @@ func TestSetupAgentHelpShowsApprovalWrapperForAllCommands(t *testing.T) {
 	}
 }
 
+func TestSetupApprovalHelpShowsBinaryForAllCommands(t *testing.T) {
+	for _, command := range []string{"plan", "diff", "apply"} {
+		line := "outlook-agent setup approval " + command
+		start := strings.Index(helpText, line)
+		if start < 0 {
+			t.Fatalf("expected help to contain %q", line)
+		}
+		end := strings.IndexByte(helpText[start:], '\n')
+		if end < 0 {
+			end = len(helpText) - start
+		}
+		if !strings.Contains(helpText[start:start+end], "[--binary <path>]") {
+			t.Fatalf("expected %s help to mention --binary, got %q", command, helpText[start:start+end])
+		}
+	}
+}
+
 func TestSetupAgentDiffPrintsApprovalWrapperWarning(t *testing.T) {
 	homeDir := t.TempDir()
 	projectDir := t.TempDir()

@@ -58,11 +58,11 @@ func BuildAgentPlan(fsys fs.FS, options AgentOptions) (AgentPlan, error) {
 	if options.Scope == "" {
 		options.Scope = ScopeProject
 	}
+	if options.UseApprovalWrapper && strings.TrimSpace(options.Binary) != "" {
+		return AgentPlan{}, errors.New("setup agent --use-approval-wrapper does not accept --binary; configure the child binary with outlook-agent setup approval --binary")
+	}
 	if options.Binary == "" {
 		options.Binary = "outlook-agent"
-	}
-	if options.UseApprovalWrapper && options.Binary != "outlook-agent" {
-		return AgentPlan{}, errors.New("setup agent --use-approval-wrapper does not accept --binary; configure the child binary with outlook-agent setup approval --binary")
 	}
 	projectDir, err := resolveDir(options.ProjectDir, ".")
 	if err != nil {
