@@ -284,10 +284,11 @@ type ActionResultOutput struct {
 }
 
 type CalendarWindowInput struct {
-	Start   string `json:"start" jsonschema:"inclusive start timestamp"`
-	End     string `json:"end" jsonschema:"exclusive end timestamp"`
-	Email   string `json:"email,omitempty" jsonschema:"optional mailbox email for availability queries"`
-	Mailbox string `json:"mailbox,omitempty" jsonschema:"optional mailbox user id or user principal name"`
+	Start    string `json:"start" jsonschema:"inclusive start timestamp"`
+	End      string `json:"end" jsonschema:"exclusive end timestamp"`
+	Email    string `json:"email,omitempty" jsonschema:"optional mailbox email for availability queries"`
+	TimeZone string `json:"timezone,omitempty" jsonschema:"display and interpretation timezone"`
+	Mailbox  string `json:"mailbox,omitempty" jsonschema:"optional mailbox user id or user principal name"`
 }
 
 type CalendarRespondInput struct {
@@ -1316,6 +1317,9 @@ func calendarAvailabilityHandler(client transport.Transport) func(context.Contex
 		payload := withMailbox(map[string]any{"start": input.Start, "end": input.End}, input.Mailbox)
 		if strings.TrimSpace(input.Email) != "" {
 			payload["email"] = input.Email
+		}
+		if strings.TrimSpace(input.TimeZone) != "" {
+			payload["time_zone"] = input.TimeZone
 		}
 		response := client.Execute(ctx, transport.ActionRequest{Name: "calendar.availability", Payload: payload})
 		if err := transportResponseError(response); err != nil {

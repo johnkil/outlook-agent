@@ -1799,6 +1799,48 @@ func TestMCPToolCalendarAvailabilityForwardsEmail(t *testing.T) {
 	}
 }
 
+func TestCalendarAvailabilityForwardsTimeZone(t *testing.T) {
+	ctx := context.Background()
+	capturing := &capturingTransport{}
+	serverTransport, clientTransport := mcp.NewInMemoryTransports()
+
+	serverSession, err := mcpserver.NewWithTransport(capturing).Connect(ctx, serverTransport, nil)
+	if err != nil {
+		t.Fatalf("connect server: %v", err)
+	}
+	defer serverSession.Close()
+	defer serverSession.Wait()
+
+	client := mcp.NewClient(&mcp.Implementation{Name: "test-client", Version: "0.0.1"}, nil)
+	clientSession, err := client.Connect(ctx, clientTransport, nil)
+	if err != nil {
+		t.Fatalf("connect client: %v", err)
+	}
+	defer clientSession.Close()
+
+	result, err := clientSession.CallTool(ctx, &mcp.CallToolParams{
+		Name: "outlook.calendar_availability",
+		Arguments: map[string]any{
+			"start":    "2026-06-04T09:00:00+03:00",
+			"end":      "2026-06-04T18:00:00+03:00",
+			"email":    "teammate@example.com",
+			"timezone": "Europe/Moscow",
+		},
+	})
+	if err != nil {
+		t.Fatalf("calendar availability returned error: %v", err)
+	}
+	if result.IsError {
+		t.Fatalf("expected calendar availability success, got error result: %#v", result)
+	}
+	if capturing.lastRequest.Name != "calendar.availability" {
+		t.Fatalf("expected calendar.availability request, got %#v", capturing.lastRequest)
+	}
+	if capturing.lastRequest.Payload["time_zone"] != "Europe/Moscow" {
+		t.Fatalf("expected timezone to be forwarded as time_zone, got %#v", capturing.lastRequest.Payload)
+	}
+}
+
 func TestMCPHighLevelToolsForwardMailboxTarget(t *testing.T) {
 	ctx := context.Background()
 	capturing := &capturingTransport{}
