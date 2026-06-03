@@ -92,7 +92,7 @@ func Login(ctx context.Context, client *http.Client, config Config, password sec
 			if readErr != nil {
 				return Session{}, readErr
 			}
-			if loginResponseLooksLikeAuthPage(response, body) {
+			if loginResponseLooksLikeAuthPage(body) {
 				return Session{}, err
 			}
 			return Session{}, transientLoginError{err: err}
@@ -102,14 +102,7 @@ func Login(ctx context.Context, client *http.Client, config Config, password sec
 	return Session{Canary: canary, Principal: config.Username, Client: &sessionClient}, nil
 }
 
-func loginResponseLooksLikeAuthPage(response *http.Response, body []byte) bool {
-	contentType := ""
-	if response != nil {
-		contentType = strings.ToLower(response.Header.Get("Content-Type"))
-	}
-	if !strings.Contains(contentType, "html") {
-		return false
-	}
+func loginResponseLooksLikeAuthPage(body []byte) bool {
 	lower := strings.ToLower(string(body))
 	return strings.Contains(lower, "auth/logon.aspx") || strings.Contains(lower, "/owa/auth.owa")
 }

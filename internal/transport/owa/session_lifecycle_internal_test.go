@@ -210,6 +210,36 @@ func TestTransportDoesNotRetryAuthPageMissingCanaryLoginFailure(t *testing.T) {
 	}
 }
 
+func TestTransportDoesNotRetryAuthPageMissingCanaryWithoutHTMLContentType(t *testing.T) {
+	var loginCount atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		switch request.URL.Path {
+		case "/owa/auth.owa":
+			loginCount.Add(1)
+			response.Header().Set("Content-Type", "text/plain")
+			response.WriteHeader(http.StatusOK)
+			_, _ = response.Write([]byte(`auth/logon.aspx marker without html content type must not leak`))
+		default:
+			t.Fatalf("unexpected path: %s", request.URL.Path)
+		}
+	}))
+	defer server.Close()
+
+	client := NewTransport(Config{BaseURL: server.URL, Username: "DOMAIN\\user", SecretRef: secret.Ref("memory:owa")}, secret.NewMemoryStore(map[string]string{"memory:owa": "password"}), server.Client())
+	client.loginRetryBackoff = func(context.Context, time.Duration) error { return nil }
+
+	result := client.Authenticate(context.Background(), "default")
+	if result.OK {
+		t.Fatalf("expected auth failure")
+	}
+	if loginCount.Load() != 1 {
+		t.Fatalf("expected no retry for auth page missing canary without HTML content type, got %d logins", loginCount.Load())
+	}
+	if strings.Contains(result.Error, "auth/logon.aspx") || strings.Contains(result.Error, "marker without html content type") {
+		t.Fatalf("login error leaked response body: %q", result.Error)
+	}
+}
+
 func TestTransportDoesNotRetryNonTransientLoginFailure(t *testing.T) {
 	var loginCount atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
