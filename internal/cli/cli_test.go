@@ -634,6 +634,78 @@ func TestSetupAgentPlanCanUseApprovalWrapper(t *testing.T) {
 	}
 }
 
+func TestSetupAgentHelpShowsApprovalWrapperForAllCommands(t *testing.T) {
+	for _, command := range []string{"plan", "diff", "apply"} {
+		line := "outlook-agent setup agent " + command
+		start := strings.Index(helpText, line)
+		if start < 0 {
+			t.Fatalf("expected help to contain %q", line)
+		}
+		end := strings.IndexByte(helpText[start:], '\n')
+		if end < 0 {
+			end = len(helpText) - start
+		}
+		if !strings.Contains(helpText[start:start+end], "[--use-approval-wrapper]") {
+			t.Fatalf("expected %s help to mention --use-approval-wrapper, got %q", command, helpText[start:start+end])
+		}
+	}
+}
+
+func TestSetupAgentDiffPrintsApprovalWrapperWarning(t *testing.T) {
+	homeDir := t.TempDir()
+	projectDir := t.TempDir()
+	configPath := filepath.Join(projectDir, ".local", "outlook-agent.json")
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+
+	code := Run([]string{
+		"setup", "agent", "diff",
+		"--client", "codex",
+		"--scope", "user",
+		"--home-dir", homeDir,
+		"--project-dir", projectDir,
+		"--config", configPath,
+		"--use-approval-wrapper",
+	}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("expected setup agent diff success, code=%d stderr=%s", code, stderr.String())
+	}
+	if !strings.Contains(stdout.String(), "setup approval apply") {
+		t.Fatalf("expected setup approval guidance warning in diff, got %s", stdout.String())
+	}
+}
+
+func TestSetupAgentApplyReturnsApprovalWrapperWarnings(t *testing.T) {
+	homeDir := t.TempDir()
+	projectDir := t.TempDir()
+	configPath := filepath.Join(projectDir, ".local", "outlook-agent.json")
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+
+	code := Run([]string{
+		"setup", "agent", "apply",
+		"--client", "codex",
+		"--scope", "user",
+		"--home-dir", homeDir,
+		"--project-dir", projectDir,
+		"--config", configPath,
+		"--use-approval-wrapper",
+		"--yes",
+	}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("expected setup agent apply success, code=%d stderr=%s", code, stderr.String())
+	}
+	var payload struct {
+		Warnings []string `json:"warnings"`
+	}
+	if err := json.Unmarshal(stdout.Bytes(), &payload); err != nil {
+		t.Fatalf("apply output is not JSON: %v; output=%s", err, stdout.String())
+	}
+	if !strings.Contains(strings.Join(payload.Warnings, "\n"), "setup approval apply") {
+		t.Fatalf("expected setup approval guidance warning in apply response, got %s", stdout.String())
+	}
+}
+
 func TestSetupAgentUsesLeadingGlobalConfigWhenNoLocalConfig(t *testing.T) {
 	projectDir := t.TempDir()
 	homeDir := t.TempDir()

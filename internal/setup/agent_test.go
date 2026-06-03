@@ -227,6 +227,25 @@ func TestBuildAgentPlanCanUseApprovalWrapperForCodex(t *testing.T) {
 	}
 }
 
+func TestDiffAgentPlanPrintsApprovalWrapperWarning(t *testing.T) {
+	plan, err := BuildAgentPlan(testSkillFS(), AgentOptions{
+		Client:             ClientCodex,
+		Scope:              ScopeUser,
+		ProjectDir:         t.TempDir(),
+		HomeDir:            t.TempDir(),
+		ConfigPath:         filepath.Join(t.TempDir(), ".local", "outlook-agent.json"),
+		UseApprovalWrapper: true,
+	})
+	if err != nil {
+		t.Fatalf("BuildAgentPlan returned error: %v", err)
+	}
+
+	diff := DiffAgentPlan(plan)
+	if !strings.Contains(diff, "Warnings:") || !strings.Contains(diff, "setup approval apply") {
+		t.Fatalf("expected approval wrapper warning in diff, got %s", diff)
+	}
+}
+
 func TestBuildAgentPlanUsesUserClaudeConfigJSON(t *testing.T) {
 	homeDir := t.TempDir()
 	plan, err := BuildAgentPlan(testSkillFS(), AgentOptions{

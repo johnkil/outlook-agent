@@ -134,6 +134,14 @@ func DiffAgentPlan(plan AgentPlan) string {
 		writePlanContent(&builder, plan.MCP.content)
 		builder.WriteByte('\n')
 	}
+	if len(plan.Warnings) > 0 {
+		builder.WriteString("Warnings:\n")
+		for _, warning := range plan.Warnings {
+			builder.WriteString("- ")
+			builder.WriteString(warning)
+			builder.WriteByte('\n')
+		}
+	}
 	builder.WriteString(DiffSkillsPlan(plan.Skills))
 	return builder.String()
 }

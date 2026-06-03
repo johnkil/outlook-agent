@@ -9,9 +9,9 @@ It composes:
 ## Commands
 
 ```bash
-outlook-agent setup agent plan  --client opencode    --scope project --config .local/outlook-agent.json
-outlook-agent setup agent diff  --client codex       --scope project --config .local/outlook-agent.json
-outlook-agent setup agent apply --client claude-code --scope user    --config ~/.config/outlook-agent/config.json --yes --backup
+outlook-agent setup agent plan  --client opencode    --scope project --config .local/outlook-agent.json [--use-approval-wrapper]
+outlook-agent setup agent diff  --client codex       --scope project --config .local/outlook-agent.json [--use-approval-wrapper]
+outlook-agent setup agent apply --client claude-code --scope user    --config ~/.config/outlook-agent/config.json [--use-approval-wrapper] --yes --backup
 ```
 
 Use `--binary <path-or-command>` when `outlook-agent` is not on `PATH`.

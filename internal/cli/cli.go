@@ -1711,8 +1711,8 @@ Usage:
   outlook-agent setup skills diff --client <opencode|codex|claude-code|all> --scope <project|user>
   outlook-agent setup skills apply --client <opencode|codex|claude-code|all> --scope <project|user> --yes [--backup] [--allow-duplicates]
   outlook-agent setup agent plan --client <opencode|codex|claude-code> --scope <project|user> --config <path> [--use-approval-wrapper]
-  outlook-agent setup agent diff --client <opencode|codex|claude-code> --scope <project|user> --config <path>
-  outlook-agent setup agent apply --client <opencode|codex|claude-code> --scope <project|user> --config <path> --yes [--backup] [--allow-duplicates]
+  outlook-agent setup agent diff --client <opencode|codex|claude-code> --scope <project|user> --config <path> [--use-approval-wrapper]
+  outlook-agent setup agent apply --client <opencode|codex|claude-code> --scope <project|user> --config <path> [--use-approval-wrapper] --yes [--backup] [--allow-duplicates]
   outlook-agent setup approval plan --client <opencode|codex|claude-code> --scope <project|user> --config <path> [--secret-file <path>]
   outlook-agent setup approval diff --client <opencode|codex|claude-code> --scope <project|user> --config <path> [--secret-file <path>]
   outlook-agent setup approval apply --client <opencode|codex|claude-code> --scope <project|user> --config <path> --yes [--secret-file <path>]
@@ -1968,12 +1968,16 @@ func runSetupAgent(args []string, options Options, stdout io.Writer, stderr io.W
 			fmt.Fprintln(stderr, err)
 			return 1
 		}
-		return writeJSON(stdout, map[string]any{
+		response := map[string]any{
 			"ok":      true,
 			"command": "setup agent apply",
 			"mcp":     plan.MCP,
 			"skills":  plan.Skills,
-		})
+		}
+		if len(plan.Warnings) > 0 {
+			response["warnings"] = plan.Warnings
+		}
+		return writeJSON(stdout, response)
 	default:
 		fmt.Fprintf(stderr, "unknown setup agent command: %s\n", settings.Command)
 		return 1
