@@ -32,11 +32,13 @@ phrases such as "tomorrow" into explicit date ranges before calling tools.
 9. Use `outlook.calendar_delete_event` after `outlook.action_dry_run` and
    exact confirmation for removing an accidental created event without
    notifying attendees. Prefer passing `change_key` when already available, but
-   OWA can resolve it from the exact event id during the typed flow.
+   OWA can resolve it from the exact event id during the typed flow; do not
+   fall back to raw payloads just to obtain it.
 10. Use `outlook.calendar_cancel_meeting` after `outlook.action_dry_run`,
    exact confirmation, and required host approval when the user wants to
    cancel and notify attendees. Prefer passing `change_key` when already
-   available; do not fall back to raw payloads just to obtain it.
+   available, but OWA can resolve it from the exact event id during the typed
+   flow; do not fall back to raw payloads just to obtain it.
 11. Standard flow must not construct raw OWA `CreateCalendarEvent`,
    `DeleteItem`, or cancellation payloads for normal create/delete/cancel
    flows.
