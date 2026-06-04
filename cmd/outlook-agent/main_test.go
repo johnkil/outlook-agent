@@ -423,6 +423,26 @@ func TestCreateTextAttachmentPayloadTargetsDraftAndContent(t *testing.T) {
 	}
 }
 
+func TestCalendarSmokeEventMatchesIDOrTitle(t *testing.T) {
+	event := map[string]any{
+		"id":    "event-1",
+		"title": "outlook-agent live smoke calendar 20260603T120000.000000000Z",
+	}
+
+	if !calendarSmokeEventMatches(event, "event-1", "different subject") {
+		t.Fatal("expected event id match")
+	}
+	if !calendarSmokeEventMatches(event, "different-id", "outlook-agent live smoke calendar 20260603T120000.000000000Z") {
+		t.Fatal("expected event title match")
+	}
+	if calendarSmokeEventMatches(event, "different-id", "different subject") {
+		t.Fatal("expected mismatched id and title to be ignored")
+	}
+	if calendarSmokeEventMatches("not an event", "event-1", "outlook-agent live smoke calendar 20260603T120000.000000000Z") {
+		t.Fatal("expected non-event values to be ignored")
+	}
+}
+
 func TestLiveBinaryMCPStdioMutatingCatalogDryRunSmoke(t *testing.T) {
 	configPath := os.Getenv("OUTLOOK_AGENT_LIVE_CONFIG")
 	if configPath == "" {
@@ -555,6 +575,145 @@ func TestLiveBinaryMCPStdioDraftCreateAndReversibleCleanupSmoke(t *testing.T) {
 	}
 
 	cleanupDraftFixture(t, ctx, session, draftID)
+}
+
+func TestLiveBinaryMCPStdioCalendarCreateDeleteSmoke(t *testing.T) {
+	configPath := os.Getenv("OUTLOOK_AGENT_LIVE_CONFIG")
+	attendee := os.Getenv("OUTLOOK_AGENT_LIVE_CALENDAR_ATTENDEE")
+	if configPath == "" || attendee == "" {
+		t.Skip("OUTLOOK_AGENT_LIVE_CONFIG and OUTLOOK_AGENT_LIVE_CALENDAR_ATTENDEE (dedicated disposable fixture mailbox, not a human mailbox) are not set")
+	}
+	if os.Getenv("OUTLOOK_AGENT_LIVE_MUTATION_SMOKE") != "1" {
+		t.Skip("OUTLOOK_AGENT_LIVE_MUTATION_SMOKE=1 is not set")
+	}
+	requireLiveApprovalSecret(t)
+	t.Log("OUTLOOK_AGENT_LIVE_CALENDAR_ATTENDEE must be a dedicated disposable fixture mailbox; calendar.delete_event does not send attendee cancellations")
+
+	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+	defer cancel()
+
+	args := []string{"--config", configPath}
+	if profile := os.Getenv("OUTLOOK_AGENT_LIVE_PROFILE"); profile != "" {
+		args = append(args, "--profile", profile)
+	}
+	args = append(args, "mcp")
+
+	session := connectLiveMCPSession(t, ctx, args, "stdio-live-calendar-create-delete-smoke-test")
+	defer session.Close()
+	authLiveMCPSession(t, ctx, session)
+
+	subject := "outlook-agent live smoke calendar " + time.Now().UTC().Format("20060102T150405.000000000Z")
+	start := time.Now().Add(24 * time.Hour).UTC().Truncate(30 * time.Minute)
+	end := start.Add(30 * time.Minute)
+	createPayload := map[string]any{
+		"subject":   subject,
+		"attendees": []string{attendee},
+		"start":     start.Format(time.RFC3339),
+		"end":       end.Format(time.RFC3339),
+		"time_zone": "UTC",
+		"body":      "Created and deleted by an opt-in Outlook Agent live smoke.",
+	}
+
+	createDryRun := callDryRun(t, ctx, session, map[string]any{
+		"action":  "calendar.create_meeting",
+		"payload": createPayload,
+	})
+	if !createDryRun.OK || createDryRun.ConfirmationToken == "" || createDryRun.Count != 1 || createDryRun.Reversible || createDryRun.RequiresUnsafe {
+		t.Fatalf("expected send-like create meeting dry-run token: %#v", createDryRun)
+	}
+
+	createMeeting, err := session.CallTool(ctx, &mcp.CallToolParams{
+		Name: "outlook.calendar_create_meeting",
+		Arguments: withApprovalFields(t, createDryRun, map[string]any{
+			"subject":       subject,
+			"attendees":     []string{attendee},
+			"start":         start.Format(time.RFC3339),
+			"end":           end.Format(time.RFC3339),
+			"timezone":      "UTC",
+			"body":          "Created and deleted by an opt-in Outlook Agent live smoke.",
+			"confirm_token": createDryRun.ConfirmationToken,
+		}),
+	})
+	if err != nil {
+		t.Fatalf("call calendar_create_meeting: %v", err)
+	}
+	if createMeeting.IsError {
+		t.Fatalf("expected calendar_create_meeting success envelope, got %#v", createMeeting)
+	}
+	var createOutput struct {
+		OK    bool           `json:"ok"`
+		Data  map[string]any `json:"data"`
+		Error string         `json:"error"`
+	}
+	decodeStructuredContent(t, createMeeting, &createOutput)
+	if !createOutput.OK {
+		t.Fatalf("expected calendar_create_meeting ok, got %#v", createOutput)
+	}
+	eventID := calendarEventIDFromToolValue(createOutput.Data["event"])
+	if eventID == "" {
+		t.Fatalf("expected created event id in sanitized output, got %#v", createOutput.Data["event"])
+	}
+	cleanupDone := false
+	defer func() {
+		if !cleanupDone {
+			cleanupCalendarEventFixtureWithFreshSession(t, args, eventID)
+		}
+	}()
+
+	deletePayload := map[string]any{"event_id": eventID}
+	deleteDryRun := callDryRun(t, ctx, session, map[string]any{
+		"action":  "calendar.delete_event",
+		"payload": deletePayload,
+	})
+	if !deleteDryRun.OK || deleteDryRun.ConfirmationToken == "" || deleteDryRun.Count != 1 || !deleteDryRun.Reversible || deleteDryRun.RequiresUnsafe {
+		t.Fatalf("expected reversible delete-event dry-run token: %#v", deleteDryRun)
+	}
+
+	deleteEvent, err := session.CallTool(ctx, &mcp.CallToolParams{
+		Name: "outlook.calendar_delete_event",
+		Arguments: withApprovalFields(t, deleteDryRun, map[string]any{
+			"event_id":      eventID,
+			"confirm_token": deleteDryRun.ConfirmationToken,
+		}),
+	})
+	if err != nil {
+		t.Fatalf("call calendar_delete_event: %v", err)
+	}
+	if deleteEvent.IsError {
+		t.Fatalf("expected calendar_delete_event success envelope, got %#v", deleteEvent)
+	}
+	var deleteOutput struct {
+		OK    bool   `json:"ok"`
+		Error string `json:"error"`
+	}
+	decodeStructuredContent(t, deleteEvent, &deleteOutput)
+	if !deleteOutput.OK {
+		t.Fatalf("expected calendar_delete_event ok, got %#v", deleteOutput)
+	}
+
+	listEvents, err := session.CallTool(ctx, &mcp.CallToolParams{
+		Name: "outlook.calendar_list",
+		Arguments: map[string]any{
+			"start": start.Format(time.RFC3339),
+			"end":   end.Format(time.RFC3339),
+		},
+	})
+	if err != nil {
+		t.Fatalf("call calendar_list after delete: %v", err)
+	}
+	if listEvents.IsError {
+		t.Fatalf("expected calendar_list success envelope after delete, got %#v", listEvents)
+	}
+	var listOutput struct {
+		Events []any `json:"events"`
+	}
+	decodeStructuredContent(t, listEvents, &listOutput)
+	for _, value := range listOutput.Events {
+		if calendarSmokeEventMatches(value, eventID, subject) {
+			t.Fatalf("expected smoke event to be absent after delete, found %#v", value)
+		}
+	}
+	cleanupDone = true
 }
 
 func TestLiveBinaryMCPStdioDraftBodyFetchAndCleanupSmoke(t *testing.T) {
@@ -1090,6 +1249,29 @@ func bodyTextFromToolValue(value any) string {
 	return body
 }
 
+func calendarEventIDFromToolValue(value any) string {
+	event, _ := value.(map[string]any)
+	if event == nil {
+		return ""
+	}
+	id, _ := event["id"].(string)
+	return id
+}
+
+func calendarSmokeEventMatches(value any, eventID string, subject string) bool {
+	event, _ := value.(map[string]any)
+	if event == nil {
+		return false
+	}
+	if id, _ := event["id"].(string); strings.TrimSpace(id) != "" && strings.TrimSpace(id) == strings.TrimSpace(eventID) {
+		return true
+	}
+	if title, _ := event["title"].(string); strings.TrimSpace(title) != "" && strings.TrimSpace(title) == strings.TrimSpace(subject) {
+		return true
+	}
+	return false
+}
+
 func toolResultText(result *mcp.CallToolResult) string {
 	if result == nil {
 		return ""
@@ -1175,6 +1357,52 @@ func cleanupDraftFixture(t *testing.T, ctx context.Context, session *mcp.ClientS
 	decodeStructuredContent(t, move, &moveOutput)
 	if !moveOutput.OK || moveOutput.Data["moved_count"] != float64(1) {
 		t.Errorf("expected fixture to be moved to Deleted Items, got %#v", moveOutput)
+	}
+}
+
+func cleanupCalendarEventFixtureWithFreshSession(t *testing.T, args []string, eventID string) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+	defer cancel()
+
+	session := connectLiveMCPSession(t, ctx, args, "stdio-live-calendar-cleanup-smoke-test")
+	defer session.Close()
+	authLiveMCPSession(t, ctx, session)
+	cleanupCalendarEventFixture(t, ctx, session, eventID)
+}
+
+func cleanupCalendarEventFixture(t *testing.T, ctx context.Context, session *mcp.ClientSession, eventID string) {
+	t.Helper()
+	dryRun := callDryRun(t, ctx, session, map[string]any{
+		"action":  "calendar.delete_event",
+		"payload": map[string]any{"event_id": eventID},
+	})
+	if !dryRun.OK || dryRun.ConfirmationToken == "" || dryRun.Count != 1 || !dryRun.Reversible || dryRun.RequiresUnsafe {
+		t.Errorf("expected reversible delete-event dry-run token for fixture cleanup: %#v", dryRun)
+		return
+	}
+	deleteEvent, err := session.CallTool(ctx, &mcp.CallToolParams{
+		Name: "outlook.calendar_delete_event",
+		Arguments: withApprovalFields(t, dryRun, map[string]any{
+			"event_id":      eventID,
+			"confirm_token": dryRun.ConfirmationToken,
+		}),
+	})
+	if err != nil {
+		t.Errorf("call calendar fixture cleanup delete_event: %v", err)
+		return
+	}
+	if deleteEvent.IsError {
+		t.Errorf("expected calendar fixture cleanup success envelope, got %#v", deleteEvent)
+		return
+	}
+	var output struct {
+		OK    bool   `json:"ok"`
+		Error string `json:"error"`
+	}
+	decodeStructuredContent(t, deleteEvent, &output)
+	if !output.OK {
+		t.Errorf("expected calendar fixture cleanup ok, got %#v", output)
 	}
 }
 

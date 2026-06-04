@@ -2,6 +2,7 @@ package owa
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/cookiejar"
@@ -9,12 +10,30 @@ import (
 	"strings"
 
 	"github.com/johnkil/outlook-agent/internal/secret"
+	"github.com/johnkil/outlook-agent/internal/transport"
 )
 
 type Session struct {
 	Canary    string
 	Principal string
 	Client    *http.Client
+}
+
+type transientLoginError struct {
+	err error
+}
+
+func (err transientLoginError) Error() string {
+	return err.err.Error()
+}
+
+func (err transientLoginError) Unwrap() error {
+	return err.err
+}
+
+func isTransientLoginError(err error) bool {
+	var transient transientLoginError
+	return errors.As(err, &transient)
 }
 
 func Login(ctx context.Context, client *http.Client, config Config, password secret.Value) (Session, error) {
@@ -61,12 +80,30 @@ func Login(ctx context.Context, client *http.Client, config Config, password sec
 		return Session{}, err
 	}
 	defer response.Body.Close()
+	if response.StatusCode >= 500 {
+		return Session{}, transientLoginError{err: fmt.Errorf("owa login returned HTTP %d", response.StatusCode)}
+	}
 
 	canary := canaryFromCookies(jar, authURL)
 	if canary == "" {
-		return Session{}, fmt.Errorf("owa canary not received")
+		err := fmt.Errorf("owa canary not received")
+		if response.StatusCode >= 200 && response.StatusCode < 300 {
+			body, readErr := transport.ReadLimited(response.Body, transport.MaxResponseBytes)
+			if readErr != nil {
+				return Session{}, readErr
+			}
+			if loginResponseLooksLikeAuthPage(body) {
+				return Session{}, err
+			}
+		}
+		return Session{}, err
 	}
 	return Session{Canary: canary, Principal: config.Username, Client: &sessionClient}, nil
+}
+
+func loginResponseLooksLikeAuthPage(body []byte) bool {
+	lower := strings.ToLower(string(body))
+	return strings.Contains(lower, "auth/logon.aspx") || strings.Contains(lower, "/owa/auth.owa")
 }
 
 func canaryFromCookies(jar http.CookieJar, rawURL string) string {

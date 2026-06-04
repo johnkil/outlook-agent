@@ -24,3 +24,108 @@ func TestIANALocationNameTrimsAndIgnoresCase(t *testing.T) {
 		t.Fatalf("unexpected AUS Eastern mapping: %q", got)
 	}
 }
+
+func TestWindowsLocationNameMapsIANAToProviderID(t *testing.T) {
+	cases := []struct {
+		input string
+		want  string
+	}{
+		{input: "Europe/Moscow", want: "Russian Standard Time"},
+		{input: " europe/moscow ", want: "Russian Standard Time"},
+		{input: "Asia/Tokyo", want: "Tokyo Standard Time"},
+		{input: "America/Los_Angeles", want: "Pacific Standard Time"},
+	}
+	for _, tt := range cases {
+		if got := WindowsLocationName(tt.input); got != tt.want {
+			t.Fatalf("WindowsLocationName(%q) = %q, want %q", tt.input, got, tt.want)
+		}
+	}
+}
+
+func TestWindowsLocationNameMapsIANAAliasesToProviderID(t *testing.T) {
+	cases := []struct {
+		input string
+		want  string
+	}{
+		{input: "Europe/Madrid", want: "Romance Standard Time"},
+		{input: "America/Vancouver", want: "Pacific Standard Time"},
+		{input: "Australia/Melbourne", want: "AUS Eastern Standard Time"},
+	}
+	for _, tt := range cases {
+		if got := WindowsLocationName(tt.input); got != tt.want {
+			t.Fatalf("WindowsLocationName(%q) = %q, want %q", tt.input, got, tt.want)
+		}
+	}
+}
+
+func TestIANAAliasMappingsUseSupportedProviderIDs(t *testing.T) {
+	for ianaName, windowsID := range ianaAliasesToWindows {
+		if ianaName == "" {
+			t.Fatalf("empty IANA alias for Windows ID %q", windowsID)
+		}
+		if _, ok := windowsToIANA[windowsID]; !ok {
+			t.Fatalf("IANA alias %q maps to unsupported Windows ID %q", ianaName, windowsID)
+		}
+	}
+}
+
+func TestWindowsLocationNameUsesDeterministicCanonicalProviderIDs(t *testing.T) {
+	cases := []struct {
+		input string
+		want  string
+	}{
+		{input: "UTC", want: "UTC"},
+		{input: "Asia/Kamchatka", want: "Russia Time Zone 11"},
+	}
+	for _, tt := range cases {
+		if got := WindowsLocationName(tt.input); got != tt.want {
+			t.Fatalf("WindowsLocationName(%q) = %q, want %q", tt.input, got, tt.want)
+		}
+	}
+}
+
+func TestWindowsLocationNameCanonicalizesParenthesizedProviderIDs(t *testing.T) {
+	cases := []struct {
+		input string
+		want  string
+	}{
+		{input: "America/Tijuana", want: "Pacific Standard Time (Mexico)"},
+		{input: " pacific standard time (mexico) ", want: "Pacific Standard Time (Mexico)"},
+	}
+	for _, tt := range cases {
+		if got := WindowsLocationName(tt.input); got != tt.want {
+			t.Fatalf("WindowsLocationName(%q) = %q, want %q", tt.input, got, tt.want)
+		}
+	}
+}
+
+func TestWindowsLocationNamePreservesWindowsAcronymCasing(t *testing.T) {
+	cases := []struct {
+		input string
+		want  string
+	}{
+		{input: "Europe/Bucharest", want: "GTB Standard Time"},
+		{input: "Europe/Kyiv", want: "FLE Standard Time"},
+		{input: "Asia/Bangkok", want: "SE Asia Standard Time"},
+		{input: "Australia/Sydney", want: "AUS Eastern Standard Time"},
+		{input: "Atlantic/South_Georgia", want: "Mid-Atlantic Standard Time"},
+		{input: " aus eastern standard time ", want: "AUS Eastern Standard Time"},
+	}
+	for _, tt := range cases {
+		if got := WindowsLocationName(tt.input); got != tt.want {
+			t.Fatalf("WindowsLocationName(%q) = %q, want %q", tt.input, got, tt.want)
+		}
+	}
+}
+
+func TestWindowsLocationNamePreservesProviderID(t *testing.T) {
+	if got := WindowsLocationName(" russian standard time "); got != "Russian Standard Time" {
+		t.Fatalf("expected canonical provider name, got %q", got)
+	}
+}
+
+func TestWindowsLocationNameReturnsEmptyForUnknownZone(t *testing.T) {
+	if got := WindowsLocationName("Mars/Olympus"); got != "" {
+		t.Fatalf("expected unknown zone to return empty string, got %q", got)
+	}
+}

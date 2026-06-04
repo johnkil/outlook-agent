@@ -198,6 +198,146 @@ func TestBuildAgentPlanUsesUserCodexConfigTOML(t *testing.T) {
 	}
 }
 
+func TestBuildAgentPlanCanUseApprovalWrapperForCodex(t *testing.T) {
+	homeDir := t.TempDir()
+	projectDir := t.TempDir()
+	configPath := filepath.Join(projectDir, ".local", "outlook-agent.json")
+	wrapperPath := filepath.Join(homeDir, ".local", "bin", "outlook-agent-host-mcp")
+
+	plan, err := BuildAgentPlan(testSkillFS(), AgentOptions{
+		Client:             ClientCodex,
+		Scope:              ScopeUser,
+		ProjectDir:         projectDir,
+		HomeDir:            homeDir,
+		ConfigPath:         configPath,
+		UseApprovalWrapper: true,
+	})
+	if err != nil {
+		t.Fatalf("BuildAgentPlan returned error: %v", err)
+	}
+	content := string(plan.MCP.content)
+	if !strings.Contains(content, `command = "`+filepath.ToSlash(wrapperPath)+`"`) {
+		t.Fatalf("expected Codex MCP command to use approval wrapper, got %s", content)
+	}
+	if strings.Contains(content, `"mcp"`) || strings.Contains(content, `"--config"`) {
+		t.Fatalf("wrapper-backed config must not pass duplicate child args, got %s", content)
+	}
+	if plan.PrivatePathReferenceWritten {
+		t.Fatalf("wrapper-backed config must not report private config path as written")
+	}
+	if !strings.Contains(strings.Join(plan.Warnings, "\n"), "setup approval apply") {
+		t.Fatalf("expected setup approval guidance warning, got %#v", plan.Warnings)
+	}
+}
+
+func TestBuildAgentPlanRejectsApprovalWrapperWithCustomBinary(t *testing.T) {
+	_, err := BuildAgentPlan(testSkillFS(), AgentOptions{
+		Client:             ClientCodex,
+		Scope:              ScopeUser,
+		ProjectDir:         t.TempDir(),
+		HomeDir:            t.TempDir(),
+		ConfigPath:         filepath.Join(t.TempDir(), ".local", "outlook-agent.json"),
+		Binary:             "custom-outlook-agent",
+		UseApprovalWrapper: true,
+	})
+	if err == nil {
+		t.Fatal("expected BuildAgentPlan to reject custom binary with approval wrapper")
+	}
+	if !strings.Contains(err.Error(), "setup approval --binary") {
+		t.Fatalf("expected setup approval --binary guidance, got %v", err)
+	}
+}
+
+func TestBuildAgentPlanRejectsApprovalWrapperWithExplicitDefaultBinary(t *testing.T) {
+	_, err := BuildAgentPlan(testSkillFS(), AgentOptions{
+		Client:             ClientCodex,
+		Scope:              ScopeUser,
+		ProjectDir:         t.TempDir(),
+		HomeDir:            t.TempDir(),
+		ConfigPath:         filepath.Join(t.TempDir(), ".local", "outlook-agent.json"),
+		Binary:             "outlook-agent",
+		UseApprovalWrapper: true,
+	})
+	if err == nil {
+		t.Fatal("expected BuildAgentPlan to reject explicit default binary with approval wrapper")
+	}
+	if !strings.Contains(err.Error(), "setup approval --binary") {
+		t.Fatalf("expected setup approval --binary guidance, got %v", err)
+	}
+}
+
+func TestBuildAgentPlanApprovalWrapperShapeForAllClients(t *testing.T) {
+	for _, client := range []Client{ClientOpenCode, ClientCodex, ClientClaudeCode} {
+		t.Run(string(client), func(t *testing.T) {
+			homeDir := t.TempDir()
+			projectDir := t.TempDir()
+			configPath := filepath.Join(projectDir, ".local", "outlook-agent.json")
+			wrapperPath := filepath.Join(homeDir, ".local", "bin", "outlook-agent-host-mcp")
+
+			plan, err := BuildAgentPlan(testSkillFS(), AgentOptions{
+				Client:             client,
+				Scope:              ScopeUser,
+				ProjectDir:         projectDir,
+				HomeDir:            homeDir,
+				ConfigPath:         configPath,
+				UseApprovalWrapper: true,
+			})
+			if err != nil {
+				t.Fatalf("BuildAgentPlan returned error: %v", err)
+			}
+			content := string(plan.MCP.content)
+			if !strings.Contains(content, filepath.ToSlash(wrapperPath)) {
+				t.Fatalf("expected MCP content to use wrapper path %s, got %s", filepath.ToSlash(wrapperPath), content)
+			}
+			for _, forbidden := range []string{"--config", configPath} {
+				if strings.Contains(content, forbidden) {
+					t.Fatalf("wrapper-backed config must not include %q, got %s", forbidden, content)
+				}
+			}
+		})
+	}
+}
+
+func TestDiffAgentPlanPrintsApprovalWrapperWarning(t *testing.T) {
+	plan, err := BuildAgentPlan(testSkillFS(), AgentOptions{
+		Client:             ClientCodex,
+		Scope:              ScopeUser,
+		ProjectDir:         t.TempDir(),
+		HomeDir:            t.TempDir(),
+		ConfigPath:         filepath.Join(t.TempDir(), ".local", "outlook-agent.json"),
+		UseApprovalWrapper: true,
+	})
+	if err != nil {
+		t.Fatalf("BuildAgentPlan returned error: %v", err)
+	}
+
+	diff := DiffAgentPlan(plan)
+	if !strings.Contains(diff, "Warnings:") || !strings.Contains(diff, "setup approval apply") {
+		t.Fatalf("expected approval wrapper warning in diff, got %s", diff)
+	}
+}
+
+func TestDiffAgentPlanDoesNotPrintNonWrapperWarnings(t *testing.T) {
+	plan, err := BuildAgentPlan(testSkillFS(), AgentOptions{
+		Client:     ClientCodex,
+		Scope:      ScopeProject,
+		ProjectDir: t.TempDir(),
+		HomeDir:    t.TempDir(),
+		ConfigPath: "outlook-agent.json",
+	})
+	if err != nil {
+		t.Fatalf("BuildAgentPlan returned error: %v", err)
+	}
+	if len(plan.Warnings) == 0 {
+		t.Fatal("expected project config warning in plan metadata")
+	}
+
+	diff := DiffAgentPlan(plan)
+	if strings.Contains(diff, "Warnings:") || strings.Contains(diff, "project-scope config paths") {
+		t.Fatalf("expected non-wrapper warnings to stay out of diff, got %s", diff)
+	}
+}
+
 func TestBuildAgentPlanUsesUserClaudeConfigJSON(t *testing.T) {
 	homeDir := t.TempDir()
 	plan, err := BuildAgentPlan(testSkillFS(), AgentOptions{

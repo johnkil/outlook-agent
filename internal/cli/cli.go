@@ -1710,12 +1710,12 @@ Usage:
   outlook-agent setup skills plan --client <opencode|codex|claude-code|all> --scope <project|user>
   outlook-agent setup skills diff --client <opencode|codex|claude-code|all> --scope <project|user>
   outlook-agent setup skills apply --client <opencode|codex|claude-code|all> --scope <project|user> --yes [--backup] [--allow-duplicates]
-  outlook-agent setup agent plan --client <opencode|codex|claude-code> --scope <project|user> --config <path>
-  outlook-agent setup agent diff --client <opencode|codex|claude-code> --scope <project|user> --config <path>
-  outlook-agent setup agent apply --client <opencode|codex|claude-code> --scope <project|user> --config <path> --yes [--backup] [--allow-duplicates]
-  outlook-agent setup approval plan --client <opencode|codex|claude-code> --scope <project|user> --config <path> [--secret-file <path>]
-  outlook-agent setup approval diff --client <opencode|codex|claude-code> --scope <project|user> --config <path> [--secret-file <path>]
-  outlook-agent setup approval apply --client <opencode|codex|claude-code> --scope <project|user> --config <path> --yes [--secret-file <path>]
+  outlook-agent setup agent plan --client <opencode|codex|claude-code> --scope <project|user> --config <path> [--use-approval-wrapper]
+  outlook-agent setup agent diff --client <opencode|codex|claude-code> --scope <project|user> --config <path> [--use-approval-wrapper]
+  outlook-agent setup agent apply --client <opencode|codex|claude-code> --scope <project|user> --config <path> [--use-approval-wrapper] --yes [--backup] [--allow-duplicates]
+  outlook-agent setup approval plan --client <opencode|codex|claude-code> --scope <project|user> --config <path> [--secret-file <path>] [--binary <path>]
+  outlook-agent setup approval diff --client <opencode|codex|claude-code> --scope <project|user> --config <path> [--secret-file <path>] [--binary <path>]
+  outlook-agent setup approval apply --client <opencode|codex|claude-code> --scope <project|user> --config <path> --yes [--secret-file <path>] [--binary <path>]
   outlook-agent setup plugin export --client <codex|claude-code> --output <path> [--local --config <path>] [--binary <path>] [--force]
   outlook-agent mcp --config <path>
 
@@ -1843,17 +1843,18 @@ type setupSkillsArgs struct {
 }
 
 type setupAgentArgs struct {
-	Command         string
-	Client          setupcore.Client
-	Scope           setupcore.Scope
-	ProjectDir      string
-	HomeDir         string
-	ConfigPath      string
-	Binary          string
-	Yes             bool
-	Backup          bool
-	AllowDuplicates bool
-	JSON            bool
+	Command            string
+	Client             setupcore.Client
+	Scope              setupcore.Scope
+	ProjectDir         string
+	HomeDir            string
+	ConfigPath         string
+	Binary             string
+	UseApprovalWrapper bool
+	Yes                bool
+	Backup             bool
+	AllowDuplicates    bool
+	JSON               bool
 }
 
 type setupApprovalArgs struct {
@@ -1938,12 +1939,13 @@ func runSetupAgent(args []string, options Options, stdout io.Writer, stderr io.W
 		settings.ConfigPath = options.ConfigPath
 	}
 	plan, err := setupcore.BuildAgentPlan(skillassets.FS, setupcore.AgentOptions{
-		Client:     settings.Client,
-		Scope:      settings.Scope,
-		ProjectDir: settings.ProjectDir,
-		HomeDir:    settings.HomeDir,
-		ConfigPath: settings.ConfigPath,
-		Binary:     settings.Binary,
+		Client:             settings.Client,
+		Scope:              settings.Scope,
+		ProjectDir:         settings.ProjectDir,
+		HomeDir:            settings.HomeDir,
+		ConfigPath:         settings.ConfigPath,
+		Binary:             settings.Binary,
+		UseApprovalWrapper: settings.UseApprovalWrapper,
 	})
 	if err != nil {
 		fmt.Fprintln(stderr, err)
@@ -1966,12 +1968,16 @@ func runSetupAgent(args []string, options Options, stdout io.Writer, stderr io.W
 			fmt.Fprintln(stderr, err)
 			return 1
 		}
-		return writeJSON(stdout, map[string]any{
+		response := map[string]any{
 			"ok":      true,
 			"command": "setup agent apply",
 			"mcp":     plan.MCP,
 			"skills":  plan.Skills,
-		})
+		}
+		if warnings := setupcore.ApprovalWrapperWarnings(plan.Warnings); len(warnings) > 0 {
+			response["warnings"] = warnings
+		}
+		return writeJSON(stdout, response)
 	default:
 		fmt.Fprintf(stderr, "unknown setup agent command: %s\n", settings.Command)
 		return 1
@@ -2242,7 +2248,6 @@ func parseSetupAgentArgs(args []string) (setupAgentArgs, error) {
 		Command: "plan",
 		Client:  setupcore.ClientOpenCode,
 		Scope:   setupcore.ScopeProject,
-		Binary:  "outlook-agent",
 	}
 	if len(args) > 0 {
 		switch args[0] {
@@ -2289,6 +2294,8 @@ func parseSetupAgentArgs(args []string) (setupAgentArgs, error) {
 				return setupAgentArgs{}, fmt.Errorf("--binary requires a value")
 			}
 			settings.Binary = args[index]
+		case "--use-approval-wrapper":
+			settings.UseApprovalWrapper = true
 		case "--yes":
 			settings.Yes = true
 		case "--backup":
@@ -2303,6 +2310,9 @@ func parseSetupAgentArgs(args []string) (setupAgentArgs, error) {
 	}
 	if settings.Command != "apply" && (settings.Yes || settings.Backup || settings.AllowDuplicates) {
 		return setupAgentArgs{}, fmt.Errorf("--yes, --backup, and --allow-duplicates are only valid for setup agent apply")
+	}
+	if settings.UseApprovalWrapper && strings.TrimSpace(settings.Binary) != "" {
+		return setupAgentArgs{}, fmt.Errorf("--binary cannot be used with --use-approval-wrapper; configure the wrapper child binary with setup approval --binary")
 	}
 	return settings, nil
 }

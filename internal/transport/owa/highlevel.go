@@ -71,7 +71,7 @@ func (client *Transport) executeHighLevel(ctx context.Context, request transport
 		}
 		return transport.ActionResponse{OK: false, Error: "people.resolve is ambiguous", Data: map[string]any{"candidates": people}}, true
 	case "calendar.list":
-		response := client.executeService(ctx, "GetCalendarView", client.buildCalendarViewRequest(stringValue(request.Payload, "start"), stringValue(request.Payload, "end")), true)
+		response := client.executeService(ctx, "GetCalendarView", client.buildCalendarViewRequestInTimeZone(stringValue(request.Payload, "start"), stringValue(request.Payload, "end"), stringValue(request.Payload, "time_zone")), true)
 		if !response.OK {
 			return response, true
 		}
@@ -649,10 +649,6 @@ func isOWADistinguishedFolderID(folderID string) bool {
 	default:
 		return false
 	}
-}
-
-func (client *Transport) buildCalendarViewRequest(start string, end string) any {
-	return client.buildCalendarViewRequestInTimeZone(start, end, "")
 }
 
 func (client *Transport) buildCalendarViewRequestInTimeZone(start string, end string, timeZone string) any {
@@ -1393,6 +1389,7 @@ func (client *Transport) requestHeaderPayloadInTimeZone(version string, timeZone
 	if timeZone == "" {
 		timeZone = client.config.effectiveTimeZoneID()
 	}
+	timeZone = owaProviderTimeZone(timeZone)
 	return object(
 		field("__type", "JsonRequestHeaders:#Exchange"),
 		field("RequestServerVersion", version),
@@ -2011,4 +2008,12 @@ func owaTimeLocation(timeZone string) (*time.Location, error) {
 		timeZone = mapped
 	}
 	return time.LoadLocation(timeZone)
+}
+
+func owaProviderTimeZone(timeZone string) string {
+	timeZone = strings.TrimSpace(timeZone)
+	if mapped := mstimezone.WindowsLocationName(timeZone); mapped != "" {
+		return mapped
+	}
+	return timeZone
 }

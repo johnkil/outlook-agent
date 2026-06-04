@@ -23,6 +23,9 @@ type Transport struct {
 	session    *cachedSession
 	now        func() time.Time
 	sessionTTL time.Duration
+
+	loginRetries      int
+	loginRetryBackoff func(context.Context, time.Duration) error
 }
 
 const DefaultSessionTTL = 20 * time.Minute
@@ -41,7 +44,26 @@ func NewTransport(config Config, secrets secret.Store, client *http.Client) *Tra
 		client = defaultHTTPClient()
 	}
 	client = withOWARedirectPolicy(client)
-	return &Transport{config: config, secrets: secrets, client: client, now: time.Now, sessionTTL: DefaultSessionTTL}
+	return &Transport{
+		config:            config,
+		secrets:           secrets,
+		client:            client,
+		now:               time.Now,
+		sessionTTL:        DefaultSessionTTL,
+		loginRetries:      2,
+		loginRetryBackoff: sleepContext,
+	}
+}
+
+func sleepContext(ctx context.Context, duration time.Duration) error {
+	timer := time.NewTimer(duration)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return nil
+	}
 }
 
 func defaultHTTPClient() *http.Client {
@@ -787,7 +809,7 @@ func (client *Transport) login(ctx context.Context) (Session, error) {
 	if err != nil {
 		return Session{}, err
 	}
-	session, err := Login(ctx, client.client, client.config, value)
+	session, err := client.loginWithRetry(ctx, value)
 	if err != nil {
 		return Session{}, err
 	}
@@ -802,6 +824,31 @@ func (client *Transport) login(ctx context.Context) (Session, error) {
 		expiresAt:  now.Add(ttl),
 	}
 	return session, nil
+}
+
+func (client *Transport) loginWithRetry(ctx context.Context, password secret.Value) (Session, error) {
+	var lastErr error
+	attempts := client.loginRetries + 1
+	if attempts < 1 {
+		attempts = 1
+	}
+	for attempt := 0; attempt < attempts; attempt++ {
+		session, err := Login(ctx, client.client, client.config, password)
+		if err == nil {
+			return session, nil
+		}
+		lastErr = err
+		if !isTransientLoginError(err) || attempt == attempts-1 {
+			break
+		}
+		backoff := time.Duration(attempt+1) * 250 * time.Millisecond
+		if client.loginRetryBackoff != nil {
+			if waitErr := client.loginRetryBackoff(ctx, backoff); waitErr != nil {
+				return Session{}, waitErr
+			}
+		}
+	}
+	return Session{}, lastErr
 }
 
 func (client *Transport) invalidateSession() {

@@ -15,12 +15,13 @@ import (
 )
 
 type AgentOptions struct {
-	Client     Client
-	Scope      Scope
-	ProjectDir string
-	HomeDir    string
-	ConfigPath string
-	Binary     string
+	Client             Client
+	Scope              Scope
+	ProjectDir         string
+	HomeDir            string
+	ConfigPath         string
+	Binary             string
+	UseApprovalWrapper bool
 }
 
 type AgentPlan struct {
@@ -57,6 +58,9 @@ func BuildAgentPlan(fsys fs.FS, options AgentOptions) (AgentPlan, error) {
 	if options.Scope == "" {
 		options.Scope = ScopeProject
 	}
+	if options.UseApprovalWrapper && strings.TrimSpace(options.Binary) != "" {
+		return AgentPlan{}, errors.New("setup agent --use-approval-wrapper does not accept --binary; configure the child binary with outlook-agent setup approval --binary")
+	}
 	if options.Binary == "" {
 		options.Binary = "outlook-agent"
 	}
@@ -85,7 +89,23 @@ func BuildAgentPlan(fsys fs.FS, options AgentOptions) (AgentPlan, error) {
 	if err != nil {
 		return AgentPlan{}, err
 	}
-	mcp, err := buildMCPOperation(options.Client, options.Scope, projectDir, homeDir, options.Binary, options.ConfigPath)
+	binary := options.Binary
+	configPath := options.ConfigPath
+	useApprovalWrapper := options.UseApprovalWrapper
+	if useApprovalWrapper {
+		_, wrapperPath, _, err := approvalPaths(options.Scope, projectDir, homeDir, "")
+		if err != nil {
+			return AgentPlan{}, err
+		}
+		binary = wrapperPath
+		configPath = ""
+	}
+	var mcp ConfigOperation
+	if useApprovalWrapper {
+		mcp, err = buildMCPCommandOperation(options.Client, options.Scope, projectDir, homeDir, binary)
+	} else {
+		mcp, err = buildMCPOperation(options.Client, options.Scope, projectDir, homeDir, binary, configPath)
+	}
 	if err != nil {
 		return AgentPlan{}, err
 	}
@@ -93,13 +113,16 @@ func BuildAgentPlan(fsys fs.FS, options AgentOptions) (AgentPlan, error) {
 		Command:                     "setup agent plan",
 		Client:                      options.Client,
 		Scope:                       options.Scope,
-		Binary:                      options.Binary,
+		Binary:                      binary,
 		ConfigPath:                  options.ConfigPath,
-		PrivatePathReferenceWritten: options.ConfigPath != "",
+		PrivatePathReferenceWritten: options.ConfigPath != "" && !useApprovalWrapper,
 		MCP:                         mcp,
 		Skills:                      skillsPlan,
 	}
 	plan.Warnings = append(plan.Warnings, projectConfigWarnings(options.Scope, options.ConfigPath)...)
+	if useApprovalWrapper {
+		plan.Warnings = append(plan.Warnings, "approval wrapper mode requires running outlook-agent setup approval apply for the same client, scope, and config before high-risk MCP tools can execute")
+	}
 	plan.Warnings = append(plan.Warnings, skillsPlan.Warnings...)
 	return plan, nil
 }
@@ -114,8 +137,26 @@ func DiffAgentPlan(plan AgentPlan) string {
 		writePlanContent(&builder, plan.MCP.content)
 		builder.WriteByte('\n')
 	}
+	if warnings := ApprovalWrapperWarnings(plan.Warnings); len(warnings) > 0 {
+		builder.WriteString("Warnings:\n")
+		for _, warning := range warnings {
+			builder.WriteString("- ")
+			builder.WriteString(warning)
+			builder.WriteByte('\n')
+		}
+	}
 	builder.WriteString(DiffSkillsPlan(plan.Skills))
 	return builder.String()
+}
+
+func ApprovalWrapperWarnings(warnings []string) []string {
+	filtered := make([]string, 0, len(warnings))
+	for _, warning := range warnings {
+		if strings.Contains(warning, "approval wrapper mode requires") {
+			filtered = append(filtered, warning)
+		}
+	}
+	return filtered
 }
 
 func ApplyAgentPlan(plan AgentPlan, options ApplyOptions) error {
@@ -155,6 +196,19 @@ func ApplyAgentPlan(plan AgentPlan, options ApplyOptions) error {
 }
 
 func buildMCPOperation(client Client, scope Scope, projectDir string, homeDir string, binary string, configPath string) (ConfigOperation, error) {
+	args := []string{}
+	if configPath != "" {
+		args = append(args, "--config", configPath)
+	}
+	args = append(args, "mcp")
+	return buildMCPOperationWithArgs(client, scope, projectDir, homeDir, binary, args)
+}
+
+func buildMCPCommandOperation(client Client, scope Scope, projectDir string, homeDir string, binary string) (ConfigOperation, error) {
+	return buildMCPOperationWithArgs(client, scope, projectDir, homeDir, binary, []string{})
+}
+
+func buildMCPOperationWithArgs(client Client, scope Scope, projectDir string, homeDir string, binary string, args []string) (ConfigOperation, error) {
 	targetPath, rootPath, err := mcpTargetPath(client, scope, projectDir, homeDir)
 	if err != nil {
 		return ConfigOperation{}, err
@@ -166,7 +220,7 @@ func buildMCPOperation(client Client, scope Scope, projectDir string, homeDir st
 	if err != nil && !os.IsNotExist(err) {
 		return ConfigOperation{}, fmt.Errorf("read MCP target %s: %w", targetPath, err)
 	}
-	content, err := buildMCPConfigContent(client, targetPath, currentContent, binary, configPath)
+	content, err := buildMCPConfigContentWithArgs(client, targetPath, currentContent, binary, args)
 	if err != nil {
 		return ConfigOperation{}, err
 	}
@@ -239,14 +293,17 @@ func mcpTargetPath(client Client, scope Scope, projectDir string, homeDir string
 }
 
 func buildMCPConfigContent(client Client, targetPath string, currentContent []byte, binary string, configPath string) ([]byte, error) {
-	command := []string{binary}
 	args := []string{}
 	if configPath != "" {
-		command = append(command, "--config", configPath)
 		args = append(args, "--config", configPath)
 	}
-	command = append(command, "mcp")
 	args = append(args, "mcp")
+	return buildMCPConfigContentWithArgs(client, targetPath, currentContent, binary, args)
+}
+
+func buildMCPConfigContentWithArgs(client Client, targetPath string, currentContent []byte, binary string, args []string) ([]byte, error) {
+	command := []string{binary}
+	command = append(command, args...)
 
 	switch client {
 	case ClientOpenCode:
