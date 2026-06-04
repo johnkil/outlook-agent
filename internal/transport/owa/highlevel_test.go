@@ -2844,6 +2844,46 @@ func TestHighLevelCalendarDeleteEventMovesSingleEventToDeletedItems(t *testing.T
 	}
 }
 
+func TestHighLevelCalendarDeleteEventResolvesMissingChangeKey(t *testing.T) {
+	var calls []recordedServiceCall
+	server := newOWAServiceServerByAction(t, &calls, map[string]map[string]any{
+		"GetItem": {
+			"Body": map[string]any{
+				"Items": []any{
+					map[string]any{"ItemId": map[string]any{"Id": "event-1", "ChangeKey": "ck-fresh"}},
+				},
+			},
+		},
+		"DeleteItem": {
+			"Body": map[string]any{
+				"ResponseMessages": map[string]any{
+					"Items": []any{map[string]any{"ResponseClass": "Success"}},
+				},
+			},
+		},
+	})
+	defer server.Close()
+	client := newTestTransport(server)
+
+	response := client.Execute(context.Background(), transport.ActionRequest{
+		Name:    "calendar.delete_event",
+		Payload: map[string]any{"event_id": "event-1"},
+	})
+
+	if !response.OK {
+		t.Fatalf("expected calendar.delete_event ok after resolving change key: %#v", response)
+	}
+	if len(calls) != 2 || calls[0].Action != "GetItem" || calls[1].Action != "DeleteItem" {
+		t.Fatalf("expected GetItem then DeleteItem, got %#v", calls)
+	}
+	body := calls[1].Body["Body"].(map[string]any)
+	itemIDs := body["ItemIds"].([]any)
+	itemID := itemIDs[0].(map[string]any)
+	if itemID["Id"] != "event-1" || itemID["ChangeKey"] != "ck-fresh" {
+		t.Fatalf("expected resolved ItemId id/change key, got %#v", itemID)
+	}
+}
+
 func TestHighLevelCalendarDeleteEventRequiresEventID(t *testing.T) {
 	var calls []recordedServiceCall
 	server := newOWAServiceServer(t, &calls, map[string]any{"Body": map[string]any{"ResponseMessages": map[string]any{"Items": []any{}}}})
@@ -2919,6 +2959,85 @@ func TestHighLevelCalendarCancelMeetingSendsCancellation(t *testing.T) {
 	}
 	if response.Data["id"] != "event-1" || response.Data["status"] != "cancelled" {
 		t.Fatalf("expected typed cancel-meeting response, got %#v", response.Data)
+	}
+}
+
+func TestHighLevelCalendarCancelMeetingResolvesMissingChangeKey(t *testing.T) {
+	var calls []recordedServiceCall
+	server := newOWAServiceServerByAction(t, &calls, map[string]map[string]any{
+		"GetItem": {
+			"Body": map[string]any{
+				"Items": []any{
+					map[string]any{
+						"ItemId":  map[string]any{"Id": "event-1", "ChangeKey": "ck-fresh"},
+						"Subject": "Planning",
+					},
+				},
+			},
+		},
+		"CreateItem": {
+			"Body": map[string]any{
+				"ResponseMessages": map[string]any{
+					"Items": []any{map[string]any{"ResponseClass": "Success"}},
+				},
+			},
+		},
+	})
+	defer server.Close()
+	client := newTestTransport(server)
+
+	response := client.Execute(context.Background(), transport.ActionRequest{
+		Name: "calendar.cancel_meeting",
+		Payload: map[string]any{
+			"event_id": "event-1",
+			"comment":  "Canceled after test.",
+		},
+	})
+
+	if !response.OK {
+		t.Fatalf("expected calendar.cancel_meeting ok after resolving change key: %#v", response)
+	}
+	if len(calls) != 2 || calls[0].Action != "GetItem" || calls[1].Action != "CreateItem" {
+		t.Fatalf("expected GetItem then CreateItem, got %#v", calls)
+	}
+	body := calls[1].Body["Body"].(map[string]any)
+	items := body["Items"].([]any)
+	item := items[0].(map[string]any)
+	reference := item["ReferenceItemId"].(map[string]any)
+	if reference["Id"] != "event-1" || reference["ChangeKey"] != "ck-fresh" {
+		t.Fatalf("expected resolved ReferenceItemId id/change key, got %#v", reference)
+	}
+}
+
+func TestHighLevelCalendarCancelMeetingWithoutChangeKeyBlocksWhenLookupFails(t *testing.T) {
+	var calls []recordedServiceCall
+	server := newOWAServiceServerByAction(t, &calls, map[string]map[string]any{
+		"GetItem": {
+			"Body": map[string]any{
+				"Items": []any{},
+			},
+		},
+		"CreateItem": {
+			"Body": map[string]any{
+				"ResponseMessages": map[string]any{
+					"Items": []any{map[string]any{"ResponseClass": "Success"}},
+				},
+			},
+		},
+	})
+	defer server.Close()
+	client := newTestTransport(server)
+
+	response := client.Execute(context.Background(), transport.ActionRequest{
+		Name:    "calendar.cancel_meeting",
+		Payload: map[string]any{"event_id": "event-1"},
+	})
+
+	if response.OK || !strings.Contains(response.Error, "calendar.cancel_meeting change_key lookup returned no calendar event details") {
+		t.Fatalf("expected missing metadata to block cancellation, got %#v", response)
+	}
+	if len(calls) != 1 || calls[0].Action != "GetItem" {
+		t.Fatalf("expected only GetItem lookup before failure, got %#v", calls)
 	}
 }
 

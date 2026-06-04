@@ -222,8 +222,13 @@ Key tool inputs:
   exact calendar event to Deleted Items, requires a matching
   `outlook.action_dry_run` confirmation token before execution, and does not
   send cancellations. Use it for removing accidental or local created event
-  artifacts without notifying attendees. Normal cleanup must not require
-  clients to construct raw OWA `DeleteItem` payloads.
+  artifacts without notifying attendees. `change_key` is optional at the MCP
+  boundary. For OWA, when callers omit it, the transport performs an exact
+  `GetItem` metadata lookup before confirmed execution and uses the returned
+  current `ChangeKey` in the provider mutation payload. If OWA cannot resolve a
+  `ChangeKey`, the typed mutation fails before sending the delete request.
+  Normal cleanup must not require clients to construct raw OWA `DeleteItem`
+  payloads.
 - `outlook.calendar_cancel_meeting`: `event_id`, `confirm_token`, optional
   `change_key`, optional `comment`, optional `approval_challenge_id`, optional
   `approval_token`, and optional `mailbox`. The action maps to
@@ -231,8 +236,12 @@ Key tool inputs:
   cancellation, and requires a matching `outlook.action_dry_run` confirmation
   token plus host approval fields when approval mode requires them. Use it only
   when the user explicitly wants cancellation and notification semantics.
-  Normal cancellation must not require clients to construct raw OWA
-  cancellation payloads.
+  `change_key` is optional at the MCP boundary. For OWA, when callers omit it,
+  the transport performs an exact `GetItem` metadata lookup before confirmed
+  execution and uses the returned current `ChangeKey` in the provider mutation
+  payload. If OWA cannot resolve a `ChangeKey`, the typed mutation fails before
+  sending the cancellation request. Normal cancellation must not require clients
+  to construct raw OWA cancellation payloads.
 - `outlook.calendar_respond`: `event_id`, `response` (`accept`, `decline`, or
   `tentative`), `send_response`, `confirm_token`, optional `comment`, optional
   `approval_challenge_id`, optional `approval_token`, and optional `mailbox`.

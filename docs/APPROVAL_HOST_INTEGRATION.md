@@ -132,6 +132,12 @@ request for `OUTLOOK_AGENT_LIVE_CALENDAR_ATTENDEE`. The cleanup path uses
 `outlook.calendar_delete_event`, which moves the organizer event to Deleted
 Items and intentionally does not send attendee cancellations.
 
+The create/cancel smoke validates attendee notification semantics and intentionally
+omits `change_key` from the public `outlook.calendar_cancel_meeting` call. OWA
+must resolve the current event `change_key` internally before sending the
+cancellation. Use only a dedicated disposable fixture mailbox because the test
+sends both the meeting request and cancellation.
+
 Only run this smoke with a dedicated, disposable, controlled fixture mailbox as
 the attendee. Do not use a human teammate, customer, shared production, or
 personal mailbox. In the command below, `teammate@example.com` is a placeholder;
@@ -143,7 +149,7 @@ OUTLOOK_AGENT_LIVE_CONFIG=/path/to/outlook-agent.json \
 OUTLOOK_AGENT_LIVE_CALENDAR_ATTENDEE=teammate@example.com \
 OUTLOOK_AGENT_LIVE_MUTATION_SMOKE=1 \
 OUTLOOK_AGENT_APPROVAL_SECRET="$(cat /path/to/approval-secret)" \
-go test ./cmd/outlook-agent -run TestLiveBinaryMCPStdioCalendarCreateDeleteSmoke -count=1
+go test ./cmd/outlook-agent -run 'TestLiveBinaryMCPStdioCalendarCreate(Delete|Cancel)Smoke' -count=1 -v
 ```
 
 ## Logging Rules

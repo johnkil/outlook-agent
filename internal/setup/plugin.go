@@ -39,7 +39,7 @@ type PluginOperation struct {
 	currentContent []byte
 }
 
-const codexPluginVersion = "0.6.5"
+const codexPluginVersion = "0.6.6"
 
 func BuildPluginExportPlan(fsys fs.FS, options PluginOptions) (PluginPlan, error) {
 	if options.Client == "" {

@@ -75,6 +75,7 @@ type AttachmentReview struct {
 
 type CalendarReview struct {
 	EventID       string   `json:"event_id,omitempty"`
+	ChangeKey     string   `json:"change_key,omitempty"`
 	Response      string   `json:"response,omitempty"`
 	Subject       string   `json:"subject,omitempty"`
 	Start         string   `json:"start,omitempty"`

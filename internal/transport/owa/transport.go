@@ -543,12 +543,14 @@ func (client *Transport) owaCalendarCancelMeetingReview(ctx context.Context, act
 }
 
 func owaCalendarDeleteEventCalendarReview(fallbackEventID string, item map[string]any) transport.CalendarReview {
-	id := itemID(item)["id"]
+	itemIDFields := itemID(item)
+	id := itemIDFields["id"]
 	if strings.TrimSpace(id) == "" {
 		id = fallbackEventID
 	}
 	return transport.CalendarReview{
 		EventID:       id,
+		ChangeKey:     itemIDFields["change_key"],
 		Subject:       stringValue(item, "Subject"),
 		Start:         stringValue(item, "Start"),
 		End:           stringValue(item, "End"),

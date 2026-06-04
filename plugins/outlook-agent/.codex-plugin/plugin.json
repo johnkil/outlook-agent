@@ -33,5 +33,5 @@
   "name": "outlook-agent",
   "repository": "https://github.com/johnkil/outlook-agent",
   "skills": "./skills/",
-  "version": "0.6.5"
+  "version": "0.6.6"
 }

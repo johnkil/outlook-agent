@@ -430,7 +430,7 @@ func TestOWADryRunCalendarDeleteEventReview(t *testing.T) {
 	if len(review.Targets) != 1 || review.Targets[0].ID != "event-1" {
 		t.Fatalf("expected event id target in review, got %#v", review.Targets)
 	}
-	if review.Calendar == nil || review.Calendar.EventID != "event-1" || review.Calendar.Subject != "Planning" {
+	if review.Calendar == nil || review.Calendar.EventID != "event-1" || review.Calendar.ChangeKey != "ck-1" || review.Calendar.Subject != "Planning" {
 		t.Fatalf("expected calendar review with event metadata, got %#v", review.Calendar)
 	}
 }
@@ -531,8 +531,55 @@ func TestOWADryRunCalendarCancelMeetingReview(t *testing.T) {
 	if review.Calendar == nil || review.Calendar.EventID != "event-1" || review.Calendar.Subject != "Planning" || !review.Calendar.SendsResponse {
 		t.Fatalf("expected calendar review with cancel metadata, got %#v", review.Calendar)
 	}
+	if review.Calendar.ChangeKey != "ck-1" {
+		t.Fatalf("expected calendar review with change key, got %#v", review.Calendar)
+	}
 	if review.Calendar.Start == "" || review.Calendar.End == "" || review.Calendar.Organizer == "" || len(review.Calendar.Attendees) != 1 {
 		t.Fatalf("expected enriched calendar review fields, got %#v", review.Calendar)
+	}
+}
+
+func TestOWADryRunCalendarCancelMeetingReviewResolvesChangeKey(t *testing.T) {
+	var calls []recordedServiceCall
+	server := newOWAServiceServerByAction(t, &calls, map[string]map[string]any{
+		"GetItem": {
+			"Body": map[string]any{
+				"Items": []any{
+					map[string]any{
+						"ItemId":  map[string]any{"Id": "event-1", "ChangeKey": "ck-fresh"},
+						"Subject": "Planning",
+						"Start":   "2026-06-05T15:30:00.000",
+						"End":     "2026-06-05T16:00:00.000",
+					},
+				},
+			},
+		},
+	})
+	defer server.Close()
+	client := newTestTransport(server)
+
+	summary := client.DryRun(context.Background(), transport.ActionRequest{
+		Name: "calendar.cancel_meeting",
+		Payload: map[string]any{
+			"event_id": "event-1",
+			"comment":  "Canceled after test.",
+		},
+	})
+
+	if summary.Error != "" {
+		t.Fatalf("expected dry-run review to resolve change key, got %#v", summary)
+	}
+	if len(calls) != 1 || calls[0].Action != "GetItem" {
+		t.Fatalf("expected GetItem metadata lookup, got %#v", calls)
+	}
+	if summary.Review == nil || summary.Review.Calendar == nil {
+		t.Fatalf("expected calendar review, got %#v", summary)
+	}
+	if summary.Review.Calendar.EventID != "event-1" || summary.Review.Calendar.ChangeKey != "ck-fresh" {
+		t.Fatalf("expected resolved id/change key in review, got %#v", summary.Review.Calendar)
+	}
+	if summary.Review.Completeness != transport.ReviewCompletenessComplete {
+		t.Fatalf("expected complete review, got %#v", summary.Review)
 	}
 }
 

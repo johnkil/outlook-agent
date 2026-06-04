@@ -177,6 +177,12 @@ notes.
   Agents should use it only for explicit cancellation/notification semantics
   and should not construct raw OWA cancellation payloads for normal meeting
   cancellation.
+- For typed OWA calendar delete/cancel actions, `change_key` is an
+  optimization, not a required user input. Complete dry-run review includes the
+  resolved `change_key`; when callers omit `change_key`, confirmed execution
+  resolves the current value before sending `DeleteItem` or
+  `CancelCalendarItem`. If the lookup fails or returns no `ChangeKey`, the typed
+  action fails before mutation.
 - `SearchMailboxes` is classified as `unknown` because the raw action can
   express broad mailbox searches and does not have a narrow item-id target that
   the generic explicit-target policy can prove safe.
