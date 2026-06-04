@@ -149,7 +149,7 @@ OUTLOOK_AGENT_LIVE_CONFIG=/path/to/outlook-agent.json \
 OUTLOOK_AGENT_LIVE_CALENDAR_ATTENDEE=teammate@example.com \
 OUTLOOK_AGENT_LIVE_MUTATION_SMOKE=1 \
 OUTLOOK_AGENT_APPROVAL_SECRET="$(cat /path/to/approval-secret)" \
-go test ./cmd/outlook-agent -run TestLiveBinaryMCPStdioCalendarCreateDeleteSmoke -count=1
+go test ./cmd/outlook-agent -run 'TestLiveBinaryMCPStdioCalendarCreate(Delete|Cancel)Smoke' -count=1 -v
 ```
 
 ## Logging Rules
