@@ -251,8 +251,9 @@ func TestHighLevelCalendarListCallsGetCalendarViewWithURLPostData(t *testing.T) 
 	response := client.Execute(context.Background(), transport.ActionRequest{
 		Name: "calendar.list",
 		Payload: map[string]any{
-			"start": "2026-05-27T00:00:00.001",
-			"end":   "2026-05-28T00:00:00.000",
+			"start":     "2026-05-27T00:00:00.001",
+			"end":       "2026-05-28T00:00:00.000",
+			"time_zone": "Europe/Moscow",
 		},
 	})
 
@@ -271,6 +272,11 @@ func TestHighLevelCalendarListCallsGetCalendarViewWithURLPostData(t *testing.T) 
 	body := calls[0].Body["Body"].(map[string]any)
 	if body["RangeStart"] != "2026-05-27T00:00:00.001" || body["RangeEnd"] != "2026-05-28T00:00:00.000" {
 		t.Fatalf("unexpected calendar range body: %#v", body)
+	}
+	header := calls[0].Body["Header"].(map[string]any)
+	timeZone := header["TimeZoneContext"].(map[string]any)["TimeZoneDefinition"].(map[string]any)
+	if timeZone["Id"] != "Russian Standard Time" {
+		t.Fatalf("expected requested calendar list timezone header to use OWA provider id, got %#v", timeZone)
 	}
 	events := response.Data["events"].([]any)
 	event := events[0].(map[string]any)

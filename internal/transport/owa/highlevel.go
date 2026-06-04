@@ -71,7 +71,7 @@ func (client *Transport) executeHighLevel(ctx context.Context, request transport
 		}
 		return transport.ActionResponse{OK: false, Error: "people.resolve is ambiguous", Data: map[string]any{"candidates": people}}, true
 	case "calendar.list":
-		response := client.executeService(ctx, "GetCalendarView", client.buildCalendarViewRequest(stringValue(request.Payload, "start"), stringValue(request.Payload, "end")), true)
+		response := client.executeService(ctx, "GetCalendarView", client.buildCalendarViewRequestInTimeZone(stringValue(request.Payload, "start"), stringValue(request.Payload, "end"), stringValue(request.Payload, "time_zone")), true)
 		if !response.OK {
 			return response, true
 		}
