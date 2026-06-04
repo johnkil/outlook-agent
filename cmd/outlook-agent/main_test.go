@@ -716,6 +716,118 @@ func TestLiveBinaryMCPStdioCalendarCreateDeleteSmoke(t *testing.T) {
 	cleanupDone = true
 }
 
+func TestLiveBinaryMCPStdioCalendarCreateCancelSmoke(t *testing.T) {
+	configPath := os.Getenv("OUTLOOK_AGENT_LIVE_CONFIG")
+	attendee := os.Getenv("OUTLOOK_AGENT_LIVE_CALENDAR_ATTENDEE")
+	if configPath == "" || attendee == "" {
+		t.Skip("OUTLOOK_AGENT_LIVE_CONFIG and OUTLOOK_AGENT_LIVE_CALENDAR_ATTENDEE (dedicated disposable fixture mailbox, not a human mailbox) are not set")
+	}
+	if os.Getenv("OUTLOOK_AGENT_LIVE_MUTATION_SMOKE") != "1" {
+		t.Skip("OUTLOOK_AGENT_LIVE_MUTATION_SMOKE=1 is not set")
+	}
+	requireLiveApprovalSecret(t)
+	t.Log("OUTLOOK_AGENT_LIVE_CALENDAR_ATTENDEE must be a dedicated disposable fixture mailbox; this test sends a meeting request and a cancellation")
+
+	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+	defer cancel()
+
+	args := []string{"--config", configPath}
+	if profile := os.Getenv("OUTLOOK_AGENT_LIVE_PROFILE"); profile != "" {
+		args = append(args, "--profile", profile)
+	}
+	args = append(args, "mcp")
+
+	session := connectLiveMCPSession(t, ctx, args, "stdio-live-calendar-create-cancel-smoke-test")
+	defer session.Close()
+	authLiveMCPSession(t, ctx, session)
+
+	subject := "outlook-agent live smoke calendar cancel " + time.Now().UTC().Format("20060102T150405.000000000Z")
+	start := time.Now().Add(24 * time.Hour).UTC().Truncate(30 * time.Minute)
+	end := start.Add(30 * time.Minute)
+	createPayload := map[string]any{
+		"subject":   subject,
+		"attendees": []string{attendee},
+		"start":     start.Format(time.RFC3339),
+		"end":       end.Format(time.RFC3339),
+		"time_zone": "UTC",
+		"body":      "Created and cancelled by an opt-in Outlook Agent live smoke.",
+	}
+
+	createDryRun := callDryRun(t, ctx, session, map[string]any{
+		"action":  "calendar.create_meeting",
+		"payload": createPayload,
+	})
+	if !createDryRun.OK || createDryRun.ConfirmationToken == "" || createDryRun.Count != 1 || createDryRun.Reversible || createDryRun.RequiresUnsafe {
+		t.Fatalf("expected send-like create meeting dry-run token: %#v", createDryRun)
+	}
+	createMeeting, err := session.CallTool(ctx, &mcp.CallToolParams{
+		Name: "outlook.calendar_create_meeting",
+		Arguments: withApprovalFields(t, createDryRun, map[string]any{
+			"subject":       subject,
+			"attendees":     []string{attendee},
+			"start":         start.Format(time.RFC3339),
+			"end":           end.Format(time.RFC3339),
+			"timezone":      "UTC",
+			"body":          "Created and cancelled by an opt-in Outlook Agent live smoke.",
+			"confirm_token": createDryRun.ConfirmationToken,
+		}),
+	})
+	if err != nil {
+		t.Fatalf("call calendar_create_meeting: %v", err)
+	}
+	var createOutput struct {
+		OK    bool           `json:"ok"`
+		Data  map[string]any `json:"data"`
+		Error string         `json:"error"`
+	}
+	decodeStructuredContent(t, createMeeting, &createOutput)
+	if !createOutput.OK {
+		t.Fatalf("expected calendar_create_meeting ok, got %#v", createOutput)
+	}
+	eventID := calendarEventIDFromToolValue(createOutput.Data["event"])
+	if eventID == "" {
+		t.Fatalf("expected created event id in sanitized output, got %#v", createOutput.Data["event"])
+	}
+	cleanupDone := false
+	defer func() {
+		if !cleanupDone {
+			cleanupCalendarEventFixtureWithFreshSession(t, args, eventID)
+		}
+	}()
+
+	cancelPayload := map[string]any{
+		"event_id": eventID,
+		"comment":  "Cancelled by an opt-in Outlook Agent live smoke.",
+	}
+	cancelDryRun := callDryRun(t, ctx, session, map[string]any{
+		"action":  "calendar.cancel_meeting",
+		"payload": cancelPayload,
+	})
+	if !cancelDryRun.OK || cancelDryRun.ConfirmationToken == "" || cancelDryRun.Count != 1 || cancelDryRun.Reversible || cancelDryRun.RequiresUnsafe {
+		t.Fatalf("expected send-like cancel-meeting dry-run token: %#v", cancelDryRun)
+	}
+	cancelMeeting, err := session.CallTool(ctx, &mcp.CallToolParams{
+		Name: "outlook.calendar_cancel_meeting",
+		Arguments: withApprovalFields(t, cancelDryRun, map[string]any{
+			"event_id":      eventID,
+			"comment":       "Cancelled by an opt-in Outlook Agent live smoke.",
+			"confirm_token": cancelDryRun.ConfirmationToken,
+		}),
+	})
+	if err != nil {
+		t.Fatalf("call calendar_cancel_meeting: %v", err)
+	}
+	var cancelOutput struct {
+		OK    bool   `json:"ok"`
+		Error string `json:"error"`
+	}
+	decodeStructuredContent(t, cancelMeeting, &cancelOutput)
+	if !cancelOutput.OK {
+		t.Fatalf("expected calendar_cancel_meeting ok, got %#v", cancelOutput)
+	}
+	cleanupDone = true
+}
+
 func TestLiveBinaryMCPStdioDraftBodyFetchAndCleanupSmoke(t *testing.T) {
 	configPath := os.Getenv("OUTLOOK_AGENT_LIVE_CONFIG")
 	if configPath == "" {
