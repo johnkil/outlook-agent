@@ -42,6 +42,33 @@ func TestWindowsLocationNameMapsIANAToProviderID(t *testing.T) {
 	}
 }
 
+func TestWindowsLocationNameMapsIANAAliasesToProviderID(t *testing.T) {
+	cases := []struct {
+		input string
+		want  string
+	}{
+		{input: "Europe/Madrid", want: "Romance Standard Time"},
+		{input: "America/Vancouver", want: "Pacific Standard Time"},
+		{input: "Australia/Melbourne", want: "AUS Eastern Standard Time"},
+	}
+	for _, tt := range cases {
+		if got := WindowsLocationName(tt.input); got != tt.want {
+			t.Fatalf("WindowsLocationName(%q) = %q, want %q", tt.input, got, tt.want)
+		}
+	}
+}
+
+func TestIANAAliasMappingsUseSupportedProviderIDs(t *testing.T) {
+	for ianaName, windowsID := range ianaAliasesToWindows {
+		if ianaName == "" {
+			t.Fatalf("empty IANA alias for Windows ID %q", windowsID)
+		}
+		if _, ok := windowsToIANA[windowsID]; !ok {
+			t.Fatalf("IANA alias %q maps to unsupported Windows ID %q", ianaName, windowsID)
+		}
+	}
+}
+
 func TestWindowsLocationNameUsesDeterministicCanonicalProviderIDs(t *testing.T) {
 	cases := []struct {
 		input string

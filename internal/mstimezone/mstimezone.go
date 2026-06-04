@@ -220,6 +220,15 @@ func buildIANAToWindows() map[string]string {
 			out[key] = canonicalWindowsName(windows)
 		}
 	}
+	for iana, windows := range ianaAliasesToWindows {
+		key := strings.ToLower(strings.TrimSpace(iana))
+		if key == "" {
+			continue
+		}
+		if _, exists := out[key]; !exists {
+			out[key] = canonicalWindowsName(windows)
+		}
+	}
 	for iana, windows := range preferredWindowsByIANA {
 		out[strings.ToLower(strings.TrimSpace(iana))] = canonicalWindowsName(windows)
 	}
