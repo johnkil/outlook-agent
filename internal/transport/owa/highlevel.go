@@ -123,27 +123,27 @@ func (client *Transport) executeHighLevel(ctx context.Context, request transport
 		event["verification_status"] = "returned"
 		return transport.ActionResponse{OK: true, Data: map[string]any{"event": event}}, true
 	case "calendar.delete_event":
-		eventID := strings.TrimSpace(stringValue(request.Payload, "event_id"))
-		if eventID == "" {
-			return transport.ActionResponse{OK: false, Error: "event_id is required"}, true
+		target, targetResponse := client.resolveCalendarMutationTarget(ctx, "calendar.delete_event", request.Payload)
+		if !targetResponse.OK {
+			return targetResponse, true
 		}
 		response := client.executeService(ctx, "DeleteItem", client.buildMoveToDeletedItemsRequest([]any{
-			calendarDeleteEventItemID(eventID, stringValue(request.Payload, "change_key")),
+			calendarDeleteEventItemID(target.eventID, target.changeKey),
 		}), false)
 		if !response.OK {
 			return response, true
 		}
-		return calendarDeleteEventResult(eventID, response.Data), true
+		return calendarDeleteEventResult(target.eventID, response.Data), true
 	case "calendar.cancel_meeting":
-		eventID := strings.TrimSpace(stringValue(request.Payload, "event_id"))
-		if eventID == "" {
-			return transport.ActionResponse{OK: false, Error: "event_id is required"}, true
+		target, targetResponse := client.resolveCalendarMutationTarget(ctx, "calendar.cancel_meeting", request.Payload)
+		if !targetResponse.OK {
+			return targetResponse, true
 		}
-		response := client.executeService(ctx, "CreateItem", client.buildCancelCalendarItemRequest(eventID, stringValue(request.Payload, "change_key"), stringValue(request.Payload, "comment")), false)
+		response := client.executeService(ctx, "CreateItem", client.buildCancelCalendarItemRequest(target.eventID, target.changeKey, stringValue(request.Payload, "comment")), false)
 		if !response.OK {
 			return response, true
 		}
-		return calendarCancelMeetingResult(eventID, response.Data), true
+		return calendarCancelMeetingResult(target.eventID, response.Data), true
 	case "mail.fetch_metadata":
 		messageID := strings.TrimSpace(stringValue(request.Payload, "id"))
 		if messageID == "" {
@@ -1296,6 +1296,50 @@ func calendarDeleteEventItemID(eventID string, changeKey string) orderedObject {
 		fields = append(fields, field("ChangeKey", changeKey))
 	}
 	return object(fields...)
+}
+
+type calendarMutationTarget struct {
+	eventID   string
+	changeKey string
+}
+
+func (client *Transport) resolveCalendarMutationTarget(ctx context.Context, actionName string, payload map[string]any) (calendarMutationTarget, transport.ActionResponse) {
+	eventID := strings.TrimSpace(stringValue(payload, "event_id"))
+	if eventID == "" {
+		return calendarMutationTarget{}, transport.ActionResponse{OK: false, Error: "event_id is required"}
+	}
+	changeKey := strings.TrimSpace(stringValue(payload, "change_key"))
+	if changeKey != "" {
+		return calendarMutationTarget{eventID: eventID, changeKey: changeKey}, transport.ActionResponse{OK: true}
+	}
+
+	response := client.executeService(ctx, "GetItem", client.buildGetCalendarEventReviewRequest(eventID, ""), false)
+	if !response.OK {
+		return calendarMutationTarget{}, transport.ActionResponse{
+			OK:    false,
+			Error: actionName + " change_key lookup failed: " + actionResponseDetail(response),
+		}
+	}
+	item := firstMap(extractItems(response.Data))
+	if len(item) == 0 {
+		return calendarMutationTarget{}, transport.ActionResponse{
+			OK:    false,
+			Error: actionName + " change_key lookup returned no calendar event details",
+		}
+	}
+	resolved := itemID(item)
+	resolvedEventID := strings.TrimSpace(resolved["id"])
+	if resolvedEventID != "" {
+		eventID = resolvedEventID
+	}
+	changeKey = strings.TrimSpace(resolved["change_key"])
+	if changeKey == "" {
+		return calendarMutationTarget{}, transport.ActionResponse{
+			OK:    false,
+			Error: actionName + " change_key lookup returned event without change_key",
+		}
+	}
+	return calendarMutationTarget{eventID: eventID, changeKey: changeKey}, transport.ActionResponse{OK: true}
 }
 
 func orderedItemIDValue(value any) any {

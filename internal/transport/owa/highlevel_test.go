@@ -2844,6 +2844,46 @@ func TestHighLevelCalendarDeleteEventMovesSingleEventToDeletedItems(t *testing.T
 	}
 }
 
+func TestHighLevelCalendarDeleteEventResolvesMissingChangeKey(t *testing.T) {
+	var calls []recordedServiceCall
+	server := newOWAServiceServerByAction(t, &calls, map[string]map[string]any{
+		"GetItem": {
+			"Body": map[string]any{
+				"Items": []any{
+					map[string]any{"ItemId": map[string]any{"Id": "event-1", "ChangeKey": "ck-fresh"}},
+				},
+			},
+		},
+		"DeleteItem": {
+			"Body": map[string]any{
+				"ResponseMessages": map[string]any{
+					"Items": []any{map[string]any{"ResponseClass": "Success"}},
+				},
+			},
+		},
+	})
+	defer server.Close()
+	client := newTestTransport(server)
+
+	response := client.Execute(context.Background(), transport.ActionRequest{
+		Name:    "calendar.delete_event",
+		Payload: map[string]any{"event_id": "event-1"},
+	})
+
+	if !response.OK {
+		t.Fatalf("expected calendar.delete_event ok after resolving change key: %#v", response)
+	}
+	if len(calls) != 2 || calls[0].Action != "GetItem" || calls[1].Action != "DeleteItem" {
+		t.Fatalf("expected GetItem then DeleteItem, got %#v", calls)
+	}
+	body := calls[1].Body["Body"].(map[string]any)
+	itemIDs := body["ItemIds"].([]any)
+	itemID := itemIDs[0].(map[string]any)
+	if itemID["Id"] != "event-1" || itemID["ChangeKey"] != "ck-fresh" {
+		t.Fatalf("expected resolved ItemId id/change key, got %#v", itemID)
+	}
+}
+
 func TestHighLevelCalendarDeleteEventRequiresEventID(t *testing.T) {
 	var calls []recordedServiceCall
 	server := newOWAServiceServer(t, &calls, map[string]any{"Body": map[string]any{"ResponseMessages": map[string]any{"Items": []any{}}}})
