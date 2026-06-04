@@ -651,10 +651,6 @@ func isOWADistinguishedFolderID(folderID string) bool {
 	}
 }
 
-func (client *Transport) buildCalendarViewRequest(start string, end string) any {
-	return client.buildCalendarViewRequestInTimeZone(start, end, "")
-}
-
 func (client *Transport) buildCalendarViewRequestInTimeZone(start string, end string, timeZone string) any {
 	return client.buildCalendarViewRequestInTimeZoneForMailbox(start, end, timeZone, "")
 }
