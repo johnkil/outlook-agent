@@ -95,7 +95,6 @@ func Login(ctx context.Context, client *http.Client, config Config, password sec
 			if loginResponseLooksLikeAuthPage(body) {
 				return Session{}, err
 			}
-			return Session{}, transientLoginError{err: err}
 		}
 		return Session{}, err
 	}
