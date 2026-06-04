@@ -430,7 +430,7 @@ func TestOWADryRunCalendarDeleteEventReview(t *testing.T) {
 	if len(review.Targets) != 1 || review.Targets[0].ID != "event-1" {
 		t.Fatalf("expected event id target in review, got %#v", review.Targets)
 	}
-	if review.Calendar == nil || review.Calendar.EventID != "event-1" || review.Calendar.Subject != "Planning" {
+	if review.Calendar == nil || review.Calendar.EventID != "event-1" || review.Calendar.ChangeKey != "ck-1" || review.Calendar.Subject != "Planning" {
 		t.Fatalf("expected calendar review with event metadata, got %#v", review.Calendar)
 	}
 }
@@ -530,6 +530,9 @@ func TestOWADryRunCalendarCancelMeetingReview(t *testing.T) {
 	}
 	if review.Calendar == nil || review.Calendar.EventID != "event-1" || review.Calendar.Subject != "Planning" || !review.Calendar.SendsResponse {
 		t.Fatalf("expected calendar review with cancel metadata, got %#v", review.Calendar)
+	}
+	if review.Calendar.ChangeKey != "ck-1" {
+		t.Fatalf("expected calendar review with change key, got %#v", review.Calendar)
 	}
 	if review.Calendar.Start == "" || review.Calendar.End == "" || review.Calendar.Organizer == "" || len(review.Calendar.Attendees) != 1 {
 		t.Fatalf("expected enriched calendar review fields, got %#v", review.Calendar)
